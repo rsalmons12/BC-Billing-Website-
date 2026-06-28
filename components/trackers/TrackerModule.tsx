@@ -63,11 +63,6 @@ export default function TrackerModule({
   config: TrackerConfig;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const facMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const f of facilities) m[f.id] = f.short_name || f.name;
-    return m;
-  }, [facilities]);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +102,32 @@ export default function TrackerModule({
     },
     [supabase, config.table, userId]
   );
+
+  const addRow = useCallback(async () => {
+    const fid =
+      facilityFilter !== "all" ? facilityFilter : facilities[0]?.id ?? "";
+    if (!fid) {
+      setSaveState("Add a facility first");
+      return;
+    }
+    setSaveState("Adding…");
+    const { data, error } = await supabase
+      .from(config.table)
+      .insert({ facility_id: fid, updated_by: userId })
+      .select()
+      .single();
+    if (error) {
+      setSaveState(`Error: ${error.message}`);
+      return;
+    }
+    // Make sure the new row is visible under the current facility filter.
+    if (facilityFilter !== "all" && facilityFilter !== fid) {
+      setFacilityFilter(fid);
+    }
+    setRows((prev) => [data as Row, ...prev]);
+    setSaveState("Added — fill in the row");
+    setTimeout(() => setSaveState(""), 1500);
+  }, [supabase, config.table, userId, facilityFilter, facilities]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -174,6 +195,9 @@ export default function TrackerModule({
           <span className="text-surface-muted">
             <b className="text-surface-ink">{filtered.length}</b> rows
           </span>
+          <button onClick={addRow} className="btn-primary">
+            + Add patient
+          </button>
           <button onClick={() => setShowImport((s) => !s)} className="btn-gold">
             ↥ Import Excel
           </button>
@@ -226,8 +250,21 @@ export default function TrackerModule({
                   key={r.id}
                   className={i % 2 ? "bg-surface/40" : "bg-surface-card"}
                 >
-                  <td className="td sticky left-0 bg-inherit text-xs text-surface-muted">
-                    {(r.facility_id && facMap[r.facility_id]) || "—"}
+                  <td className="td sticky left-0 bg-inherit">
+                    <select
+                      value={r.facility_id ?? ""}
+                      onChange={(e) =>
+                        saveCell(r.id, "facility_id", e.target.value || null)
+                      }
+                      className="cell-input min-w-[9rem] text-xs"
+                    >
+                      <option value="">— facility —</option>
+                      {facilities.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.short_name || f.name}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   {config.columns.map((c) => (
                     <td key={c.key} className="td">
