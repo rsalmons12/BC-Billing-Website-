@@ -1,0 +1,61 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply bg-surface text-surface-ink font-sans antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-surface-border bg-surface-card shadow-card;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-command text-command-text hover:bg-command-surface;
+  }
+  .btn-gold {
+    @apply btn bg-gold text-command hover:brightness-105;
+  }
+  .btn-ghost {
+    @apply btn border border-surface-border bg-surface-card text-surface-ink hover:bg-surface;
+  }
+  .btn-danger {
+    @apply btn bg-risk text-white hover:brightness-105;
+  }
+  .input {
+    @apply w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm outline-none focus:border-gold focus:ring-2 focus:ring-gold/20;
+  }
+  .cell-input {
+    @apply w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none hover:border-surface-border focus:border-gold focus:bg-white focus:ring-1 focus:ring-gold/30;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-surface-muted;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold;
+  }
+  .th {
+    @apply whitespace-nowrap px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-surface-muted;
+  }
+  .td {
+    @apply whitespace-nowrap px-3 py-2 align-middle;
+  }
+}
+
+/* dense table scrollbars */
+.scroll-x {
+  scrollbar-width: thin;
+}
