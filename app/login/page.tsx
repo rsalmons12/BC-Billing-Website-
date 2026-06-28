@@ -15,18 +15,41 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    if (error) {
-      setError(error.message);
+    try {
+      const supabase = createClient();
+      // Fail fast instead of spinning forever if the Supabase host is
+      // unreachable or the env keys are wrong.
+      const timeout = new Promise<{ error: { message: string } }>((resolve) =>
+        setTimeout(
+          () =>
+            resolve({
+              error: {
+                message:
+                  "Couldn't reach the server. Check your connection and try again.",
+              },
+            }),
+          15000
+        )
+      );
+      const { error } = await Promise.race([
+        supabase.auth.signInWithPassword({ email: email.trim(), password }),
+        timeout,
+      ]);
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return;
+      }
+      router.replace("/");
+      router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong signing in. Please try again."
+      );
       setLoading(false);
-      return;
     }
-    router.replace("/");
-    router.refresh();
   }
 
   return (
