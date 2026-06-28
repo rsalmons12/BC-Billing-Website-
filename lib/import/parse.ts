@@ -162,6 +162,9 @@ function parseGroupedSheet(
     const r = rows[i];
     const claimId = toStr(r[col.claim]);
     if (!claimId) continue;
+    // Skip in-sheet section dividers like "0-35 DAYS • 172 claims" — real
+    // claim ids have no spaces/bullets and contain digits.
+    if (/[\s•]/.test(claimId) || !/\d/.test(claimId)) continue;
     const age = col.age >= 0 ? toNum(r[col.age]) : null;
     const bucket = col.bucket >= 0 ? toStr(r[col.bucket]) : "";
     out.push({
@@ -261,6 +264,15 @@ export function parseWorkbook(data: ArrayBuffer): ParseResult {
             result.collectorAssignments.push({ facility: fac, collectors });
           }
         }
+        continue;
+      }
+
+      // Skip analytics / helper tabs that aren't facility claim lists.
+      if (
+        /summary|assignment plan|collector tracker|patient grouping|day patients|claims detail|horizon|3hzn|^_?lists$|^sheet\d+$/.test(
+          n
+        )
+      ) {
         continue;
       }
 
