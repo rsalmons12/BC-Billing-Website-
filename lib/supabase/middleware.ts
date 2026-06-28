@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config";
 
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
 
@@ -15,19 +16,16 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   };
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  // If the deployment is missing its Supabase keys, don't crash every route
-  // with a 500 — let the login page render and bounce everything else there.
-  if (!supabaseUrl || !supabaseKey) {
+  // If the deployment is somehow missing its Supabase config, don't crash
+  // every route with a 500 — let the login page render and bounce the rest.
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return isPublic ? NextResponse.next({ request }) : toLogin();
   }
 
   let supabaseResponse = NextResponse.next({ request });
 
   try {
-    const supabase = createServerClient(supabaseUrl, supabaseKey, {
+    const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       cookies: {
         getAll() {
           return request.cookies.getAll();
