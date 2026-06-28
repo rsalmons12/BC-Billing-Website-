@@ -102,16 +102,26 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
     setLog([]);
     setDone(false);
 
-    const claimsToWrite: (ParsedClaim & { facility_id: string })[] = [];
+    // Collapse duplicate Claim IDs (a file can list the same claim on multiple
+    // rows). Keep the last occurrence per claim_id; Postgres can't upsert the
+    // same conflict key twice in one statement.
+    const byId = new Map<string, ParsedClaim & { facility_id: string }>();
+    let mappedRows = 0;
     for (const c of parsed.claims) {
       const fid = mapping[c.facility_name];
       if (!fid) continue;
-      claimsToWrite.push({ ...c, facility_id: fid });
+      mappedRows++;
+      byId.set(c.claim_id, { ...c, facility_id: fid });
     }
+    const claimsToWrite = Array.from(byId.values());
     if (claimsToWrite.length === 0) {
       addLog("Nothing to import — no facilities mapped.");
       setBusy(false);
       return;
+    }
+    const dupes = mappedRows - claimsToWrite.length;
+    if (dupes > 0) {
+      addLog(`Collapsed ${dupes} duplicate Claim ID rows.`);
     }
 
     const touchedFacilityIds = Array.from(
