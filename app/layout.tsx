@@ -4,7 +4,6 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Recovery Desk — BC Billing Solutions",
   description: "Multi-tenant revenue cycle management for BC Billing Solutions.",
-  manifest: "/manifest.webmanifest",
   applicationName: "BC Billing",
   appleWebApp: {
     capable: true,
