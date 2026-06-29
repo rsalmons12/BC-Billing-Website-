@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import { money } from "@/lib/format";
 import {
@@ -21,31 +22,37 @@ export default async function FacilityDashboard() {
   const supabase = createClient();
 
   // RLS restricts all of these to the user's single facility automatically.
-  const [{ data: facData }, { data: claimsData }, { data: issuesData }] =
-    await Promise.all([
-      supabase.from("facilities").select("*").limit(1).maybeSingle(),
+  const [{ data: facData }, claimsData, issuesData] = await Promise.all([
+    supabase.from("facilities").select("*").limit(1).maybeSingle(),
+    selectAll<Claim>((f, t) =>
       supabase
         .from("claims")
         .select("*")
         .eq("present", true)
-        .order("age_days", { ascending: false }),
+        .order("age_days", { ascending: false })
+        .range(f, t)
+    ),
+    selectAll<AuthIssue>((f, t) =>
       supabase
         .from("auth_issues")
         .select("*")
-        .order("created_at", { ascending: false }),
-    ]);
+        .order("created_at", { ascending: false })
+        .range(f, t)
+    ),
+  ]);
 
   const facility = facData as Facility | null;
-  const claims = (claimsData as Claim[]) ?? [];
-  const issues = (issuesData as AuthIssue[]) ?? [];
+  const claims = claimsData ?? [];
+  const issues = issuesData ?? [];
 
   const ids = claims.map((c) => c.claim_id);
   let workMap: Record<string, ClaimWork> = {};
-  if (ids.length) {
+  for (let i = 0; i < ids.length; i += 1000) {
+    const slice = ids.slice(i, i + 1000);
     const { data: work } = await supabase
       .from("claim_work")
       .select("*")
-      .in("claim_id", ids);
+      .in("claim_id", slice);
     for (const w of (work as ClaimWork[]) ?? []) workMap[w.claim_id] = w;
   }
 

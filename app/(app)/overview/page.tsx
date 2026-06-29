@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
@@ -16,16 +17,19 @@ export default async function OverviewPage() {
   if (profile.role !== "management") redirect("/");
 
   const supabase = createClient();
-  const [{ data: facData }, { data: claimsData }, { data: issuesData }] =
-    await Promise.all([
-      supabase.from("facilities").select("*").order("name"),
-      supabase.from("claims").select("*").eq("present", true),
-      supabase.from("auth_issues").select("*").neq("status", "Completed"),
-    ]);
+  const [{ data: facData }, claimsData, issuesData] = await Promise.all([
+    supabase.from("facilities").select("*").order("name"),
+    selectAll<Claim>((f, t) =>
+      supabase.from("claims").select("*").eq("present", true).range(f, t)
+    ),
+    selectAll<AuthIssue>((f, t) =>
+      supabase.from("auth_issues").select("*").neq("status", "Completed").range(f, t)
+    ),
+  ]);
 
   const facilities = (facData as Facility[]) ?? [];
-  const claims = (claimsData as Claim[]) ?? [];
-  const issues = (issuesData as AuthIssue[]) ?? [];
+  const claims = claimsData ?? [];
+  const issues = issuesData ?? [];
 
   const facName = (id: string) => {
     const f = facilities.find((x) => x.id === id);

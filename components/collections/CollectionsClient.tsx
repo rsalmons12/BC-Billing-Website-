@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS, STATUS_OPTIONS } from "@/lib/constants";
+import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   RISK_AGE_THRESHOLD,
   type Claim,
@@ -74,22 +75,24 @@ export default function CollectionsClient({
       return;
     }
     setLoading(true);
-    const { data: claims } = await supabase
-      .from("claims")
-      .select("*")
-      .eq("facility_id", facilityId)
-      .eq("present", true)
-      .order("age_days", { ascending: false });
-
-    const claimList = (claims as Claim[]) ?? [];
+    const claimList = await selectAll<Claim>((f, t) =>
+      supabase
+        .from("claims")
+        .select("*")
+        .eq("facility_id", facilityId)
+        .eq("present", true)
+        .order("age_days", { ascending: false })
+        .range(f, t)
+    );
     const ids = claimList.map((c) => c.claim_id);
 
     let workMap: Record<string, ClaimWork> = {};
-    if (ids.length) {
+    for (let i = 0; i < ids.length; i += 1000) {
+      const slice = ids.slice(i, i + 1000);
       const { data: work } = await supabase
         .from("claim_work")
         .select("*")
-        .in("claim_id", ids);
+        .in("claim_id", slice);
       for (const w of (work as ClaimWork[]) ?? []) {
         workMap[w.claim_id] = w;
       }
@@ -372,31 +375,22 @@ export default function CollectionsClient({
                       {money(r.balance)}
                     </td>
                     <td className="td">
-                      <select
+                      <StatusCell
                         value={r.claim_status ?? ""}
-                        onChange={(e) =>
+                        onSave={(v) => {
                           setRows((prev) =>
                             prev.map((x) =>
                               x.claim_id === r.claim_id
-                                ? { ...x, claim_status: e.target.value }
+                                ? { ...x, claim_status: v }
                                 : x
                             )
-                          )
-                        }
-                        onBlur={(e) =>
+                          );
                           supabase
                             .from("claims")
-                            .update({ claim_status: e.target.value })
-                            .eq("id", r.id)
-                        }
-                        className="cell-input min-w-[8rem]"
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s || "—"}
-                          </option>
-                        ))}
-                      </select>
+                            .update({ claim_status: v })
+                            .eq("id", r.id);
+                        }}
+                      />
                     </td>
                     <FlagCell
                       value={w.med_rec}
@@ -522,6 +516,28 @@ function TextCell({
   );
 }
 
+// Status cell — shows the real payer status text (e.g. "CLAIM AT HORIZON
+// BLUE"), wrapped so the whole value is visible, and stays editable.
+function StatusCell({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <AutoTextarea
+      value={v}
+      onChange={setV}
+      onBlur={() => v !== value && onSave(v)}
+      className="min-w-[12rem] max-w-[16rem] text-xs"
+      placeholder="Status…"
+    />
+  );
+}
+
 function NotesCell({
   value,
   onSave,
@@ -530,17 +546,50 @@ function NotesCell({
   onSave: (v: string) => void;
 }) {
   const [v, setV] = useState(value);
-  const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setV(value), [value]);
+  return (
+    <AutoTextarea
+      value={v}
+      onChange={setV}
+      onBlur={() => v !== value && onSave(v)}
+      className="min-w-[18rem] max-w-[28rem]"
+      placeholder="Add a note…"
+    />
+  );
+}
+
+// A textarea that auto-grows to fit its content and wraps long text, so the
+// full note/status is always visible without scrolling.
+function AutoTextarea({
+  value,
+  onChange,
+  onBlur,
+  className = "",
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [value]);
   return (
     <textarea
       ref={ref}
       rows={1}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => v !== value && onSave(v)}
-      className="cell-input min-h-[2rem] min-w-[16rem] resize-y leading-snug"
-      placeholder="Add a note…"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      className={`cell-input resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug ${className}`}
     />
   );
 }
