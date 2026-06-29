@@ -297,17 +297,25 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
   };
 }
 
-// Repricing (Remark Codes Pricing) ----------------------------------------
+// Repricing / Renegotiations ----------------------------------------------
+// Handles the June Renegotiations layout (Facility, Patient, Member ID,
+// Claim ID, Claim Date, Charge, Amt Allowed, Payer, Remark Codes, Status,
+// Note/Action, Follow Up, Additional Payment, Payment Status) and the older
+// Remark Codes Pricing export. Claim ID is the stable key for note persistence.
 export interface RepricingRow {
   claim_id: string;
   patient_name: string;
   member_id: string;
-  claim_from: string;
-  total_amount: number | null;
-  amount_paid: number | null;
+  claim_date: string;
+  charge_amount: number | null;
+  amt_allowed: number | null;
   payer: string;
   remark_codes: string;
   claim_status: string;
+  note_action: string;
+  follow_up: string;
+  additional_payment: number | null;
+  payment_status: string;
 }
 
 export function parseRepricing(
@@ -318,22 +326,26 @@ export function parseRepricing(
   const sheets: string[] = [];
 
   for (const name of wb.SheetNames) {
-    if (/^_?lists$|^sheet\d+$/.test(norm(name))) continue;
+    if (/^_?lists$|^sheet\d+$|^summary$/.test(norm(name))) continue;
     const rows = rowsOf(wb.Sheets[name]);
     const hr = findHeaderRow(rows, /claim id|remark code/, 10);
     if (hr < 0) continue;
     const h = rows[hr].map(norm);
     const col = {
       claim: findCol(h, [/claim id/]),
-      office: findCol(h, [/office name|facility/]),
+      office: findCol(h, [/facility name|office name|facility/]),
       patient: findCol(h, [/patient full name|patient name|patient/]),
       member: findCol(h, [/member id/]),
-      from: findCol(h, [/from date|claim from/]),
-      total: findCol(h, [/total amount|claim total/]),
-      paid: findCol(h, [/amount paid|paid/]),
+      date: findCol(h, [/claim date|from date|claim from/]),
+      charge: findCol(h, [/charge amount|total amount|claim total/]),
+      allowed: findCol(h, [/amt allowed|amount allowed|allowed|amount paid|claim amount paid/]),
       payer: findCol(h, [/primary payer|payer|carrier/]),
       remark: findCol(h, [/remark code/]),
-      status: findCol(h, [/claim status|status/]),
+      status: findCol(h, [/claim status|^status$|status$/]),
+      note: findCol(h, [/note ?\/ ?action|note|action/]),
+      follow: findCol(h, [/follow ?up/]),
+      addl: findCol(h, [/additional payment|addl pmt|add'l/]),
+      pstatus: findCol(h, [/payment status/]),
     };
     let added = 0;
     for (let i = hr + 1; i < rows.length; i++) {
@@ -346,20 +358,34 @@ export function parseRepricing(
         claim_id: claim,
         patient_name: patient,
         member_id: col.member >= 0 ? toStr(r[col.member]) : "",
-        claim_from: col.from >= 0 ? toStr(r[col.from]) : "",
-        total_amount: col.total >= 0 ? toNum(r[col.total]) : null,
-        amount_paid: col.paid >= 0 ? toNum(r[col.paid]) : null,
+        claim_date: col.date >= 0 ? toStr(r[col.date]) : "",
+        charge_amount: col.charge >= 0 ? toNum(r[col.charge]) : null,
+        amt_allowed: col.allowed >= 0 ? toNum(r[col.allowed]) : null,
         payer: col.payer >= 0 ? toStr(r[col.payer]) : "",
         remark_codes: col.remark >= 0 ? toStr(r[col.remark]) : "",
         claim_status: col.status >= 0 ? toStr(r[col.status]) : "",
+        note_action: col.note >= 0 ? toStr(r[col.note]) : "",
+        follow_up: col.follow >= 0 ? toStr(r[col.follow]) : "",
+        additional_payment: col.addl >= 0 ? toNum(r[col.addl]) : null,
+        payment_status: col.pstatus >= 0 ? toStr(r[col.pstatus]) : "",
       });
       added++;
     }
     if (added) sheets.push(name);
   }
+
+  // De-dupe by claim id (last wins) so the claim-id upsert key is unique.
+  const byId = new Map<string, (RepricingRow & { facility_name: string })>();
+  const noId: (RepricingRow & { facility_name: string })[] = [];
+  for (const r of out) {
+    if (r.claim_id) byId.set(r.claim_id, r);
+    else noId.push(r);
+  }
+  const deduped = [...byId.values(), ...noId];
+
   return {
-    rows: out,
-    facilities: Array.from(new Set(out.map((r) => r.facility_name).filter(Boolean))),
+    rows: deduped,
+    facilities: Array.from(new Set(deduped.map((r) => r.facility_name).filter(Boolean))),
     sheetsParsed: sheets,
   };
 }

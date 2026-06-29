@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { normFacility } from "@/lib/import/parse";
 import type { Facility } from "@/lib/types";
@@ -38,6 +39,18 @@ export interface TrackerConfig {
     rows: Array<Record<string, any> & { facility_name: string }>;
     facilities: string[];
   };
+  // Import behaviour:
+  //  - default: replace all rows for the mapped facilities.
+  //  - importMode "append": only insert (never delete) — for historical logs.
+  //  - importKey: upsert by this column; existing rows keep their non-fact
+  //    columns (notes etc.), only importFactKeys are refreshed.
+  importMode?: "replace" | "append";
+  importKey?: string;
+  importFactKeys?: string[];
+  // Optional summary/analytics block rendered above the table (uses the
+  // currently-filtered rows).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  renderSummary?: (rows: Array<Record<string, any>>) => React.ReactNode;
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -77,12 +90,15 @@ export default function TrackerModule({
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from(config.table).select("*").order("created_at", {
-      ascending: false,
+    const data = await selectAll<Row>((f, t) => {
+      let q = supabase
+        .from(config.table)
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (facilityFilter !== "all") q = q.eq("facility_id", facilityFilter);
+      return q.range(f, t);
     });
-    if (facilityFilter !== "all") q = q.eq("facility_id", facilityFilter);
-    const { data } = await q;
-    setRows((data as Row[]) ?? []);
+    setRows(data);
     setLoading(false);
   }, [supabase, config.table, facilityFilter]);
 
@@ -217,6 +233,12 @@ export default function TrackerModule({
             load();
           }}
         />
+      )}
+
+      {config.renderSummary && !loading && (
+        <div className="border-b border-surface-border bg-surface px-6 py-3">
+          {config.renderSummary(filtered)}
+        </div>
       )}
 
       {/* table */}
@@ -470,9 +492,84 @@ function ImportPanel({
     const touched = Array.from(
       new Set(prepared.map((r) => r.facility_id as string))
     );
-    add(`Refreshing ${prepared.length} rows across ${touched.length} facilities…`);
 
-    // Replace model: clear existing rows for the touched facilities, then insert.
+    // ----- Mode 1: upsert by a stable key, preserving collector edits -----
+    if (config.importKey) {
+      const key = config.importKey;
+      const factKeys = config.importFactKeys ?? [];
+      const keyed = prepared.filter((r) => r[key]);
+      add(`Matching ${keyed.length} rows by ${key}…`);
+
+      // Which keys already exist? (those keep their note columns)
+      const allKeys = keyed.map((r) => String(r[key]));
+      const existing = new Set<string>();
+      for (const slice of chunk(allKeys, 500)) {
+        const rows = await selectAll<Record<string, unknown>>(
+          (f, t) =>
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            supabase.from(config.table).select(key).in(key, slice).range(f, t) as any
+        );
+        for (const row of rows) existing.add(String(row[key]));
+      }
+
+      const fresh = keyed.filter((r) => !existing.has(String(r[key])));
+      const known = keyed.filter((r) => existing.has(String(r[key])));
+
+      // New claims: insert the full row (brings the file's notes once).
+      for (const batch of chunk(fresh, 400)) {
+        const { error } = await supabase.from(config.table).insert(batch);
+        if (error) {
+          add(`Error inserting new: ${error.message}`);
+          setBusy(false);
+          return;
+        }
+      }
+      add(`${fresh.length} new added.`);
+
+      // Existing claims: refresh only the imported facts; notes are preserved.
+      let upd = 0;
+      for (const r of known) {
+        const factPayload: Record<string, unknown> = {};
+        for (const fk of factKeys) factPayload[fk] = r[fk];
+        const { error } = await supabase
+          .from(config.table)
+          .update(factPayload)
+          .eq(key, r[key] as string);
+        if (error) {
+          add(`Error updating ${r[key]}: ${error.message}`);
+          setBusy(false);
+          return;
+        }
+        upd++;
+        if (upd % 100 === 0) add(`Updated ${upd}/${known.length} (notes kept)…`);
+      }
+      add(`✓ Import complete — ${known.length} updated with notes preserved.`);
+      setBusy(false);
+      setTimeout(onDone, 800);
+      return;
+    }
+
+    // ----- Mode 2: append-only (never delete — historical log) -----
+    if (config.importMode === "append") {
+      let inserted = 0;
+      for (const batch of chunk(prepared, 400)) {
+        const { error } = await supabase.from(config.table).insert(batch);
+        if (error) {
+          add(`Error inserting: ${error.message}`);
+          setBusy(false);
+          return;
+        }
+        inserted += batch.length;
+        add(`Added ${inserted}/${prepared.length}…`);
+      }
+      add("✓ Import complete (appended, nothing deleted).");
+      setBusy(false);
+      setTimeout(onDone, 800);
+      return;
+    }
+
+    // ----- Mode 3 (default): replace all rows for the touched facilities -----
+    add(`Refreshing ${prepared.length} rows across ${touched.length} facilities…`);
     for (const fids of chunk(touched, 50)) {
       const { error } = await supabase
         .from(config.table)
