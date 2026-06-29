@@ -205,6 +205,12 @@ export default function TrackerModule({
     });
   }, [rows, statusFilter, search, config, archiveView]);
 
+  // Only render a window of rows so big tabs stay fast (totals/export still
+  // use the full filtered set).
+  const RENDER_CAP = 200;
+  const visible = filtered.slice(0, RENDER_CAP);
+  const hidden = filtered.length - visible.length;
+
   const exportXlsx = () => {
     const data = filtered.map((r) => {
       const o: Record<string, unknown> = { Facility: facName(r.facility_id) };
@@ -359,7 +365,7 @@ export default function TrackerModule({
               </tr>
             )}
             {!loading &&
-              filtered.map((r, i) => (
+              visible.map((r, i) => (
                 <tr
                   key={r.id}
                   className={i % 2 ? "bg-surface/40" : "bg-surface-card"}
@@ -423,6 +429,15 @@ export default function TrackerModule({
                   )}
                 </tr>
               ))}
+            {!loading && hidden > 0 && (
+              <tr>
+                <td colSpan={config.columns.length + 2} className="td py-3 text-center text-xs text-surface-muted">
+                  Showing the first {RENDER_CAP} of {filtered.length} — use the
+                  facility/status filters or search to narrow. (Totals and Export
+                  still cover all {filtered.length}.)
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
