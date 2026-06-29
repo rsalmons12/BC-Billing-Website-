@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import Logo from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -56,15 +57,13 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-command p-6">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gold font-display text-xl font-extrabold text-command">
-            RD
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-command-border">
+            <Logo size={44} />
           </div>
           <h1 className="font-display text-2xl font-bold text-command-text">
-            Recovery Desk
-          </h1>
-          <p className="mt-1 text-sm text-command-muted">
             BC Billing Solutions
-          </p>
+          </h1>
+          <p className="mt-1 text-sm text-command-muted">Recovery Desk</p>
         </div>
 
         <form
