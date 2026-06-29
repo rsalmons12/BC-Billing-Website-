@@ -370,20 +370,22 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
   for (const name of wb.SheetNames) {
     if (/^_?lists$|^sheet\d+$/.test(norm(name))) continue;
     const rows = rowsOf(wb.Sheets[name]);
-    // Facility often appears in a "Customer is X" banner near the top.
-    let facility = name;
+    // Some exports carry one facility in a "Customer is X" banner; the
+    // multi-facility export carries a per-row "Office Name" column (preferred).
+    let bannerFacility = name;
     for (let i = 0; i < Math.min(rows.length, 6); i++) {
       const joined = rows[i].map(toStr).join(" ");
       const m = joined.match(/customer is\s+(.+?)(?:\s{2,}|$)/i);
       if (m) {
-        facility = m[1].trim();
+        bannerFacility = m[1].trim();
         break;
       }
     }
-    const hr = findHeaderRow(rows, /payment entered|payment total paid|deposit date/, 12);
+    const hr = findHeaderRow(rows, /payment entered|payment total paid|deposit date|office name/, 12);
     if (hr < 0) continue;
     const h = rows[hr].map(norm);
     const col = {
+      office: findCol(h, [/office name/, /^office$/, /facility/]),
       entered: findCol(h, [/payment entered/]),
       deposit: findCol(h, [/deposit date/]),
       patient: findCol(h, [/patient full name|patient name|patient/]),
@@ -402,8 +404,9 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
       const r = rows[i];
       const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
       if (!patient) continue;
+      const office = col.office >= 0 ? toStr(r[col.office]) : "";
       out.push({
-        facility_name: facility,
+        facility_name: office || bannerFacility,
         payment_entered: col.entered >= 0 ? toStr(r[col.entered]) : "",
         deposit_date: col.deposit >= 0 ? toStr(r[col.deposit]) : "",
         patient_name: patient,
