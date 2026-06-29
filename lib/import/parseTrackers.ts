@@ -462,7 +462,9 @@ export function parseRepricing(
   for (const name of wb.SheetNames) {
     if (/^_?lists$|^sheet\d+$|^summary$/.test(norm(name))) continue;
     const rows = rowsOf(wb.Sheets[name]);
-    const hr = findHeaderRow(rows, /claim id|remark code/, 10);
+    // Match the real header (has "Claim ID") — not the title row, which on the
+    // Renegotiations export reads "… Remark Code Pricing".
+    const hr = findHeaderRow(rows, /claim id/, 12);
     if (hr < 0) continue;
     const h = rows[hr].map(norm);
     const col = {
