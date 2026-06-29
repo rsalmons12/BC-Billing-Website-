@@ -224,6 +224,26 @@ export default function TrackerModule({
     XLSX.writeFile(wb, `${config.table}${fac}.xlsx`);
   };
 
+  // Re-file every currently-shown row to a chosen facility (management).
+  const bulkReassign = async (fid: string) => {
+    const ids = filtered.map((r) => r.id);
+    if (!ids.length) return;
+    if (!confirm(`Move ${ids.length} shown row(s) to ${facName(fid)}?`)) return;
+    setSaveState("Moving…");
+    for (const slice of chunk(ids, 200)) {
+      const { error } = await supabase
+        .from(config.table)
+        .update({ facility_id: fid })
+        .in("id", slice);
+      if (error) {
+        setSaveState(`Error: ${error.message}`);
+        return;
+      }
+    }
+    setSaveState("Moved");
+    load();
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -293,6 +313,23 @@ export default function TrackerModule({
           <span className="text-surface-muted">
             <b className="text-surface-ink">{filtered.length}</b> rows
           </span>
+          {isManagement && !readOnly && filtered.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) bulkReassign(e.target.value);
+              }}
+              className="input max-w-[12rem]"
+              title="Move all currently shown rows to a facility"
+            >
+              <option value="">Move shown → facility…</option>
+              {facilities.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.short_name || f.name}
+                </option>
+              ))}
+            </select>
+          )}
           {!readOnly && (
             <button onClick={addRow} className="btn-primary">
               + {config.addLabel ?? "Add patient"}
