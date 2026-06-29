@@ -112,11 +112,8 @@ export default function CollectionsClient({
       }
     }
 
-    // Resolved (closed-out) claims drop off the active board.
     setRows(
-      claimList
-        .map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
-        .filter((r) => !r.work?.resolved)
+      claimList.map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
     );
     setLoading(false);
   }, [facilityId, supabase]);

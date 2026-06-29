@@ -160,11 +160,9 @@ export default function QueueClient({
       for (const w of (data as ClaimWork[]) ?? []) workMap[w.claim_id] = w;
     }
 
-    // This collector's split of each facility's claims. Resolved (closed-out)
-    // claims drop off the board entirely.
+    // This collector's split of each facility's claims.
     const mine = claims
       .filter((c) => {
-        if (workMap[c.claim_id]?.resolved) return false;
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
         if (cols.length <= 1) return true;
         const idx = cols.indexOf(collectorId);
@@ -310,41 +308,6 @@ export default function QueueClient({
     });
 
   const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
-
-  // "Resolve / close out": the claim is done — it leaves the board and is
-  // counted as a closed claim in Reporting. Also stamps it worked today so it
-  // counts toward production if it wasn't already.
-  const resolveClaim = (r: ClaimRow) => {
-    if (
-      !confirm(
-        `Close out ${r.patient_name ?? r.claim_id}? It leaves your queue and is logged as a resolved claim in Reporting.`
-      )
-    )
-      return;
-    const wasWorkedToday = (r.work?.date_worked || "") === today;
-    setRows((prev) => prev.filter((x) => x.claim_id !== r.claim_id));
-    setSaveState("Closing out…");
-    supabase
-      .from("claim_work")
-      .upsert(
-        {
-          claim_id: r.claim_id,
-          resolved: true,
-          resolved_at: new Date().toISOString(),
-          resolved_by: collectorId,
-          date_worked: today,
-          initials: collector.initials || r.work?.initials || "",
-          updated_by: self.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "claim_id" }
-      )
-      .then(({ error }) => {
-        setSaveState(error ? `Error: ${error.message}` : "Closed out ✓");
-        if (!error) setTimeout(() => setSaveState(""), 1200);
-      });
-    if (!wasWorkedToday) logProduction(r.claim_id, r.facility_id);
-  };
 
   // Auth flag = "Y" routes the claim to the auth team and parks it off the board.
   const raiseAuthIssue = useCallback(
@@ -502,7 +465,7 @@ export default function QueueClient({
               <th className="th">Mgmt</th>
               <th className="th min-w-[16rem]">Notes</th>
               <th className="th">Init</th>
-              <th className="th">Done / Close</th>
+              <th className="th">Done</th>
             </tr>
           </thead>
           <tbody>
@@ -639,31 +602,22 @@ export default function QueueClient({
                       />
                     </td>
                     <td className="td">
-                      <div className="flex items-center gap-1.5">
-                        {done ? (
-                          <button
-                            onClick={() => undoWorked(r)}
-                            className="badge bg-recovered/15 px-2 py-1 text-[11px] font-semibold text-recovered hover:bg-risk/10 hover:text-risk"
-                            title="Undo — put back in the queue"
-                          >
-                            ✓ done ↩
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => markWorked(r)}
-                            className="btn-primary px-2.5 py-1 text-xs"
-                          >
-                            ✓ Worked
-                          </button>
-                        )}
+                      {done ? (
                         <button
-                          onClick={() => resolveClaim(r)}
-                          className="badge border border-secured/40 bg-secured/10 px-2 py-1 text-[11px] font-semibold text-secured hover:bg-secured/20"
-                          title="Resolve & close out — done for good, counted in Reporting"
+                          onClick={() => undoWorked(r)}
+                          className="badge bg-recovered/15 px-2 py-1 text-[11px] font-semibold text-recovered hover:bg-risk/10 hover:text-risk"
+                          title="Undo — put back in the queue"
                         >
-                          Close out
+                          ✓ done ↩
                         </button>
-                      </div>
+                      ) : (
+                        <button
+                          onClick={() => markWorked(r)}
+                          className="btn-primary px-2.5 py-1 text-xs"
+                        >
+                          ✓ Worked
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
