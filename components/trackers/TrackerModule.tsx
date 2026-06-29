@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/format";
 import { normFacility } from "@/lib/import/parse";
@@ -337,12 +337,11 @@ function Cell({
 
   if (col.kind === "notes") {
     return (
-      <textarea
-        rows={1}
+      <AutoTextarea
         value={v}
-        onChange={(e) => setV(e.target.value)}
+        onChange={setV}
         onBlur={() => v !== String(value ?? "") && commit()}
-        className="cell-input min-h-[2rem] min-w-[16rem] resize-y leading-snug"
+        className="min-w-[18rem] max-w-[28rem]"
       />
     );
   }
@@ -355,6 +354,38 @@ function Cell({
       className={`cell-input ${col.min ?? "min-w-[7rem]"} ${
         col.kind === "money" || col.kind === "num" ? "font-mono" : ""
       }`}
+    />
+  );
+}
+
+// A textarea that auto-grows and wraps so the full text is always visible.
+function AutoTextarea({
+  value,
+  onChange,
+  onBlur,
+  className = "",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  className?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      className={`cell-input resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug ${className}`}
     />
   );
 }

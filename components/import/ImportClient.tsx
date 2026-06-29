@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import {
   parseWorkbook,
@@ -136,12 +137,10 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
     // Existing claim_ids in touched facilities (to detect brand-new + dropoffs).
     const existing = new Set<string>();
     for (const fids of chunk(touchedFacilityIds, 50)) {
-      const { data } = await supabase
-        .from("claims")
-        .select("claim_id")
-        .in("facility_id", fids);
-      for (const row of (data as { claim_id: string }[]) ?? [])
-        existing.add(row.claim_id);
+      const rows = await selectAll<{ claim_id: string }>((f, t) =>
+        supabase.from("claims").select("claim_id").in("facility_id", fids).range(f, t)
+      );
+      for (const row of rows) existing.add(row.claim_id);
     }
     const brandNew = claimsToWrite.filter((c) => !existing.has(c.claim_id));
     addLog(`${brandNew.length} brand-new claims, ${claimsToWrite.length - brandNew.length} existing.`);
@@ -200,12 +199,15 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
     // Mark dropoffs: present=false for claims in touched facilities not in this file.
     const dropoffs: string[] = [];
     for (const fids of chunk(touchedFacilityIds, 50)) {
-      const { data } = await supabase
-        .from("claims")
-        .select("claim_id")
-        .in("facility_id", fids)
-        .eq("present", true);
-      for (const row of (data as { claim_id: string }[]) ?? []) {
+      const rows = await selectAll<{ claim_id: string }>((f, t) =>
+        supabase
+          .from("claims")
+          .select("claim_id")
+          .in("facility_id", fids)
+          .eq("present", true)
+          .range(f, t)
+      );
+      for (const row of rows) {
         if (!importedIds.has(row.claim_id)) dropoffs.push(row.claim_id);
       }
     }
