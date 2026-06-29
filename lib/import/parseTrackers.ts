@@ -262,6 +262,74 @@ export function parseHistorical(data: ArrayBuffer): HistoricalRow[] {
   return out;
 }
 
+// Weekly Assignments — from the COLLECTOR ASSIGNMENTS sheet -----------------
+export interface AssignmentRow {
+  collectors: string;
+  billers: string;
+  ur_specialist: string;
+  repricing_specialist: string;
+  pricing_specialist: string;
+  notes: string;
+}
+
+export function parseAssignments(
+  data: ArrayBuffer
+): TrackerParseResult<AssignmentRow> {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const out: (AssignmentRow & { facility_name: string })[] = [];
+  const sheets: string[] = [];
+
+  for (const name of wb.SheetNames) {
+    const n = norm(name);
+    if (!/collector assignment|assignment/.test(n)) continue;
+    const rows = rowsOf(wb.Sheets[name]);
+    const hr = findHeaderRow(rows, /facility/, 8);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const fi = findCol(h, [/facility/]);
+    // Collect any "collector" columns (0-35 collectors, 36+ collector 1/2/3…).
+    const collectorCols = h
+      .map((c, i) => (/collector/.test(c) ? i : -1))
+      .filter((i) => i >= 0);
+    const billerCol = findCol(h, [/biller/]);
+    const urCol = findCol(h, [/\bur\b|utilization/]);
+    const repCol = findCol(h, [/repric/]);
+    const priceCol = findCol(h, [/pricing/]);
+    const noteCol = findCol(h, [/notes|rule/]);
+
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const fac = fi >= 0 ? toStr(r[fi]) : "";
+      if (!fac) continue;
+      const collectors = Array.from(
+        new Set(
+          collectorCols
+            .map((ci) => toStr(r[ci]))
+            .join(" / ")
+            .split(/[\/,]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )
+      ).join(", ");
+      out.push({
+        facility_name: fac,
+        collectors,
+        billers: billerCol >= 0 ? toStr(r[billerCol]) : "",
+        ur_specialist: urCol >= 0 ? toStr(r[urCol]) : "",
+        repricing_specialist: repCol >= 0 ? toStr(r[repCol]) : "",
+        pricing_specialist: priceCol >= 0 ? toStr(r[priceCol]) : "",
+        notes: noteCol >= 0 ? toStr(r[noteCol]) : "",
+      });
+    }
+    if (out.length) sheets.push(name);
+  }
+  return {
+    rows: out,
+    facilities: Array.from(new Set(out.map((r) => r.facility_name))),
+    sheetsParsed: sheets,
+  };
+}
+
 // Medical Records ----------------------------------------------------------
 export interface MedRow {
   patient_name: string;

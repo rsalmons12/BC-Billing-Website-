@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { href: "/payments", label: "Payments", roles: ["management", "staff"], icon: "$" },
   { href: "/repricing", label: "Repricing", roles: ["management", "staff"], icon: "◷" },
   { href: "/historical", label: "Historical Data", roles: ["management", "staff"], icon: "≣" },
+  { href: "/assignments", label: "Weekly Assignments", roles: ["management", "staff"], icon: "☷" },
   { href: "/facility", label: "Dashboard", roles: ["facility"], icon: "▣" },
   { href: "/import", label: "Weekly Import", roles: ["management"], icon: "↥" },
   { href: "/admin", label: "Admin", roles: ["management"], icon: "⚙" },
