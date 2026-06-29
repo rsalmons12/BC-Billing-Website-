@@ -13,7 +13,7 @@ export default async function AppLayout({
   const fallback = allowed[0] ?? "/pending";
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden md:flex-row">
       <TabGuard allowed={allowed} fallback={fallback} />
       <Sidebar profile={profile} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
