@@ -57,6 +57,48 @@ They build the iOS app in the cloud (you still need an Apple Developer account).
 
 ---
 
+## Route 3 — Public App Store, no Mac (Codemagic cloud build)
+
+You have an Apple Developer account but no Mac. This is the turnkey path. A
+`codemagic.yaml` is already in the repo.
+
+### Step 1 — App Store Connect (web, no Mac)
+1. Go to **https://appstoreconnect.apple.com** and sign in.
+2. **Users and Access → Integrations → App Store Connect API** → generate a key
+   with the **App Manager** role. Download it and note the Key ID + Issuer ID.
+3. **Certificates, Identifiers & Profiles → Identifiers → +** → register the
+   App ID **cloud.bcbilling.app**.
+4. **Apps → + → New App**: Platform iOS, Name **BC Billing**, Bundle ID
+   **cloud.bcbilling.app**, pick an SKU (any text, e.g. `bcbilling01`).
+
+### Step 2 — Codemagic (cloud build, no Mac)
+1. Sign up at **https://codemagic.io** with GitHub and authorize this repo.
+2. **Teams → Integrations → App Store Connect** → add the API key from Step 1.
+   Name the integration exactly **`BC_BILLING_APP_STORE_KEY`** (the yaml
+   references that name).
+3. Open the app → it detects `codemagic.yaml` → run the **ios-app-store**
+   workflow. It builds the signed app and pushes it to **TestFlight**.
+
+### Step 3 — Submit for review
+1. In App Store Connect, fill the listing: description, **screenshots**
+   (required), **privacy policy URL**, category (Business), age rating.
+2. ⚠️ Because the app is **login-only**, App Review needs a working account.
+   Put a **test login** (email + password) in **App Review Information → Notes**,
+   or they'll reject it as "unable to review."
+3. Attach the TestFlight build → **Submit for Review** (1–3 days).
+
+### ⚠️ Read this before submitting to the *public* store
+Apple guideline **4.2** often rejects apps that are "just a website in a
+wrapper." This is a login-gated business tool with live data entry, which
+helps, but it's a real risk on the public store. Two ways to de-risk:
+- **Add something native** (push notifications, Face ID login, offline) so it's
+  more than the website.
+- **Or distribute privately** to your staff via **Apple Business Manager →
+  Custom Apps** — far lighter review for an internal tool:
+  https://developer.apple.com/business/distribute/
+
+---
+
 ## Store accounts (required for either route)
 
 - **Apple Developer Program** — $99/year — https://developer.apple.com/programs/enroll/
