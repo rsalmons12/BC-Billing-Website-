@@ -129,6 +129,32 @@ create policy hist_select on historical_data for select using (auth.uid() is not
 drop policy if exists hist_write on historical_data;
 create policy hist_write on historical_data for all using (is_management()) with check (is_management());
 
+-- ---- Production log: append-only staff-production events for reporting ----
+create table if not exists production_log (
+  id          uuid primary key default gen_random_uuid(),
+  collector_id uuid references auth.users(id) on delete cascade,
+  claim_id     text,
+  facility_id  uuid references facilities(id) on delete set null,
+  worked_on    date not null default current_date,
+  created_at   timestamptz not null default now()
+);
+create index if not exists production_log_worked_on_idx on production_log(worked_on);
+create index if not exists production_log_collector_idx on production_log(collector_id);
+create index if not exists production_log_facility_idx  on production_log(facility_id);
+create unique index if not exists production_log_unique
+  on production_log(collector_id, claim_id, worked_on);
+alter table production_log enable row level security;
+drop policy if exists production_log_select on production_log;
+create policy production_log_select on production_log for select
+  using (is_management() or collector_id = auth.uid());
+drop policy if exists production_log_insert on production_log;
+create policy production_log_insert on production_log for insert
+  with check (collector_id = auth.uid() or is_management());
+drop policy if exists production_log_delete on production_log;
+create policy production_log_delete on production_log for delete
+  using (collector_id = auth.uid() or is_management());
+grant select, insert, update, delete on production_log to authenticated;
+
 -- ---- Grants (RLS still governs rows) ----
 grant select, insert, update, delete on
   authorizations, negotiations, medical_records, payments, repricing,
