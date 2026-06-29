@@ -10,6 +10,7 @@ const NAV: NavItem[] = [
   { href: "/overview", label: "Overview", roles: ["management"], icon: "▦" },
   { href: "/collections", label: "Collections", roles: ["management", "staff"], icon: "▤" },
   { href: "/auth-issues", label: "Auth Issues", roles: ["management", "staff"], icon: "✦" },
+  { href: "/management", label: "Management", roles: ["management", "staff"], icon: "★" },
   { href: "/authorizations", label: "Authorization", roles: ["management", "staff"], icon: "✓" },
   { href: "/negotiations", label: "Negotiations", roles: ["management", "staff"], icon: "⇄" },
   { href: "/medical-records", label: "Medical Records", roles: ["management", "staff"], icon: "▥" },
