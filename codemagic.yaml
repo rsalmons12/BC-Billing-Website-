@@ -1,0 +1,57 @@
+# Cloud iOS build for BC Billing (no Mac required).
+# Builds the Capacitor iOS shell on Codemagic's Mac instances and uploads to
+# App Store Connect / TestFlight automatically.
+#
+# Before the first run, in the Codemagic UI:
+#   1. Connect this GitHub repo.
+#   2. Teams → Integrations → App Store Connect → add an API key
+#      (App Store Connect → Users and Access → Integrations → generate a key
+#       with the "App Manager" role). Name the integration exactly:
+#         BC_BILLING_APP_STORE_KEY
+#   3. Make sure the bundle id  cloud.bcbilling.app  exists as an App in
+#      App Store Connect first (see MOBILE_APP.md).
+workflows:
+  ios-app-store:
+    name: BC Billing iOS (App Store)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: BC_BILLING_APP_STORE_KEY
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: cloud.bcbilling.app
+      vars:
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+        BUNDLE_ID: "cloud.bcbilling.app"
+      node: 20
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci
+      - name: Generate / sync the iOS native project
+        script: |
+          if [ ! -d "ios" ]; then npx cap add ios; fi
+          npx cap sync ios
+      - name: Install CocoaPods
+        script: |
+          cd ios/App && pod install
+      - name: Apply automatic signing profiles
+        script: xcode-project use-profiles
+      - name: Build the signed .ipa
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Uploads to TestFlight automatically. Flip to true to also send it
+        # into App Store review automatically once you're confident.
+        submit_to_testflight: true
+        submit_to_app_store: false
