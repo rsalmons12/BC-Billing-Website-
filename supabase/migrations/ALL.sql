@@ -99,6 +99,10 @@ create index if not exists weekly_assignments_facility_idx on weekly_assignments
 -- ---- Per-user tab access ----
 alter table profiles add column if not exists allowed_tabs text[];
 
+-- ---- Collection Queue: per-collector daily target + job title ----
+alter table profiles add column if not exists daily_target int default 100;
+alter table profiles add column if not exists job_title text default 'Collector';
+
 -- ---- RLS (facility-scoped) for the facility-scoped tables ----
 alter table authorizations    enable row level security;
 alter table negotiations      enable row level security;

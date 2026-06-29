@@ -17,8 +17,20 @@ export interface Profile {
   role: Role;
   facility_id: string | null;
   allowed_tabs: string[] | null;
+  daily_target: number | null;
+  job_title: string | null;
   created_at: string;
 }
+
+// Job titles a staff member can hold. "Collector" is the default and the only
+// one that drives the Collection Queue; the rest are organizational labels.
+export const JOB_TITLES = [
+  "Collector",
+  "Repricing",
+  "Negotiations",
+  "Utilization Specialist",
+  "Biller",
+] as const;
 
 export interface Assignment {
   id: string;
