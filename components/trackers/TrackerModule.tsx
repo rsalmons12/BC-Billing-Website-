@@ -519,8 +519,38 @@ function Cell({
   );
 }
 
-// Default summary bar: row count, sums of money columns, and a status
-// breakdown — shown at the top of every tracker page.
+// Summary card (matches the Payments cards).
+export function SumCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "recovered" | "gold" | "risk" | "secured";
+}) {
+  const color =
+    accent === "recovered"
+      ? "text-recovered"
+      : accent === "gold"
+        ? "text-gold"
+        : accent === "risk"
+          ? "text-risk"
+          : accent === "secured"
+            ? "text-secured"
+            : "text-surface-ink";
+  return (
+    <div className="card p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+        {label}
+      </div>
+      <div className={`font-display text-xl font-bold ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+// Default card summary: a Rows card, one card per money column, and (when there
+// are no money columns) cards for the status breakdown.
 function DefaultSummary({
   rows,
   columns,
@@ -531,14 +561,20 @@ function DefaultSummary({
   statusKey?: string;
 }) {
   const moneyCols = columns.filter((c) => c.kind === "money" && !c.compute);
-  const sums = moneyCols.map((c) => ({
-    label: c.label,
-    value: rows.reduce(
-      (s, r) => s + (typeof r[c.key] === "number" ? (r[c.key] as number) : 0),
-      0
-    ),
-  }));
+  const sum = (key: string) =>
+    rows.reduce((s, r) => s + (typeof r[key] === "number" ? (r[key] as number) : 0), 0);
 
+  const cards: { label: string; value: string; accent?: "gold" }[] = [
+    { label: "Rows", value: String(rows.length) },
+    ...moneyCols.slice(0, 3).map((c) => ({
+      label: c.label,
+      value: money(sum(c.key)),
+      accent: "gold" as const,
+    })),
+  ];
+
+  // Status breakdown (counts). Shown as cards when there are no money columns,
+  // otherwise as small chips below.
   const statusCounts: Array<[string, number]> = [];
   if (statusKey) {
     const m = new Map<string, number>();
@@ -548,23 +584,28 @@ function DefaultSummary({
     }
     statusCounts.push(...Array.from(m.entries()).sort((a, b) => b[1] - a[1]));
   }
+  if (moneyCols.length === 0 && statusCounts.length) {
+    for (const [k, n] of statusCounts.slice(0, 3)) {
+      cards.push({ label: k, value: String(n) });
+    }
+  }
 
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-      <span className="text-surface-muted">
-        <b className="text-surface-ink">{rows.length}</b> rows
-      </span>
-      {sums.map((s) => (
-        <span key={s.label} className="text-surface-muted">
-          {s.label}{" "}
-          <b className="font-mono text-surface-ink">{money(s.value)}</b>
-        </span>
-      ))}
-      {statusCounts.slice(0, 6).map(([k, n]) => (
-        <span key={k} className="badge bg-surface-card text-surface-muted">
-          {k}: <b className="ml-1 text-surface-ink">{n}</b>
-        </span>
-      ))}
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {cards.map((c) => (
+          <SumCard key={c.label} label={c.label} value={c.value} accent={c.accent} />
+        ))}
+      </div>
+      {moneyCols.length > 0 && statusCounts.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {statusCounts.slice(0, 6).map(([k, n]) => (
+            <span key={k} className="badge bg-surface-card text-surface-muted">
+              {k}: <b className="ml-1 text-surface-ink">{n}</b>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

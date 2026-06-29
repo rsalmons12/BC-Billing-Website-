@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
+import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { AUTH_ISSUE_STATUSES } from "@/lib/constants";
 import type { AuthIssue, Facility } from "@/lib/types";
@@ -173,25 +174,19 @@ export default function AuthIssuesClient({
         </div>
       </div>
 
-      {/* summary bar */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-border bg-surface px-6 py-3 text-sm">
-        <span className="text-surface-muted">
-          {view === "completed" ? "Completed" : "Active"} issues{" "}
-          <b className="text-surface-ink">{totals.count}</b>
-        </span>
-        <span className="text-surface-muted">
-          $ at stake{" "}
-          <b className="font-mono text-surface-ink">{money(totals.atRisk)}</b>
-        </span>
-        <span className="text-surface-muted">
-          Needs mgmt <b className="text-gold">{totals.mgmt}</b>
-        </span>
-        <span className="text-surface-muted">
-          From collections{" "}
-          <b className="text-secured">
-            {shown.filter((i) => i.from_collection).length}
-          </b>
-        </span>
+      {/* summary cards */}
+      <div className="grid grid-cols-2 gap-3 border-b border-surface-border bg-surface px-6 py-3 md:grid-cols-4">
+        <SumCard
+          label={`${view === "completed" ? "Completed" : "Active"} Issues`}
+          value={String(totals.count)}
+        />
+        <SumCard label="$ At Stake" value={money(totals.atRisk)} accent="gold" />
+        <SumCard label="Needs Mgmt" value={String(totals.mgmt)} accent="gold" />
+        <SumCard
+          label="From Collections"
+          value={String(shown.filter((i) => i.from_collection).length)}
+          accent="secured"
+        />
       </div>
 
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
