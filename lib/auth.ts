@@ -32,6 +32,8 @@ export async function requireProfile(): Promise<{
       role: "pending",
       facility_id: null,
       allowed_tabs: null,
+      daily_target: 100,
+      job_title: null,
       created_at: new Date().toISOString(),
     } as Profile);
 

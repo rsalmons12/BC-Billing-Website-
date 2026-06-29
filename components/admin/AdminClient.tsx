@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { TABS } from "@/lib/nav";
-import type { Profile, Facility, Assignment, Role } from "@/lib/types";
+import { JOB_TITLES, type Profile, type Facility, type Assignment, type Role } from "@/lib/types";
 
 type Tab = "users" | "facilities" | "create";
 
@@ -47,6 +47,17 @@ export default function AdminClient({
       .update({ role })
       .eq("id", p.id);
     flash(error ? `Error: ${error.message}` : "Role updated");
+  };
+
+  const setJobTitle = async (p: Profile, job_title: string) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, job_title } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ job_title })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : "Job title set");
   };
 
   const setFacilityId = async (p: Profile, facility_id: string | null) => {
@@ -143,6 +154,7 @@ export default function AdminClient({
           assignments={assignments}
           selfId={selfId}
           setRole={setRole}
+          setJobTitle={setJobTitle}
           setFacilityId={setFacilityId}
           toggleAssignment={toggleAssignment}
           toggleTab={toggleTab}
@@ -170,6 +182,7 @@ function UsersTab({
   assignments,
   selfId,
   setRole,
+  setJobTitle,
   setFacilityId,
   toggleAssignment,
   toggleTab,
@@ -179,6 +192,7 @@ function UsersTab({
   assignments: Assignment[];
   selfId: string;
   setRole: (p: Profile, r: Role) => void;
+  setJobTitle: (p: Profile, title: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
   toggleAssignment: (p: Profile, facilityId: string) => void;
   toggleTab: (p: Profile, href: string) => void;
@@ -219,6 +233,23 @@ function UsersTab({
                   ))}
                 </select>
               </div>
+
+              {p.role === "staff" && (
+                <div>
+                  <span className="label">Job title</span>
+                  <select
+                    value={p.job_title ?? "Collector"}
+                    onChange={(e) => setJobTitle(p, e.target.value)}
+                    className="input min-w-[12rem]"
+                  >
+                    {JOB_TITLES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {p.role === "facility" && (
                 <div>
