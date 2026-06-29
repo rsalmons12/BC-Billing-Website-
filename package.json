@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "app:add": "cap add ios && cap add android",
+    "app:sync": "cap sync",
+    "app:ios": "cap open ios",
+    "app:android": "cap open android"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -17,6 +21,10 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
