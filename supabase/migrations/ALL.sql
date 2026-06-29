@@ -64,6 +64,7 @@ create table if not exists repricing (
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 create index if not exists repricing_facility_idx on repricing(facility_id);
+alter table repricing add column if not exists charge_amount numeric;
 alter table repricing add column if not exists claim_date text;
 alter table repricing add column if not exists amt_allowed numeric;
 alter table repricing add column if not exists additional_payment numeric;
