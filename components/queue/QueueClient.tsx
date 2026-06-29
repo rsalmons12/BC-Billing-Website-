@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
+import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   RISK_AGE_THRESHOLD,
   type Claim,
@@ -15,6 +16,24 @@ import {
 } from "@/lib/types";
 
 const DEFAULT_TARGET = 100;
+
+const EMPTY_WORK = (claim_id: string): ClaimWork => ({
+  claim_id,
+  notes: "",
+  initials: "",
+  date_worked: "",
+  med_rec: "",
+  auth_flag: "",
+  billing: "",
+  cap_blue: "",
+  highmark: "",
+  rebill: "",
+  mgmt_needed: false,
+  auth_issue_status: "",
+  auth_notes: "",
+  updated_by: null,
+  updated_at: "",
+});
 
 // Stable hash so the same claim always lands with the same collector.
 function hashInt(s: string): number {
@@ -174,6 +193,11 @@ export default function QueueClient({
   const allotment = Math.max(0, target + bonus - doneToday);
   const todaySet = unworked.slice(0, allotment);
 
+  // Show today's allotment AND anything already worked today (so a collector
+  // can keep editing a claim they just finished without it vanishing).
+  const workedTodayRows = rows.filter((r) => (r.work?.date_worked || "") === today);
+  const boardRows = [...todaySet, ...workedTodayRows];
+
   // Stats over today's allotment (not the whole backlog).
   const riskRemaining = todaySet.filter(
     (r) => (r.age_days ?? 0) > RISK_AGE_THRESHOLD
@@ -181,12 +205,14 @@ export default function QueueClient({
   const balanceRemaining = todaySet.reduce((s, r) => s + (r.balance ?? 0), 0);
   const backlog = unworked.length; // everything not yet worked, incl. rollover
 
-  // Apply on-screen filters to today's allotment.
+  // Apply on-screen filters to the board.
   const q = search.trim().toLowerCase();
-  const shown = todaySet.filter((r) => {
+  const shown = boardRows.filter((r) => {
     if (riskOnly && (r.age_days ?? 0) <= RISK_AGE_THRESHOLD) return false;
     if (q) {
-      const hay = `${r.patient_name ?? ""} ${r.claim_id ?? ""} ${r.member_id ?? ""}`.toLowerCase();
+      const hay = `${r.patient_name ?? ""} ${r.claim_id ?? ""} ${r.member_id ?? ""} ${
+        r.claim_status ?? ""
+      }`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -204,84 +230,131 @@ export default function QueueClient({
     if (!error) setTimeout(() => setSaveState(""), 900);
   };
 
-  const markWorked = async (r: ClaimRow) => {
-    setSaveState("Saving…");
-    const alreadyToday = (r.work?.date_worked || "") === today;
-    setRows((prev) =>
-      prev.map((x) =>
-        x.claim_id === r.claim_id
-          ? {
-              ...x,
-              work: {
-                ...(x.work ?? ({} as ClaimWork)),
-                claim_id: x.claim_id,
-                date_worked: today,
-                initials: collector.initials || x.work?.initials || "",
-              } as ClaimWork,
-            }
-          : x
-      )
-    );
-    const { error } = await supabase.from("claim_work").upsert(
-      {
-        claim_id: r.claim_id,
-        date_worked: today,
-        initials: collector.initials || "",
-        updated_by: self.id,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "claim_id" }
-    );
-    // Append-only production credit (one per collector/claim/day) for reporting.
-    if (!alreadyToday) {
+  // ---- production log helpers (keep reporting honest) ----
+  const logProduction = useCallback(
+    async (claimId: string, facilityId: string | null) => {
       await supabase.from("production_log").upsert(
         {
           collector_id: collectorId,
-          claim_id: r.claim_id,
-          facility_id: r.facility_id,
+          claim_id: claimId,
+          facility_id: facilityId,
           worked_on: today,
         },
         { onConflict: "collector_id,claim_id,worked_on" }
       );
+    },
+    [supabase, collectorId, today]
+  );
+  const unlogProduction = useCallback(
+    async (claimId: string) => {
+      await supabase
+        .from("production_log")
+        .delete()
+        .eq("collector_id", collectorId)
+        .eq("claim_id", claimId)
+        .eq("worked_on", today);
+    },
+    [supabase, collectorId, today]
+  );
+
+  // Persist a partial claim_work change (upsert by claim_id) + optimistic UI.
+  const patchRow = useCallback(
+    (claimId: string, partial: Partial<ClaimWork>) => {
+      const prev = rows.find((r) => r.claim_id === claimId);
+      const prevWorked = (prev?.work?.date_worked || "") === today;
+
+      setRows((cur) =>
+        cur.map((r) =>
+          r.claim_id === claimId
+            ? { ...r, work: { ...(r.work ?? EMPTY_WORK(claimId)), ...partial } }
+            : r
+        )
+      );
+      setSaveState("Saving…");
+      supabase
+        .from("claim_work")
+        .upsert(
+          {
+            claim_id: claimId,
+            ...partial,
+            updated_by: self.id,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "claim_id" }
+        )
+        .then(({ error }) => {
+          setSaveState(error ? `Error: ${error.message}` : "Saved");
+          if (!error) setTimeout(() => setSaveState(""), 1000);
+        });
+
+      // If date_worked transitioned to/from today, sync the production credit.
+      if (Object.prototype.hasOwnProperty.call(partial, "date_worked")) {
+        const nowWorked = (partial.date_worked || "") === today;
+        if (nowWorked && !prevWorked) logProduction(claimId, prev?.facility_id ?? null);
+        if (!nowWorked && prevWorked) unlogProduction(claimId);
+      }
+    },
+    [rows, supabase, self.id, today, logProduction, unlogProduction]
+  );
+
+  // The "✓ Worked" quick action: stamp today + the collector's initials.
+  const markWorked = (r: ClaimRow) =>
+    patchRow(r.claim_id, {
+      date_worked: today,
+      initials: collector.initials || r.work?.initials || "",
+    });
+
+  const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
+
+  // Auth flag = "Y" routes the claim to the auth team and parks it off the board.
+  const raiseAuthIssue = useCallback(
+    async (row: ClaimRow) => {
+      patchRow(row.claim_id, { auth_flag: "Y", auth_issue_status: "open" });
+      setSaveState("Routing to auth team…");
+      const { error } = await supabase.from("auth_issues").insert({
+        claim_id: row.claim_id,
+        facility_id: row.facility_id,
+        patient_name: row.patient_name,
+        payer: row.member_id,
+        dos_from: row.dos_from,
+        dos_to: row.dos_to,
+        charge_amount: row.balance ?? row.charge_amount,
+        status: "Not Worked",
+        from_collection: true,
+      });
+      if (error) {
+        setSaveState(`Error: ${error.message}`);
+        return;
+      }
+      setSaveState("Sent to Auth Issues");
+      setRows((prev) =>
+        prev.map((r) =>
+          r.claim_id === row.claim_id
+            ? { ...r, work: { ...(r.work ?? EMPTY_WORK(row.claim_id)), auth_flag: "Y", auth_issue_status: "open" } }
+            : r
+        )
+      );
+      setTimeout(() => setSaveState(""), 1500);
+    },
+    [patchRow, supabase]
+  );
+
+  const onAuthFlagChange = (row: ClaimRow, value: string) => {
+    if (value === "Y" && row.work?.auth_issue_status !== "open") {
+      if (
+        confirm(
+          `Route ${row.patient_name ?? row.claim_id} to the Auth team? It will leave your queue until the auth issue is completed.`
+        )
+      ) {
+        raiseAuthIssue(row);
+      }
+      return;
     }
-    setSaveState(error ? `Error: ${error.message}` : "Marked worked");
-    if (!error) setTimeout(() => setSaveState(""), 900);
+    patchRow(row.claim_id, { auth_flag: value });
   };
 
-  const undoWorked = async (r: ClaimRow) => {
-    setRows((prev) =>
-      prev.map((x) =>
-        x.claim_id === r.claim_id
-          ? { ...x, work: { ...(x.work ?? ({} as ClaimWork)), claim_id: x.claim_id, date_worked: "" } as ClaimWork }
-          : x
-      )
-    );
-    await supabase.from("claim_work").upsert(
-      { claim_id: r.claim_id, date_worked: null, updated_by: self.id, updated_at: new Date().toISOString() },
-      { onConflict: "claim_id" }
-    );
-    // Pull back today's production credit so reports stay honest.
-    await supabase
-      .from("production_log")
-      .delete()
-      .eq("collector_id", collectorId)
-      .eq("claim_id", r.claim_id)
-      .eq("worked_on", today);
-  };
-
-  const saveNote = async (claimId: string, notes: string) => {
-    setRows((prev) =>
-      prev.map((x) =>
-        x.claim_id === claimId
-          ? { ...x, work: { ...(x.work ?? ({} as ClaimWork)), claim_id: claimId, notes } as ClaimWork }
-          : x
-      )
-    );
-    await supabase.from("claim_work").upsert(
-      { claim_id: claimId, notes, updated_by: self.id, updated_at: new Date().toISOString() },
-      { onConflict: "claim_id" }
-    );
-  };
+  // Hide claims parked with the auth team.
+  const visible = shown.filter((r) => r.work?.auth_issue_status !== "open");
 
   return (
     <div className="flex h-full flex-col">
@@ -310,8 +383,8 @@ export default function QueueClient({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name / claim ID…"
-          className="input max-w-[14rem]"
+          placeholder="Search name / claim / member / status…"
+          className="input max-w-[16rem] flex-1"
         />
 
         {/* 65+ only toggle */}
@@ -368,28 +441,36 @@ export default function QueueClient({
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">
             <tr>
-              <th className="th">#</th>
-              <th className="th">Patient</th>
+              <th className="th sticky left-0 bg-surface">Patient</th>
               <th className="th">Facility</th>
+              <th className="th">Member ID</th>
               <th className="th">Age</th>
               <th className="th">DOS</th>
               <th className="th text-right">Balance</th>
               <th className="th">Status</th>
+              <th className="th">Med Rec</th>
+              <th className="th">Auth</th>
+              <th className="th">Billing</th>
+              <th className="th">Cap Blue</th>
+              <th className="th">Highmark</th>
+              <th className="th">Rebill</th>
+              <th className="th">Mgmt</th>
               <th className="th min-w-[16rem]">Notes</th>
-              <th className="th"></th>
+              <th className="th">Init</th>
+              <th className="th">Done</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={17} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
-            {!loading && shown.length === 0 && (
+            {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={17} className="td py-10 text-center text-surface-muted">
                   {rows.length === 0 ? (
                     "No claims assigned. Ask management to assign you facilities."
                   ) : backlog === 0 ? (
@@ -414,37 +495,121 @@ export default function QueueClient({
               </tr>
             )}
             {!loading &&
-              shown.map((r, i) => {
+              visible.map((r, i) => {
                 const risk = (r.age_days ?? 0) > RISK_AGE_THRESHOLD;
+                const done = (r.work?.date_worked || "") === today;
+                const w = r.work ?? EMPTY_WORK(r.claim_id);
                 return (
                   <tr
                     key={r.claim_id}
                     className={`${i % 2 ? "bg-surface/40" : "bg-surface-card"} ${
                       risk ? "border-l-2 border-l-risk" : ""
-                    }`}
+                    } ${done ? "opacity-60" : ""} hover:bg-gold/5`}
                   >
-                    <td className="td text-xs text-surface-muted">{i + 1}</td>
-                    <td className="td font-medium">{r.patient_name || "—"}</td>
+                    <td className="td sticky left-0 bg-inherit font-medium">
+                      {r.patient_name || "—"}
+                    </td>
                     <td className="td text-xs text-surface-muted">{facName(r.facility_id)}</td>
+                    <td className="td font-mono text-xs text-surface-muted">
+                      {r.member_id || "—"}
+                    </td>
                     <td className="td">
                       <AgeBadge age={r.age_days} />
                     </td>
-                    <td className="td text-xs text-surface-muted">{r.dos_from || "—"}</td>
+                    <td className="td text-xs text-surface-muted">
+                      {r.dos_from || "—"}
+                      {r.dos_to ? `–${r.dos_to}` : ""}
+                    </td>
                     <td className="td text-right font-mono font-semibold">{money(r.balance)}</td>
-                    <td className="td text-xs">{r.claim_status || "—"}</td>
                     <td className="td">
-                      <NoteCell
-                        value={r.work?.notes ?? ""}
-                        onSave={(v) => saveNote(r.claim_id, v)}
+                      <StatusCell
+                        value={r.claim_status ?? ""}
+                        onSave={(v) => {
+                          setRows((prev) =>
+                            prev.map((x) =>
+                              x.claim_id === r.claim_id ? { ...x, claim_status: v } : x
+                            )
+                          );
+                          supabase.from("claims").update({ claim_status: v }).eq("id", r.id);
+                        }}
+                      />
+                    </td>
+                    <FlagCell
+                      value={w.med_rec}
+                      onChange={(v) => patchRow(r.claim_id, { med_rec: v })}
+                    />
+                    <td className="td">
+                      <select
+                        value={w.auth_flag}
+                        onChange={(e) => onAuthFlagChange(r, e.target.value)}
+                        className={`cell-input w-14 ${
+                          w.auth_flag === "Y" ? "text-secured font-semibold" : ""
+                        }`}
+                      >
+                        {AUTH_FLAG_OPTIONS.map((o) => (
+                          <option key={o} value={o}>
+                            {o || "—"}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <FlagCell
+                      value={w.billing}
+                      onChange={(v) => patchRow(r.claim_id, { billing: v })}
+                    />
+                    <FlagCell
+                      value={w.cap_blue}
+                      onChange={(v) => patchRow(r.claim_id, { cap_blue: v })}
+                    />
+                    <FlagCell
+                      value={w.highmark}
+                      onChange={(v) => patchRow(r.claim_id, { highmark: v })}
+                    />
+                    <FlagCell
+                      value={w.rebill}
+                      onChange={(v) => patchRow(r.claim_id, { rebill: v })}
+                    />
+                    <td className="td text-center">
+                      <input
+                        type="checkbox"
+                        checked={w.mgmt_needed}
+                        onChange={(e) =>
+                          patchRow(r.claim_id, { mgmt_needed: e.target.checked })
+                        }
+                        className="h-4 w-4 accent-gold"
+                        title="Flag for management"
                       />
                     </td>
                     <td className="td">
-                      <button
-                        onClick={() => markWorked(r)}
-                        className="btn-primary px-2.5 py-1 text-xs"
-                      >
-                        ✓ Worked
-                      </button>
+                      <NotesCell
+                        value={w.notes}
+                        onSave={(v) => patchRow(r.claim_id, { notes: v })}
+                      />
+                    </td>
+                    <td className="td">
+                      <TextCell
+                        value={w.initials}
+                        className="w-12 uppercase"
+                        onSave={(v) => patchRow(r.claim_id, { initials: v })}
+                      />
+                    </td>
+                    <td className="td">
+                      {done ? (
+                        <button
+                          onClick={() => undoWorked(r)}
+                          className="badge bg-recovered/15 px-2 py-1 text-[11px] font-semibold text-recovered hover:bg-risk/10 hover:text-risk"
+                          title="Undo — put back in the queue"
+                        >
+                          ✓ done ↩
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => markWorked(r)}
+                          className="btn-primary px-2.5 py-1 text-xs"
+                        >
+                          ✓ Worked
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -452,53 +617,7 @@ export default function QueueClient({
           </tbody>
         </table>
       </div>
-
-      {/* worked-today strip (so they can undo a mistake) */}
-      {!loading && doneToday > 0 && (
-        <div className="border-t border-surface-border bg-surface px-6 py-2 text-xs text-surface-muted">
-          {doneToday} worked today.{" "}
-          <WorkedTodayUndo
-            rows={rows.filter((r) => (r.work?.date_worked || "") === today)}
-            onUndo={undoWorked}
-          />
-        </div>
-      )}
     </div>
-  );
-}
-
-function WorkedTodayUndo({
-  rows,
-  onUndo,
-}: {
-  rows: ClaimRow[];
-  onUndo: (r: ClaimRow) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  if (rows.length === 0) return null;
-  return (
-    <>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="font-semibold text-brand-blue underline"
-      >
-        {open ? "Hide" : "Review / undo"}
-      </button>
-      {open && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {rows.map((r) => (
-            <button
-              key={r.claim_id}
-              onClick={() => onUndo(r)}
-              className="badge bg-surface-card px-2 py-1 text-[11px] hover:bg-risk/10 hover:text-risk"
-              title="Undo — put back in queue"
-            >
-              ↩ {r.patient_name || r.claim_id}
-            </button>
-          ))}
-        </div>
-      )}
-    </>
   );
 }
 
@@ -529,7 +648,57 @@ function Card({
   );
 }
 
-function NoteCell({
+function FlagCell({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <td className="td">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`cell-input w-14 ${
+          value === "Y" ? "font-semibold text-recovered" : value === "N" ? "text-risk" : ""
+        }`}
+      >
+        {FLAG_OPTIONS.map((o) => (
+          <option key={o} value={o}>
+            {o || "—"}
+          </option>
+        ))}
+      </select>
+    </td>
+  );
+}
+
+function TextCell({
+  value,
+  onSave,
+  className = "",
+  type = "text",
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  className?: string;
+  type?: string;
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <input
+      type={type}
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => v !== value && onSave(v)}
+      className={`cell-input ${className}`}
+    />
+  );
+}
+
+function StatusCell({
   value,
   onSave,
 }: {
@@ -539,12 +708,66 @@ function NoteCell({
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   return (
-    <input
+    <AutoTextarea
       value={v}
-      onChange={(e) => setV(e.target.value)}
+      onChange={setV}
       onBlur={() => v !== value && onSave(v)}
+      className="min-w-[12rem] max-w-[16rem] text-xs"
+      placeholder="Status…"
+    />
+  );
+}
+
+function NotesCell({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <AutoTextarea
+      value={v}
+      onChange={setV}
+      onBlur={() => v !== value && onSave(v)}
+      className="min-w-[16rem] max-w-[28rem]"
       placeholder="Add a note…"
-      className="cell-input min-w-[16rem]"
+    />
+  );
+}
+
+function AutoTextarea({
+  value,
+  onChange,
+  onBlur,
+  className = "",
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      className={`cell-input resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug ${className}`}
     />
   );
 }
