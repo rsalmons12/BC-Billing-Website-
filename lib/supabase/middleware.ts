@@ -11,6 +11,7 @@ export async function updateSession(request: NextRequest) {
   const isPublic =
     path === "/login" ||
     path.startsWith("/auth") ||
+    path === "/privacy" ||
     path === "/manifest.webmanifest";
 
   const toLogin = () => {
