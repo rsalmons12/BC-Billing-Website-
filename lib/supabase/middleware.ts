@@ -8,7 +8,10 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
 // /login (and static assets, handled by the matcher in middleware.ts).
 export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const isPublic = path === "/login" || path.startsWith("/auth");
+  const isPublic =
+    path === "/login" ||
+    path.startsWith("/auth") ||
+    path === "/manifest.webmanifest";
 
   const toLogin = () => {
     const url = request.nextUrl.clone();
