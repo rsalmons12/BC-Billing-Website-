@@ -103,6 +103,12 @@ alter table profiles add column if not exists allowed_tabs text[];
 alter table profiles add column if not exists daily_target int default 100;
 alter table profiles add column if not exists job_title text default 'Collector';
 
+-- ---- Resolve / close out claims (counted in Reporting) ----
+alter table claim_work add column if not exists resolved   boolean default false;
+alter table claim_work add column if not exists resolved_at timestamptz;
+alter table claim_work add column if not exists resolved_by uuid references auth.users(id);
+create index if not exists claim_work_resolved_at_idx on claim_work(resolved_at);
+
 -- ---- RLS (facility-scoped) for the facility-scoped tables ----
 alter table authorizations    enable row level security;
 alter table negotiations      enable row level security;
