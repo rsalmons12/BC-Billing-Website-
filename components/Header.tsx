@@ -27,20 +27,20 @@ export default function Header({
       .toUpperCase();
 
   return (
-    <header className="flex items-center justify-between border-b border-surface-border bg-surface-card px-6 py-3">
-      <div>
-        <div className="font-display text-lg font-bold text-surface-ink">
+    <header className="flex items-center justify-between gap-3 border-b border-surface-border bg-surface-card px-4 py-3 sm:px-6">
+      <div className="min-w-0">
+        <div className="truncate font-display text-base font-bold text-surface-ink sm:text-lg">
           {subtitle ?? "Recovery Desk"}
         </div>
       </div>
-      <div className="flex items-center gap-4">
-        <div className="text-right leading-tight">
+      <div className="flex items-center gap-3 sm:gap-4">
+        <div className="hidden text-right leading-tight sm:block">
           <div className="text-sm font-semibold text-surface-ink">{name}</div>
           <div className="text-xs text-surface-muted">
             {ROLE_LABELS[profile.role] ?? profile.role}
           </div>
         </div>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-command text-xs font-bold text-command-text">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-command text-xs font-bold text-command-text">
           {initials}
         </div>
         <form action="/auth/signout" method="post">
