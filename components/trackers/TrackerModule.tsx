@@ -22,6 +22,9 @@ export interface ColumnDef {
   options?: string[];
   editable?: boolean;
   min?: string; // min-width class suffix, e.g. "min-w-[10rem]"
+  // Read-only derived value computed from the whole row (e.g. total, percent).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  compute?: (row: Record<string, any>) => unknown;
 }
 
 export interface TrackerConfig {
@@ -270,7 +273,7 @@ export default function TrackerModule({
                     <td key={c.key} className="td">
                       <Cell
                         col={c}
-                        value={r[c.key]}
+                        value={c.compute ? c.compute(r) : r[c.key]}
                         onSave={(v) => saveCell(r.id, c.key, v)}
                       />
                     </td>
@@ -426,13 +429,20 @@ function ImportPanel({
   };
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const buf = await file.arrayBuffer();
-    const result = config.parse(buf);
-    setParsed(result);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const mergedRows: Array<Record<string, unknown> & { facility_name: string }> = [];
+    for (const file of files) {
+      const result = config.parse(await file.arrayBuffer());
+      mergedRows.push(...result.rows);
+    }
+    const merged = {
+      rows: mergedRows,
+      facilities: Array.from(new Set(mergedRows.map((r) => r.facility_name))),
+    };
+    setParsed(merged);
     const m: Record<string, string> = {};
-    for (const name of result.facilities) m[name] = autoMatch(name);
+    for (const name of merged.facilities) m[name] = autoMatch(name);
     setMapping(m);
   }
 
@@ -503,6 +513,7 @@ function ImportPanel({
       <input
         type="file"
         accept=".xlsx,.xls,.xlsm"
+        multiple
         onChange={onFile}
         className="mb-3 block text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-command file:px-4 file:py-2 file:text-sm file:font-semibold file:text-command-text"
       />

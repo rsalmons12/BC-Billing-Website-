@@ -69,17 +69,37 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
   }, [parsed]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setFileName(
+      files.length === 1 ? files[0].name : `${files.length} files`
+    );
     setDone(false);
     setLog([]);
-    const buf = await file.arrayBuffer();
-    const result = parseWorkbook(buf);
-    setParsed(result);
-    // seed mapping with auto-matches
+
+    // Parse every selected file and merge them (e.g. two collection sheets
+    // with different facilities, same layout).
+    const merged: ParseResult = {
+      format: "unknown",
+      claims: [],
+      notesNotInCurrent: [],
+      collectorAssignments: [],
+      skippedVmah: 0,
+      sheetsParsed: [],
+    };
+    for (const file of files) {
+      const result = parseWorkbook(await file.arrayBuffer());
+      if (merged.format === "unknown") merged.format = result.format;
+      merged.claims.push(...result.claims);
+      merged.notesNotInCurrent.push(...result.notesNotInCurrent);
+      merged.collectorAssignments.push(...result.collectorAssignments);
+      merged.skippedVmah += result.skippedVmah;
+      merged.sheetsParsed.push(...result.sheetsParsed);
+    }
+
+    setParsed(merged);
     const m: Record<string, string> = {};
-    const names = new Set(result.claims.map((c) => c.facility_name));
+    const names = new Set(merged.claims.map((c) => c.facility_name));
     for (const name of names) m[name] = autoMatch(name);
     setMapping(m);
   }
@@ -252,6 +272,7 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
               ref={fileRef}
               type="file"
               accept=".xlsx,.xls"
+              multiple
               onChange={onFile}
               className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-command file:px-4 file:py-2 file:text-sm file:font-semibold file:text-command-text hover:file:bg-command-surface"
             />
