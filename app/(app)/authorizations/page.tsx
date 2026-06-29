@@ -11,7 +11,11 @@ export default async function AuthorizationsPage() {
     <>
       <Header profile={profile} email={email} subtitle="Authorization" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <AuthorizationsClient facilities={facilities} userId={profile.id} />
+        <AuthorizationsClient
+          facilities={facilities}
+          userId={profile.id}
+          isManagement={profile.role === "management"}
+        />
       </main>
     </>
   );

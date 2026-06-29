@@ -11,7 +11,11 @@ export default async function RepricingPage() {
     <>
       <Header profile={profile} email={email} subtitle="Repricing" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <RepricingClient facilities={facilities} userId={profile.id} />
+        <RepricingClient
+          facilities={facilities}
+          userId={profile.id}
+          isManagement={profile.role === "management"}
+        />
       </main>
     </>
   );

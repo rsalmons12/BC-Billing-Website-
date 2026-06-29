@@ -11,7 +11,11 @@ export default async function MedicalRecordsPage() {
     <>
       <Header profile={profile} email={email} subtitle="Medical Records" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <MedicalRecordsClient facilities={facilities} userId={profile.id} />
+        <MedicalRecordsClient
+          facilities={facilities}
+          userId={profile.id}
+          isManagement={profile.role === "management"}
+        />
       </main>
     </>
   );

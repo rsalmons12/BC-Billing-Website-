@@ -69,9 +69,18 @@ const config: TrackerConfig = {
 export default function RepricingClient({
   facilities,
   userId,
+  isManagement,
 }: {
   facilities: Facility[];
   userId: string;
+  isManagement: boolean;
 }) {
-  return <TrackerModule facilities={facilities} userId={userId} config={config} />;
+  return (
+    <TrackerModule
+      facilities={facilities}
+      userId={userId}
+      config={config}
+      isManagement={isManagement}
+    />
+  );
 }

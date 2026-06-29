@@ -14,6 +14,13 @@ const config: TrackerConfig = {
   statusOptions: AUTH_STATUS_OPTIONS,
   searchKeys: ["patient_name", "auth_number", "level_of_care", "status"],
   parse: (buf) => parseAuthorizations(buf),
+  archiveKey: "discharged",
+  archiveLabels: {
+    active: "Active",
+    archived: "Discharged",
+    action: "Discharge",
+    unaction: "Reactivate",
+  },
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", editable: true, min: "min-w-[11rem]" },
     { key: "admit_date", label: "Admit", kind: "text", editable: true },
@@ -31,9 +38,18 @@ const config: TrackerConfig = {
 export default function AuthorizationsClient({
   facilities,
   userId,
+  isManagement,
 }: {
   facilities: Facility[];
   userId: string;
+  isManagement: boolean;
 }) {
-  return <TrackerModule facilities={facilities} userId={userId} config={config} />;
+  return (
+    <TrackerModule
+      facilities={facilities}
+      userId={userId}
+      config={config}
+      isManagement={isManagement}
+    />
+  );
 }

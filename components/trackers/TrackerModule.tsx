@@ -51,6 +51,10 @@ export interface TrackerConfig {
   // currently-filtered rows).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   renderSummary?: (rows: Array<Record<string, any>>) => React.ReactNode;
+  // Optional boolean "bucket" column (e.g. discharged) with an Active/Archived
+  // toggle and a per-row move action.
+  archiveKey?: string;
+  archiveLabels?: { active: string; archived: string; action: string; unaction: string };
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -73,10 +77,12 @@ export default function TrackerModule({
   facilities,
   userId,
   config,
+  isManagement = false,
 }: {
   facilities: Facility[];
   userId: string;
   config: TrackerConfig;
+  isManagement?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
 
@@ -87,6 +93,8 @@ export default function TrackerModule({
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
+  const hasActions = Boolean(config.archiveKey) || isManagement;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,9 +156,25 @@ export default function TrackerModule({
     setTimeout(() => setSaveState(""), 1500);
   }, [supabase, config.table, userId, facilityFilter, facilities]);
 
+  const del = useCallback(
+    async (id: string) => {
+      if (!confirm("Delete this row? This cannot be undone.")) return;
+      setRows((prev) => prev.filter((r) => r.id !== id));
+      const { error } = await supabase.from(config.table).delete().eq("id", id);
+      setSaveState(error ? `Error: ${error.message}` : "Deleted");
+      if (!error) setTimeout(() => setSaveState(""), 1000);
+    },
+    [supabase, config.table]
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
+      if (config.archiveKey) {
+        const archived = Boolean(r[config.archiveKey]);
+        if (archiveView === "active" && archived) return false;
+        if (archiveView === "archived" && !archived) return false;
+      }
       if (
         config.statusKey &&
         statusFilter !== "all" &&
@@ -166,7 +190,7 @@ export default function TrackerModule({
       }
       return true;
     });
-  }, [rows, statusFilter, search, config]);
+  }, [rows, statusFilter, search, config, archiveView]);
 
   return (
     <div className="flex h-full flex-col">
@@ -184,6 +208,29 @@ export default function TrackerModule({
             </option>
           ))}
         </select>
+
+        {config.archiveKey && config.archiveLabels && (
+          <div className="flex items-center gap-1 rounded-lg border border-surface-border p-0.5">
+            {(
+              [
+                ["active", config.archiveLabels.active],
+                ["archived", config.archiveLabels.archived],
+              ] as ["active" | "archived", string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setArchiveView(key)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
+                  archiveView === key
+                    ? "bg-command text-command-text"
+                    : "text-surface-muted hover:bg-surface"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {config.statusKey && config.statusOptions && (
           <select
@@ -260,19 +307,20 @@ export default function TrackerModule({
                   {c.label}
                 </th>
               ))}
+              {hasActions && <th className="th"></th>}
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={config.columns.length + 1} className="td py-10 text-center text-surface-muted">
+                <td colSpan={config.columns.length + 2} className="td py-10 text-center text-surface-muted">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={config.columns.length + 1} className="td py-10 text-center text-surface-muted">
+                <td colSpan={config.columns.length + 2} className="td py-10 text-center text-surface-muted">
                   No rows yet. Use “Import Excel” to load your tracker.
                 </td>
               </tr>
@@ -308,6 +356,34 @@ export default function TrackerModule({
                       />
                     </td>
                   ))}
+                  {hasActions && (
+                    <td className="td whitespace-nowrap">
+                      {config.archiveKey && config.archiveLabels && (
+                        <button
+                          onClick={() =>
+                            saveCell(
+                              r.id,
+                              config.archiveKey!,
+                              !r[config.archiveKey!]
+                            )
+                          }
+                          className="mr-2 rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-surface-muted hover:bg-surface"
+                        >
+                          {r[config.archiveKey]
+                            ? config.archiveLabels.unaction
+                            : config.archiveLabels.action}
+                        </button>
+                      )}
+                      {isManagement && (
+                        <button
+                          onClick={() => del(r.id)}
+                          className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-risk hover:bg-risk/10"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
           </tbody>
