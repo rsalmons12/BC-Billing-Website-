@@ -338,7 +338,7 @@ export default function TrackerModule({
           <button onClick={exportXlsx} className="btn-ghost" disabled={filtered.length === 0}>
             ↓ Export
           </button>
-          {!readOnly && (
+          {isManagement && !readOnly && (
             <button onClick={() => setShowImport((s) => !s)} className="btn-gold">
               ↥ Import Excel
             </button>
@@ -843,6 +843,39 @@ function ImportPanel({
     }
 
     // ----- Mode 3 (default): replace all rows for the touched facilities -----
+    // This is destructive: it deletes EVERY existing row for each facility in
+    // the file (including hand-added rows / edits) and inserts the file's rows.
+    // Make the operator confirm with the exact counts first.
+    let existingCount = 0;
+    try {
+      for (const fids of chunk(touched, 50)) {
+        const { count } = await supabase
+          .from(config.table)
+          .select("id", { count: "exact", head: true })
+          .in("facility_id", fids);
+        existingCount += count ?? 0;
+      }
+    } catch {
+      /* counting is best-effort; fall through to the confirm anyway */
+    }
+    const facLabels = touched
+      .map((id) => {
+        const f = facilities.find((x) => x.id === id);
+        return f?.short_name || f?.name || id;
+      })
+      .join(", ");
+    if (
+      !confirm(
+        `Replace import — please confirm.\n\n` +
+          `This will DELETE all ${existingCount} existing row(s) for: ${facLabels}\n` +
+          `and replace them with ${prepared.length} row(s) from this file.\n\n` +
+          `Any rows or edits for those facilities that are NOT in this file will be lost. Continue?`
+      )
+    ) {
+      add("Import cancelled — nothing was changed.");
+      setBusy(false);
+      return;
+    }
     add(`Refreshing ${prepared.length} rows across ${touched.length} facilities…`);
     for (const fids of chunk(touched, 50)) {
       const { error } = await supabase
