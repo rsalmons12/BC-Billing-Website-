@@ -123,8 +123,16 @@ begin
   loop
     execute format('drop policy if exists %1$s_select on %1$s', t);
     execute format('create policy %1$s_select on %1$s for select using (is_management() or facility_id in (select accessible_facility_ids()))', t);
-    execute format('drop policy if exists %1$s_write on %1$s', t);
-    execute format('create policy %1$s_write on %1$s for all using (can_edit() and (is_management() or facility_id in (select accessible_facility_ids()))) with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())))', t);
+    -- Split write policy: staff may insert/update accessible facilities;
+    -- DELETE is management only (prevents non-mgmt from wiping rows, incl. via
+    -- the destructive replace-import).
+    execute format('drop policy if exists %1$s_write  on %1$s', t);
+    execute format('drop policy if exists %1$s_insert on %1$s', t);
+    execute format('drop policy if exists %1$s_update on %1$s', t);
+    execute format('drop policy if exists %1$s_delete on %1$s', t);
+    execute format('create policy %1$s_insert on %1$s for insert with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())))', t);
+    execute format('create policy %1$s_update on %1$s for update using (can_edit() and (is_management() or facility_id in (select accessible_facility_ids()))) with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())))', t);
+    execute format('create policy %1$s_delete on %1$s for delete using (is_management())', t);
   end loop;
 end $$;
 
