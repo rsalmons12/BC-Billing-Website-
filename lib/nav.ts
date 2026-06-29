@@ -10,6 +10,7 @@ export type Tab = {
 // Single source of truth for navigation + per-user access.
 export const TABS: Tab[] = [
   { href: "/overview", label: "Overview", icon: "▦", roles: ["management"] },
+  { href: "/queue", label: "My Queue", icon: "◎", roles: ["management", "staff"] },
   { href: "/collections", label: "Collections", icon: "▤", roles: ["management", "staff"] },
   { href: "/auth-issues", label: "Auth Issues", icon: "✦", roles: ["management", "staff"] },
   { href: "/management", label: "Management", icon: "★", roles: ["management", "staff"] },
