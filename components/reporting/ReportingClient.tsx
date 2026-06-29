@@ -14,11 +14,6 @@ type ProdRow = {
   facility_id: string | null;
   worked_on: string; // yyyy-mm-dd
 };
-type ResolvedRow = {
-  claim_id: string;
-  resolved_at: string | null; // timestamptz
-  resolved_by: string | null;
-};
 type AnyRow = Record<string, unknown>;
 
 type Dept = "collectors" | "repricing" | "negotiations" | "payments";
@@ -82,7 +77,6 @@ export default function ReportingClient({
   const [facilityFilter, setFacilityFilter] = useState("all");
 
   const [logs, setLogs] = useState<ProdRow[]>([]);
-  const [resolved, setResolved] = useState<ResolvedRow[]>([]);
   const [deptRows, setDeptRows] = useState<AnyRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -119,16 +113,7 @@ export default function ReportingClient({
         .lte("worked_on", wideTo)
         .range(f, t)
     );
-    const res = await selectAll<ResolvedRow>((f, t) =>
-      supabase
-        .from("claim_work")
-        .select("claim_id,resolved_at,resolved_by")
-        .eq("resolved", true)
-        .gte("resolved_at", `${wideFrom}T00:00:00`)
-        .range(f, t)
-    );
     setLogs(prod);
-    setResolved(res);
     setLoading(false);
   }, [supabase, wideFrom, wideTo]);
 
@@ -199,7 +184,6 @@ export default function ReportingClient({
           collectors={collectors}
           facilities={facilities}
           logs={logs}
-          resolved={resolved}
           loading={loading}
           facName={facName}
           colName={colName}
@@ -236,7 +220,6 @@ function CollectorsReport({
   collectors,
   facilities,
   logs,
-  resolved,
   loading,
   facName,
   colName,
@@ -254,7 +237,6 @@ function CollectorsReport({
   collectors: Profile[];
   facilities: Facility[];
   logs: ProdRow[];
-  resolved: ResolvedRow[];
   loading: boolean;
   facName: (id: string | null) => string;
   colName: (id: string | null) => string;
@@ -277,19 +259,6 @@ function CollectorsReport({
     () => logs.filter((l) => inRange(l.worked_on) && matchFilters(l)),
     [logs, inRange, matchFilters]
   );
-
-  // closed-out within range (by collector; resolved rows carry no facility)
-  const closedByCol = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of resolved) {
-      const d = (r.resolved_at || "").slice(0, 10);
-      if (!d || !inRange(d)) continue;
-      if (collectorFilter !== "all" && r.resolved_by !== collectorFilter) continue;
-      const id = r.resolved_by ?? "—";
-      m.set(id, (m.get(id) ?? 0) + 1);
-    }
-    return m;
-  }, [resolved, inRange, collectorFilter]);
 
   // per-collector aggregates over the range
   const perCollector = useMemo(() => {
@@ -314,7 +283,6 @@ function CollectorsReport({
         title: prof?.job_title ?? "—",
         target,
         total: e.total,
-        closed: closedByCol.get(id) ?? 0,
         daysActive,
         avg,
         best,
@@ -325,7 +293,7 @@ function CollectorsReport({
     });
     rows.sort((a, b) => b.total - a.total);
     return rows;
-  }, [ranged, collectors, colName, closedByCol]);
+  }, [ranged, collectors, colName]);
 
   const perDay = useMemo(() => {
     const m = new Map<string, number>();
@@ -334,7 +302,6 @@ function CollectorsReport({
   }, [ranged]);
 
   const grandTotal = ranged.length;
-  const grandClosed = Array.from(closedByCol.values()).reduce((s, n) => s + n, 0);
   const activeCollectors = perCollector.length;
   const bestDay = Math.max(0, ...Array.from(perDay.values()));
   const best = perCollector[0]; // sorted by total desc
@@ -390,7 +357,6 @@ function CollectorsReport({
           "Job Title": r.title,
           "Daily Target": r.target,
           "Worked (range)": r.total,
-          "Closed Out": r.closed,
           "Days Active": r.daysActive,
           "Avg / Day": Math.round(r.avg * 10) / 10,
           "Best Day": r.best,
@@ -426,9 +392,8 @@ function CollectorsReport({
       />
 
       {/* headline */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="Worked (range)" value={num(grandTotal)} accent="recovered" />
-        <Stat label="Closed Out" value={num(grandClosed)} accent="gold" />
         <Stat label="Active Collectors" value={num(activeCollectors)} />
         <Stat label="Best Single Day" value={num(bestDay)} />
         <Stat label="This Week" value={num(wow.tw)} accent="recovered" />
@@ -449,8 +414,8 @@ function CollectorsReport({
               </div>
               <div className="mt-1 font-display text-xl font-bold">{best.name}</div>
               <div className="text-sm text-surface-muted">
-                {best.total} worked · {best.closed} closed · {Math.round(best.attainment * 100)}% of
-                target · avg {Math.round(best.avg * 10) / 10}/day
+                {best.total} worked · {Math.round(best.attainment * 100)}% of target · avg{" "}
+                {Math.round(best.avg * 10) / 10}/day
               </div>
             </div>
           )}
@@ -482,7 +447,7 @@ function CollectorsReport({
       {!loading && grandTotal === 0 && (
         <div className="card p-10 text-center text-surface-muted">
           No production recorded in this range yet. As collectors mark claims “✓
-          Worked” / “Close out” in their Queue, their activity shows up here.
+          Worked” in their Queue, their activity shows up here.
         </div>
       )}
 
@@ -501,7 +466,6 @@ function CollectorsReport({
                     <th className="th text-left">Title</th>
                     <th className="th text-right">Target</th>
                     <th className="th text-right">Worked</th>
-                    <th className="th text-right">Closed</th>
                     <th className="th text-right">Days</th>
                     <th className="th text-right">Avg/Day</th>
                     <th className="th text-right">Best</th>
@@ -519,7 +483,6 @@ function CollectorsReport({
                         <td className="td text-xs text-surface-muted">{r.title}</td>
                         <td className="td text-right font-mono">{r.target}</td>
                         <td className="td text-right font-mono font-semibold">{r.total}</td>
-                        <td className="td text-right font-mono">{r.closed}</td>
                         <td className="td text-right font-mono">{r.daysActive}</td>
                         <td className="td text-right font-mono">{Math.round(r.avg * 10) / 10}</td>
                         <td className="td text-right font-mono">{r.best}</td>
@@ -538,7 +501,6 @@ function CollectorsReport({
                       Total
                     </td>
                     <td className="td text-right font-mono">{grandTotal}</td>
-                    <td className="td text-right font-mono">{grandClosed}</td>
                     <td className="td" colSpan={6}></td>
                   </tr>
                 </tfoot>
