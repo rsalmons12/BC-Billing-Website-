@@ -122,10 +122,12 @@ export default function PaymentsClient({
   facilities,
   userId,
   isManagement,
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   isManagement: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <TrackerModule
@@ -133,6 +135,7 @@ export default function PaymentsClient({
       userId={userId}
       config={config}
       isManagement={isManagement}
+      readOnly={readOnly}
     />
   );
 }

@@ -70,10 +70,12 @@ export default function RepricingClient({
   facilities,
   userId,
   isManagement,
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   isManagement: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <TrackerModule
@@ -81,6 +83,7 @@ export default function RepricingClient({
       userId={userId}
       config={config}
       isManagement={isManagement}
+      readOnly={readOnly}
     />
   );
 }

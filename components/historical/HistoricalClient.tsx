@@ -167,6 +167,29 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
         </div>
       </div>
 
+      {!loading && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-surface-border bg-surface px-6 py-3 text-sm">
+          <span className="text-surface-muted">
+            <b className="text-surface-ink">{filtered.length}</b> codes
+          </span>
+          <span className="text-surface-muted">
+            <b className="text-surface-ink">
+              {new Set(filtered.map((r) => r.prefix)).size}
+            </b>{" "}
+            prefixes
+          </span>
+          <span className="text-surface-muted">
+            <b className="text-surface-ink">
+              {new Set(filtered.map((r) => r.payer)).size}
+            </b>{" "}
+            payers
+          </span>
+          <span className="text-surface-muted">
+            States: <b className="text-surface-ink">{states.join(", ") || "—"}</b>
+          </span>
+        </div>
+      )}
+
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">

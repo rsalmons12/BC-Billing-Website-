@@ -56,6 +56,8 @@ export interface TrackerConfig {
   // toggle and a per-row move action.
   archiveKey?: string;
   archiveLabels?: { active: string; archived: string; action: string; unaction: string };
+  // Label for the add-row button (default "Add patient").
+  addLabel?: string;
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -79,11 +81,13 @@ export default function TrackerModule({
   userId,
   config,
   isManagement = false,
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   config: TrackerConfig;
   isManagement?: boolean;
+  readOnly?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
 
@@ -95,7 +99,7 @@ export default function TrackerModule({
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
-  const hasActions = Boolean(config.archiveKey) || isManagement;
+  const hasActions = !readOnly && (Boolean(config.archiveKey) || isManagement);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -283,15 +287,19 @@ export default function TrackerModule({
           <span className="text-surface-muted">
             <b className="text-surface-ink">{filtered.length}</b> rows
           </span>
-          <button onClick={addRow} className="btn-primary">
-            + Add patient
-          </button>
+          {!readOnly && (
+            <button onClick={addRow} className="btn-primary">
+              + {config.addLabel ?? "Add patient"}
+            </button>
+          )}
           <button onClick={exportXlsx} className="btn-ghost" disabled={filtered.length === 0}>
             ↓ Export
           </button>
-          <button onClick={() => setShowImport((s) => !s)} className="btn-gold">
-            ↥ Import Excel
-          </button>
+          {!readOnly && (
+            <button onClick={() => setShowImport((s) => !s)} className="btn-gold">
+              ↥ Import Excel
+            </button>
+          )}
         </div>
       </div>
 
@@ -357,25 +365,29 @@ export default function TrackerModule({
                   className={i % 2 ? "bg-surface/40" : "bg-surface-card"}
                 >
                   <td className="td sticky left-0 bg-inherit">
-                    <select
-                      value={r.facility_id ?? ""}
-                      onChange={(e) =>
-                        saveCell(r.id, "facility_id", e.target.value || null)
-                      }
-                      className="cell-input min-w-[9rem] text-xs"
-                    >
-                      <option value="">— facility —</option>
-                      {facilities.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.short_name || f.name}
-                        </option>
-                      ))}
-                    </select>
+                    {readOnly ? (
+                      <span className="text-xs text-surface-muted">{facName(r.facility_id)}</span>
+                    ) : (
+                      <select
+                        value={r.facility_id ?? ""}
+                        onChange={(e) =>
+                          saveCell(r.id, "facility_id", e.target.value || null)
+                        }
+                        className="cell-input min-w-[9rem] text-xs"
+                      >
+                        <option value="">— facility —</option>
+                        {facilities.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.short_name || f.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   {config.columns.map((c) => (
                     <td key={c.key} className="td">
                       <Cell
-                        col={c}
+                        col={readOnly ? { ...c, editable: false } : c}
                         value={c.compute ? c.compute(r) : r[c.key]}
                         onSave={(v) => saveCell(r.id, c.key, v)}
                       />
