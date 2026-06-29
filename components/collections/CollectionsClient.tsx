@@ -68,6 +68,15 @@ export default function CollectionsClient({
   const [worked, setWorked] = useState<Worked>("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState<string>("");
+  const [groupByPatient, setGroupByPatient] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleGroup = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const load = useCallback(async () => {
     if (!facilityId) {
@@ -220,6 +229,51 @@ export default function CollectionsClient({
     return { charge, balance, risk, count: filtered.length };
   }, [filtered]);
 
+  // Build the rendered rows: when grouping, a patient's claims collapse into a
+  // single header row (huge speed win on big facilities) that expands on click.
+  // Single-claim patients render as a normal row.
+  const displayItems = useMemo(() => {
+    if (!groupByPatient) {
+      return filtered.map((r) => ({ kind: "row" as const, r }));
+    }
+    const order: string[] = [];
+    const map = new Map<string, ClaimRow[]>();
+    for (const r of filtered) {
+      const key = (r.patient_name || "—").trim();
+      if (!map.has(key)) {
+        map.set(key, []);
+        order.push(key);
+      }
+      map.get(key)!.push(r);
+    }
+    const items: Array<
+      | { kind: "row"; r: ClaimRow }
+      | { kind: "group"; key: string; rows: ClaimRow[]; charge: number; balance: number; maxAge: number }
+    > = [];
+    for (const key of order) {
+      const grp = map.get(key)!;
+      if (grp.length === 1) {
+        items.push({ kind: "row", r: grp[0] });
+        continue;
+      }
+      let charge = 0;
+      let balance = 0;
+      let maxAge = 0;
+      for (const r of grp) {
+        charge += r.charge_amount ?? 0;
+        balance += r.balance ?? 0;
+        maxAge = Math.max(maxAge, r.age_days ?? 0);
+      }
+      items.push({ kind: "group", key, rows: grp, charge, balance, maxAge });
+      if (expanded.has(key)) for (const r of grp) items.push({ kind: "row", r });
+    }
+    return items;
+  }, [filtered, groupByPatient, expanded]);
+
+  const RENDER_CAP = 400;
+  const visibleItems = displayItems.slice(0, RENDER_CAP);
+  const hiddenCount = displayItems.length - visibleItems.length;
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -289,6 +343,27 @@ export default function CollectionsClient({
           className="input max-w-[18rem] flex-1"
         />
 
+        <button
+          onClick={() => setGroupByPatient((g) => !g)}
+          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${
+            groupByPatient
+              ? "border-gold bg-gold/15 text-gold"
+              : "border-surface-border text-surface-muted hover:bg-surface"
+          }`}
+          title="Collapse each patient's claims into one expandable row"
+        >
+          {groupByPatient ? "✓ Grouped by patient" : "Group by patient"}
+        </button>
+        {groupByPatient && (
+          <button
+            onClick={() => setExpanded(new Set())}
+            className="rounded-lg border border-surface-border px-2 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface"
+            title="Collapse all patients"
+          >
+            Collapse all
+          </button>
+        )}
+
         <div className="ml-auto flex items-center gap-4 text-xs">
           {saveState && (
             <span className="font-medium text-secured">{saveState}</span>
@@ -346,7 +421,34 @@ export default function CollectionsClient({
               </tr>
             )}
             {!loading &&
-              filtered.map((r, i) => {
+              visibleItems.map((item, idx) => {
+                if (item.kind === "group") {
+                  const g = item;
+                  const isOpen = expanded.has(g.key);
+                  return (
+                    <tr key={`g-${g.key}`} className="bg-command/[0.04]">
+                      <td colSpan={17} className="td">
+                        <button
+                          onClick={() => toggleGroup(g.key)}
+                          className="flex w-full items-center gap-3 text-left"
+                        >
+                          <span className="w-3 text-gold">{isOpen ? "▾" : "▸"}</span>
+                          <span className="font-semibold">{g.key}</span>
+                          <span className="badge bg-surface text-surface-muted">
+                            {g.rows.length} claims
+                          </span>
+                          <AgeBadge age={g.maxAge} />
+                          <span className="ml-auto font-mono text-xs text-surface-muted">
+                            charge {money(g.charge)} · bal{" "}
+                            <b className="text-surface-ink">{money(g.balance)}</b>
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
+                const r = item.r;
+                const i = idx;
                 const w = r.work ?? EMPTY_WORK(r.claim_id);
                 return (
                   <tr
@@ -461,6 +563,15 @@ export default function CollectionsClient({
                   </tr>
                 );
               })}
+            {!loading && hiddenCount > 0 && (
+              <tr>
+                <td colSpan={17} className="td py-3 text-center text-xs text-surface-muted">
+                  Showing the first {RENDER_CAP} of {displayItems.length} —
+                  narrow with a bucket, search, or collapse patient groups to see
+                  the rest.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
