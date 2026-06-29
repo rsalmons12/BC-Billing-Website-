@@ -199,6 +199,69 @@ export function parseNegotiations(data: ArrayBuffer): TrackerParseResult<NegRow>
   };
 }
 
+// Historical Data — BCBS prefix reference (global, state tabs) --------------
+export interface HistoricalRow {
+  state: string;
+  year: string;
+  prefix: string;
+  prefix_length: string;
+  payer: string;
+  code_type: string;
+  code_used: string;
+  cpt_code: string;
+  rev_code: string;
+  description: string;
+  billed_per_day: number | null;
+  paid_per_day: number | null;
+}
+
+export function parseHistorical(data: ArrayBuffer): HistoricalRow[] {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const out: HistoricalRow[] = [];
+  for (const name of wb.SheetNames) {
+    if (/^_?lists$|^summary$|^sheet\d+$/.test(norm(name))) continue;
+    const rows = rowsOf(wb.Sheets[name]);
+    const hr = findHeaderRow(rows, /prefix|payer/, 6);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      state: findCol(h, [/^state$/, /state/]),
+      year: findCol(h, [/year/]),
+      prefix: findCol(h, [/^prefix$/]),
+      plen: findCol(h, [/prefix length/]),
+      payer: findCol(h, [/payer/]),
+      ctype: findCol(h, [/code type/]),
+      cused: findCol(h, [/code used/]),
+      cpt: findCol(h, [/cpt code/]),
+      rev: findCol(h, [/rev code/]),
+      desc: findCol(h, [/description|cpt ?\/ ?rev/]),
+      billed: findCol(h, [/billed/]),
+      paid: findCol(h, [/paid/]),
+    };
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const prefix = col.prefix >= 0 ? toStr(r[col.prefix]) : "";
+      const payer = col.payer >= 0 ? toStr(r[col.payer]) : "";
+      if (!prefix && !payer) continue;
+      out.push({
+        state: col.state >= 0 ? toStr(r[col.state]) : name,
+        year: col.year >= 0 ? toStr(r[col.year]).replace(/\.0$/, "") : "",
+        prefix,
+        prefix_length: col.plen >= 0 ? toStr(r[col.plen]).replace(/\.0$/, "") : "",
+        payer,
+        code_type: col.ctype >= 0 ? toStr(r[col.ctype]) : "",
+        code_used: col.cused >= 0 ? toStr(r[col.cused]) : "",
+        cpt_code: col.cpt >= 0 ? toStr(r[col.cpt]) : "",
+        rev_code: col.rev >= 0 ? toStr(r[col.rev]) : "",
+        description: col.desc >= 0 ? toStr(r[col.desc]) : "",
+        billed_per_day: col.billed >= 0 ? toNum(r[col.billed]) : null,
+        paid_per_day: col.paid >= 0 ? toNum(r[col.paid]) : null,
+      });
+    }
+  }
+  return out;
+}
+
 // Medical Records ----------------------------------------------------------
 export interface MedRow {
   patient_name: string;
