@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
+import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
@@ -425,28 +426,17 @@ export default function CollectionsClient({
         </div>
       </div>
 
-      {/* summary bar */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-border bg-surface px-6 py-3 text-sm">
-        <span className="text-surface-muted">
-          Claims <b className="text-surface-ink">{totals.count}</b>
-        </span>
-        <span className="text-surface-muted">
-          Charged{" "}
-          <b className="font-mono text-surface-ink">{money(totals.charge)}</b>
-        </span>
-        <span className="text-surface-muted">
-          Balance{" "}
-          <b className="font-mono text-surface-ink">{money(totals.balance)}</b>
-        </span>
-        <span className="text-surface-muted">
-          Recovered{" "}
-          <b className="font-mono text-recovered">
-            {money(totals.charge - totals.balance)}
-          </b>
-        </span>
-        <span className="text-surface-muted">
-          Risk 65+ <b className="text-risk">{totals.risk}</b>
-        </span>
+      {/* summary cards */}
+      <div className="grid grid-cols-2 gap-3 border-b border-surface-border bg-surface px-6 py-3 md:grid-cols-5">
+        <SumCard label="Claims" value={String(totals.count)} />
+        <SumCard label="Charged" value={money(totals.charge)} />
+        <SumCard label="Balance" value={money(totals.balance)} accent="gold" />
+        <SumCard
+          label="Recovered"
+          value={money(totals.charge - totals.balance)}
+          accent="recovered"
+        />
+        <SumCard label="Risk 65+" value={String(totals.risk)} accent="risk" />
       </div>
 
       {/* table */}
