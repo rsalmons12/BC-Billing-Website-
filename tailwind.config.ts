@@ -30,6 +30,11 @@ const config: Config = {
           muted: "#6b7280",
           ink: "#1a1f2b",
         },
+        // brand (BC Billing Solutions)
+        brand: {
+          blue: "#19a8e0",
+          green: "#37a635",
+        },
         // signal palette
         gold: "#d9a441",
         recovered: "#1f9d6b",

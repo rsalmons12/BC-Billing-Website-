@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Logo from "@/components/Logo";
 import type { Role } from "@/lib/types";
 
 type NavItem = { href: string; label: string; roles: Role[]; icon: string };
@@ -25,20 +27,38 @@ const NAV: NavItem[] = [
 export default function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
   const items = NAV.filter((n) => n.roles.includes(role));
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(localStorage.getItem("rd_sidebar_collapsed") === "1");
+  }, []);
+  const toggle = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      localStorage.setItem("rd_sidebar_collapsed", next ? "1" : "0");
+      return next;
+    });
+  };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col bg-command text-command-text">
-      <div className="flex items-center gap-3 px-5 py-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold font-display text-base font-extrabold text-command">
-          RD
+    <aside
+      className={`flex shrink-0 flex-col bg-command text-command-text transition-[width] duration-200 ${
+        collapsed ? "w-16" : "w-60"
+      }`}
+    >
+      <div className="flex items-center gap-3 px-4 py-5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+          <Logo size={34} />
         </div>
-        <div className="leading-tight">
-          <div className="font-display text-sm font-bold">Recovery Desk</div>
-          <div className="text-[11px] text-command-muted">BC Billing Solutions</div>
-        </div>
+        {!collapsed && (
+          <div className="leading-tight">
+            <div className="font-display text-sm font-bold">BC Billing</div>
+            <div className="text-[11px] text-command-muted">Recovery Desk</div>
+          </div>
+        )}
       </div>
 
-      <nav className="mt-2 flex-1 space-y-1 px-3">
+      <nav className="mt-2 flex-1 space-y-1 px-2.5">
         {items.map((item) => {
           const active =
             pathname === item.href || pathname.startsWith(item.href + "/");
@@ -46,29 +66,42 @@ export default function Sidebar({ role }: { role: Role }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              title={collapsed ? item.label : undefined}
+              className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                collapsed ? "justify-center" : ""
+              } ${
                 active
                   ? "bg-command-surface text-command-text"
                   : "text-command-muted hover:bg-command-surface/60 hover:text-command-text"
               }`}
             >
               <span
-                className={`text-base ${active ? "text-gold" : "text-command-muted"}`}
+                className={`text-base ${active ? "text-brand-blue" : "text-command-muted"}`}
               >
                 {item.icon}
               </span>
-              {item.label}
+              {!collapsed && item.label}
             </Link>
           );
         })}
       </nav>
 
-      <div className="px-5 py-4 text-[11px] text-command-muted">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-recovered" />
-          Secured by Row-Level Security
-        </span>
-      </div>
+      <button
+        onClick={toggle}
+        className="m-2.5 flex items-center justify-center gap-2 rounded-lg border border-command-border py-2 text-xs font-semibold text-command-muted hover:bg-command-surface hover:text-command-text"
+        title={collapsed ? "Expand menu" : "Collapse menu"}
+      >
+        {collapsed ? "»" : "« Collapse"}
+      </button>
+
+      {!collapsed && (
+        <div className="px-4 pb-4 text-[11px] text-command-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-green" />
+            Secured by Row-Level Security
+          </span>
+        </div>
+      )}
     </aside>
   );
 }
