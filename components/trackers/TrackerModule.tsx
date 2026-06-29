@@ -235,9 +235,17 @@ export default function TrackerModule({
         />
       )}
 
-      {config.renderSummary && !loading && (
+      {!loading && (
         <div className="border-b border-surface-border bg-surface px-6 py-3">
-          {config.renderSummary(filtered)}
+          {config.renderSummary ? (
+            config.renderSummary(filtered)
+          ) : (
+            <DefaultSummary
+              rows={filtered}
+              columns={config.columns}
+              statusKey={config.statusKey}
+            />
+          )}
         </div>
       )}
 
@@ -380,6 +388,56 @@ function Cell({
         col.kind === "money" || col.kind === "num" ? "font-mono" : ""
       }`}
     />
+  );
+}
+
+// Default summary bar: row count, sums of money columns, and a status
+// breakdown — shown at the top of every tracker page.
+function DefaultSummary({
+  rows,
+  columns,
+  statusKey,
+}: {
+  rows: Array<Record<string, unknown>>;
+  columns: ColumnDef[];
+  statusKey?: string;
+}) {
+  const moneyCols = columns.filter((c) => c.kind === "money" && !c.compute);
+  const sums = moneyCols.map((c) => ({
+    label: c.label,
+    value: rows.reduce(
+      (s, r) => s + (typeof r[c.key] === "number" ? (r[c.key] as number) : 0),
+      0
+    ),
+  }));
+
+  const statusCounts: Array<[string, number]> = [];
+  if (statusKey) {
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      const k = String(r[statusKey] ?? "—") || "—";
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    statusCounts.push(...Array.from(m.entries()).sort((a, b) => b[1] - a[1]));
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+      <span className="text-surface-muted">
+        <b className="text-surface-ink">{rows.length}</b> rows
+      </span>
+      {sums.map((s) => (
+        <span key={s.label} className="text-surface-muted">
+          {s.label}{" "}
+          <b className="font-mono text-surface-ink">{money(s.value)}</b>
+        </span>
+      ))}
+      {statusCounts.slice(0, 6).map(([k, n]) => (
+        <span key={k} className="badge bg-surface-card text-surface-muted">
+          {k}: <b className="ml-1 text-surface-ink">{n}</b>
+        </span>
+      ))}
+    </div>
   );
 }
 
