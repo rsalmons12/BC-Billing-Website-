@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { TABS } from "@/lib/nav";
 import type { Profile, Facility, Assignment, Role } from "@/lib/types";
 
 type Tab = "users" | "facilities" | "create";
@@ -85,6 +86,29 @@ export default function AdminClient({
     }
   };
 
+  // ---- per-user tab visibility ----
+  const setAllowedTabs = async (p: Profile, tabs: string[] | null) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, allowed_tabs: tabs } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ allowed_tabs: tabs })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : "Tabs updated");
+  };
+
+  const toggleTab = async (p: Profile, href: string) => {
+    const roleTabs = TABS.filter((t) => t.roles.includes(p.role)).map((t) => t.href);
+    const current = p.allowed_tabs ?? roleTabs;
+    const next = current.includes(href)
+      ? current.filter((h) => h !== href)
+      : [...current, href];
+    // If they can see everything their role allows, store null (the default).
+    const isAll = roleTabs.every((h) => next.includes(h)) && next.length === roleTabs.length;
+    setAllowedTabs(p, isAll ? null : next);
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div className="flex items-center gap-2">
@@ -121,6 +145,7 @@ export default function AdminClient({
           setRole={setRole}
           setFacilityId={setFacilityId}
           toggleAssignment={toggleAssignment}
+          toggleTab={toggleTab}
         />
       )}
 
@@ -147,6 +172,7 @@ function UsersTab({
   setRole,
   setFacilityId,
   toggleAssignment,
+  toggleTab,
 }: {
   profiles: Profile[];
   facilities: Facility[];
@@ -155,6 +181,7 @@ function UsersTab({
   setRole: (p: Profile, r: Role) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
   toggleAssignment: (p: Profile, facilityId: string) => void;
+  toggleTab: (p: Profile, href: string) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -236,6 +263,42 @@ function UsersTab({
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {(p.role === "facility" || p.role === "staff") && (
+              <div className="mt-3">
+                <span className="label">
+                  Visible tabs{" "}
+                  <span className="font-normal normal-case text-surface-muted">
+                    (none selected = all tabs for their role)
+                  </span>
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {TABS.filter((t) => t.roles.includes(p.role)).map((t) => {
+                    const on = !p.allowed_tabs || p.allowed_tabs.includes(t.href);
+                    return (
+                      <button
+                        key={t.href}
+                        onClick={() => toggleTab(p, t.href)}
+                        className={`badge border transition ${
+                          on
+                            ? "border-brand-blue bg-brand-blue/15 text-brand-blue"
+                            : "border-surface-border bg-surface text-surface-muted hover:border-surface-muted"
+                        }`}
+                      >
+                        {on ? "✓ " : "+ "}
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {p.role === "facility" && (
+                  <p className="mt-1 text-xs text-surface-muted">
+                    Facility logins are always read-only and limited to their own
+                    facility&apos;s data by the database.
+                  </p>
+                )}
               </div>
             )}
           </div>

@@ -39,10 +39,12 @@ export default function AuthorizationsClient({
   facilities,
   userId,
   isManagement,
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   isManagement: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <TrackerModule
@@ -50,6 +52,7 @@ export default function AuthorizationsClient({
       userId={userId}
       config={config}
       isManagement={isManagement}
+      readOnly={readOnly}
     />
   );
 }

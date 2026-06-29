@@ -15,6 +15,7 @@ const config: TrackerConfig = {
     "pricing_specialist",
   ],
   parse: (buf) => parseAssignments(buf),
+  addLabel: "Add staff",
   columns: [
     { key: "week", label: "Week", kind: "text", editable: true, min: "min-w-[8rem]" },
     { key: "collectors", label: "Collectors", kind: "text", editable: true, min: "min-w-[14rem]" },

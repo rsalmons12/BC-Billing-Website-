@@ -31,6 +31,7 @@ export async function requireProfile(): Promise<{
       initials: null,
       role: "pending",
       facility_id: null,
+      allowed_tabs: null,
       created_at: new Date().toISOString(),
     } as Profile);
 

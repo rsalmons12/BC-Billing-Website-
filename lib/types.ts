@@ -16,6 +16,7 @@ export interface Profile {
   initials: string | null;
   role: Role;
   facility_id: string | null;
+  allowed_tabs: string[] | null;
   created_at: string;
 }
 

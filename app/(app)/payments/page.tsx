@@ -5,7 +5,7 @@ import PaymentsClient from "@/components/payments/PaymentsClient";
 
 export default async function PaymentsPage() {
   const { profile, email } = await requireProfile();
-  if (profile.role !== "management" && profile.role !== "staff") redirect("/");
+  if (profile.role === "pending") redirect("/");
   const facilities = await accessibleFacilities();
   return (
     <>
@@ -15,6 +15,7 @@ export default async function PaymentsPage() {
           facilities={facilities}
           userId={profile.id}
           isManagement={profile.role === "management"}
+          readOnly={profile.role === "facility"}
         />
       </main>
     </>

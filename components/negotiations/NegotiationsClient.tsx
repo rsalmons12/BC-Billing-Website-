@@ -30,10 +30,12 @@ export default function NegotiationsClient({
   facilities,
   userId,
   isManagement,
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   isManagement: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <TrackerModule
@@ -41,6 +43,7 @@ export default function NegotiationsClient({
       userId={userId}
       config={config}
       isManagement={isManagement}
+      readOnly={readOnly}
     />
   );
 }

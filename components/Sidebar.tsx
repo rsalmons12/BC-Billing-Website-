@@ -4,30 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Logo from "@/components/Logo";
-import type { Role } from "@/lib/types";
+import { tabsForProfile } from "@/lib/nav";
+import type { Profile } from "@/lib/types";
 
-type NavItem = { href: string; label: string; roles: Role[]; icon: string };
-
-const NAV: NavItem[] = [
-  { href: "/overview", label: "Overview", roles: ["management"], icon: "▦" },
-  { href: "/collections", label: "Collections", roles: ["management", "staff"], icon: "▤" },
-  { href: "/auth-issues", label: "Auth Issues", roles: ["management", "staff"], icon: "✦" },
-  { href: "/management", label: "Management", roles: ["management", "staff"], icon: "★" },
-  { href: "/authorizations", label: "Authorization", roles: ["management", "staff"], icon: "✓" },
-  { href: "/negotiations", label: "Negotiations", roles: ["management", "staff"], icon: "⇄" },
-  { href: "/medical-records", label: "Medical Records", roles: ["management", "staff"], icon: "▥" },
-  { href: "/payments", label: "Payments", roles: ["management", "staff"], icon: "$" },
-  { href: "/repricing", label: "Repricing", roles: ["management", "staff"], icon: "◷" },
-  { href: "/historical", label: "Historical Data", roles: ["management", "staff"], icon: "≣" },
-  { href: "/assignments", label: "Weekly Assignments", roles: ["management", "staff"], icon: "☷" },
-  { href: "/facility", label: "Dashboard", roles: ["facility"], icon: "▣" },
-  { href: "/import", label: "Weekly Import", roles: ["management"], icon: "↥" },
-  { href: "/admin", label: "Admin", roles: ["management"], icon: "⚙" },
-];
-
-export default function Sidebar({ role }: { role: Role }) {
+export default function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname();
-  const items = NAV.filter((n) => n.roles.includes(role));
+  const items = tabsForProfile(profile);
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
