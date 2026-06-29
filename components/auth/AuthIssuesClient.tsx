@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/format";
 import { AUTH_ISSUE_STATUSES } from "@/lib/constants";
@@ -106,6 +107,25 @@ export default function AuthIssuesClient({
     return { atRisk, mgmt, count: shown.length };
   }, [shown]);
 
+  const exportXlsx = () => {
+    const data = shown.map((i) => ({
+      Patient: i.patient_name ?? "",
+      Facility: (i.facility_id && facMap[i.facility_id]) || "",
+      Payer: i.payer ?? "",
+      "DOS From": i.dos_from ?? "",
+      "DOS To": i.dos_to ?? "",
+      Amount: i.charge_amount ?? 0,
+      Source: i.from_collection ? "Collections" : "Manual",
+      Status: i.status,
+      Mgmt: i.mgmt_needed ? "Y" : "",
+      Notes: i.notes ?? "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Auth Issues");
+    XLSX.writeFile(wb, `auth-issues-${view}.xlsx`);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-surface-card px-6 py-3">
@@ -129,6 +149,13 @@ export default function AuthIssuesClient({
             </button>
           ))}
         </div>
+        <button
+          onClick={exportXlsx}
+          disabled={shown.length === 0}
+          className="rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface disabled:opacity-50"
+        >
+          ↓ Export
+        </button>
         <div className="ml-auto flex items-center gap-4 text-xs">
           {saveState && (
             <span className="font-medium text-secured">{saveState}</span>

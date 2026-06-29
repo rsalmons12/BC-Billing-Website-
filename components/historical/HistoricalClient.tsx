@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { moneyCents } from "@/lib/format";
@@ -94,6 +95,26 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
   const RENDER_CAP = 500;
   const shown = filtered.slice(0, RENDER_CAP);
 
+  const exportXlsx = () => {
+    const data = filtered.map((r) => ({
+      Prefix: r.prefix,
+      State: r.state,
+      Year: r.year,
+      Payer: r.payer,
+      "Code Type": r.code_type,
+      "Code Used": r.code_used,
+      CPT: r.cpt_code,
+      Rev: r.rev_code,
+      Description: r.description,
+      "Billed/Day": r.billed_per_day ?? "",
+      "Paid/Day": r.paid_per_day ?? "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Historical");
+    XLSX.writeFile(wb, `historical-data${stateF !== "all" ? "-" + stateF : ""}.xlsx`);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-surface-card px-6 py-3">
@@ -120,6 +141,13 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
           <span className="text-surface-muted">
             <b className="text-surface-ink">{filtered.length}</b> rows
           </span>
+          <button
+            onClick={exportXlsx}
+            disabled={filtered.length === 0}
+            className="rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface disabled:opacity-50"
+          >
+            ↓ Export
+          </button>
           {canEdit && (
             <>
               <input

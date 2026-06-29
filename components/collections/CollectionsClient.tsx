@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -274,6 +275,41 @@ export default function CollectionsClient({
   const visibleItems = displayItems.slice(0, RENDER_CAP);
   const hiddenCount = displayItems.length - visibleItems.length;
 
+  const exportXlsx = () => {
+    const facLabel =
+      facilities.find((f) => f.id === facilityId)?.short_name ||
+      facilities.find((f) => f.id === facilityId)?.name ||
+      "facility";
+    const data = filtered.map((r) => {
+      const w = r.work ?? EMPTY_WORK(r.claim_id);
+      return {
+        Patient: r.patient_name ?? "",
+        "Member ID": r.member_id ?? "",
+        "Age (Days)": r.age_days ?? 0,
+        "DOS From": r.dos_from ?? "",
+        "DOS To": r.dos_to ?? "",
+        Charge: r.charge_amount ?? 0,
+        Balance: r.balance ?? 0,
+        Status: r.claim_status ?? "",
+        "Med Rec": w.med_rec,
+        Auth: w.auth_flag,
+        Billing: w.billing,
+        "Cap Blue": w.cap_blue,
+        Highmark: w.highmark,
+        Rebill: w.rebill,
+        Mgmt: w.mgmt_needed ? "Y" : "",
+        Notes: w.notes,
+        Initials: w.initials,
+        "Date Worked": w.date_worked,
+        "Claim ID": r.claim_id,
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Collections");
+    XLSX.writeFile(wb, `collections-${facLabel}.xlsx`);
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -363,6 +399,14 @@ export default function CollectionsClient({
             Collapse all
           </button>
         )}
+        <button
+          onClick={exportXlsx}
+          disabled={filtered.length === 0}
+          className="rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface disabled:opacity-50"
+          title="Export the current facility's claims to Excel"
+        >
+          ↓ Export
+        </button>
 
         <div className="ml-auto flex items-center gap-4 text-xs">
           {saveState && (
