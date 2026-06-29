@@ -215,6 +215,155 @@ export interface MedRow {
   notes: string;
 }
 
+// Payment (Facility Paid per CPT / Level of Care) -------------------------
+export interface PaymentRow {
+  payment_entered: string;
+  deposit_date: string;
+  patient_name: string;
+  member_id: string;
+  cpt_description: string;
+  payment_source: string;
+  dos_from: string;
+  dos_to: string;
+  charge_amount: number | null;
+  paid_amount: number | null;
+  payment_type: string;
+  check_number: string;
+}
+
+export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow> {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const out: (PaymentRow & { facility_name: string })[] = [];
+  const sheets: string[] = [];
+
+  for (const name of wb.SheetNames) {
+    if (/^_?lists$|^sheet\d+$/.test(norm(name))) continue;
+    const rows = rowsOf(wb.Sheets[name]);
+    // Facility often appears in a "Customer is X" banner near the top.
+    let facility = name;
+    for (let i = 0; i < Math.min(rows.length, 6); i++) {
+      const joined = rows[i].map(toStr).join(" ");
+      const m = joined.match(/customer is\s+(.+?)(?:\s{2,}|$)/i);
+      if (m) {
+        facility = m[1].trim();
+        break;
+      }
+    }
+    const hr = findHeaderRow(rows, /payment entered|payment total paid|deposit date/, 12);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      entered: findCol(h, [/payment entered/]),
+      deposit: findCol(h, [/deposit date/]),
+      patient: findCol(h, [/patient full name|patient name|patient/]),
+      member: findCol(h, [/member id/]),
+      cpt: findCol(h, [/cpt descri|charge cpt|cpt/]),
+      source: findCol(h, [/payment source|payer/]),
+      from: findCol(h, [/from date|charge from/]),
+      to: findCol(h, [/to date|charge to/]),
+      charge: findCol(h, [/charge.*amount|charge\/debit/]),
+      paid: findCol(h, [/total paid|payment total|paid/]),
+      type: findCol(h, [/payment type/]),
+      check: findCol(h, [/check/]),
+    };
+    let added = 0;
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
+      if (!patient) continue;
+      out.push({
+        facility_name: facility,
+        payment_entered: col.entered >= 0 ? toStr(r[col.entered]) : "",
+        deposit_date: col.deposit >= 0 ? toStr(r[col.deposit]) : "",
+        patient_name: patient,
+        member_id: col.member >= 0 ? toStr(r[col.member]) : "",
+        cpt_description: col.cpt >= 0 ? toStr(r[col.cpt]) : "",
+        payment_source: col.source >= 0 ? toStr(r[col.source]) : "",
+        dos_from: col.from >= 0 ? toStr(r[col.from]) : "",
+        dos_to: col.to >= 0 ? toStr(r[col.to]) : "",
+        charge_amount: col.charge >= 0 ? toNum(r[col.charge]) : null,
+        paid_amount: col.paid >= 0 ? toNum(r[col.paid]) : null,
+        payment_type: col.type >= 0 ? toStr(r[col.type]) : "",
+        check_number: col.check >= 0 ? toStr(r[col.check]) : "",
+      });
+      added++;
+    }
+    if (added) sheets.push(name);
+  }
+  return {
+    rows: out,
+    facilities: Array.from(new Set(out.map((r) => r.facility_name))),
+    sheetsParsed: sheets,
+  };
+}
+
+// Repricing (Remark Codes Pricing) ----------------------------------------
+export interface RepricingRow {
+  claim_id: string;
+  patient_name: string;
+  member_id: string;
+  claim_from: string;
+  total_amount: number | null;
+  amount_paid: number | null;
+  payer: string;
+  remark_codes: string;
+  claim_status: string;
+}
+
+export function parseRepricing(
+  data: ArrayBuffer
+): TrackerParseResult<RepricingRow> {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const out: (RepricingRow & { facility_name: string })[] = [];
+  const sheets: string[] = [];
+
+  for (const name of wb.SheetNames) {
+    if (/^_?lists$|^sheet\d+$/.test(norm(name))) continue;
+    const rows = rowsOf(wb.Sheets[name]);
+    const hr = findHeaderRow(rows, /claim id|remark code/, 10);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      claim: findCol(h, [/claim id/]),
+      office: findCol(h, [/office name|facility/]),
+      patient: findCol(h, [/patient full name|patient name|patient/]),
+      member: findCol(h, [/member id/]),
+      from: findCol(h, [/from date|claim from/]),
+      total: findCol(h, [/total amount|claim total/]),
+      paid: findCol(h, [/amount paid|paid/]),
+      payer: findCol(h, [/primary payer|payer|carrier/]),
+      remark: findCol(h, [/remark code/]),
+      status: findCol(h, [/claim status|status/]),
+    };
+    let added = 0;
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const claim = col.claim >= 0 ? toStr(r[col.claim]) : "";
+      const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
+      if (!claim && !patient) continue;
+      out.push({
+        facility_name: col.office >= 0 ? toStr(r[col.office]) : name,
+        claim_id: claim,
+        patient_name: patient,
+        member_id: col.member >= 0 ? toStr(r[col.member]) : "",
+        claim_from: col.from >= 0 ? toStr(r[col.from]) : "",
+        total_amount: col.total >= 0 ? toNum(r[col.total]) : null,
+        amount_paid: col.paid >= 0 ? toNum(r[col.paid]) : null,
+        payer: col.payer >= 0 ? toStr(r[col.payer]) : "",
+        remark_codes: col.remark >= 0 ? toStr(r[col.remark]) : "",
+        claim_status: col.status >= 0 ? toStr(r[col.status]) : "",
+      });
+      added++;
+    }
+    if (added) sheets.push(name);
+  }
+  return {
+    rows: out,
+    facilities: Array.from(new Set(out.map((r) => r.facility_name).filter(Boolean))),
+    sheetsParsed: sheets,
+  };
+}
+
 export function parseMedicalRecords(
   data: ArrayBuffer
 ): TrackerParseResult<MedRow> {
