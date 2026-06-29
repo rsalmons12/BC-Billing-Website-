@@ -99,8 +99,9 @@ const config: TrackerConfig = {
   table: "payments",
   searchKeys: ["patient_name", "member_id", "payment_source", "check_number", "cpt_description"],
   parse: (buf) => parsePayments(buf),
-  // Payments are a historical record — importing appends and never deletes.
-  importMode: "append",
+  // Re-importing a facility's payment file refreshes that facility's rows
+  // (replace), so re-uploading never double-counts. Other facilities are
+  // untouched.
   renderSummary,
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", min: "min-w-[11rem]" },

@@ -767,13 +767,23 @@ function ImportPanel({
       // Which keys already exist? (those keep their note columns)
       const allKeys = keyed.map((r) => String(r[key]));
       const existing = new Set<string>();
-      for (const slice of chunk(allKeys, 500)) {
-        const rows = await selectAll<Record<string, unknown>>(
-          (f, t) =>
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            supabase.from(config.table).select(key).in(key, slice).range(f, t) as any
+      try {
+        for (const slice of chunk(allKeys, 500)) {
+          const rows = await selectAll<Record<string, unknown>>(
+            (f, t) =>
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              supabase.from(config.table).select(key).in(key, slice).range(f, t) as any
+          );
+          for (const row of rows) existing.add(String(row[key]));
+        }
+      } catch (e) {
+        add(
+          `Error reading ${config.table}: ${
+            e instanceof Error ? e.message : "unknown"
+          }. The ${config.table} table may be missing — run supabase/migrations/ALL.sql.`
         );
-        for (const row of rows) existing.add(String(row[key]));
+        setBusy(false);
+        return;
       }
 
       const fresh = keyed.filter((r) => !existing.has(String(r[key])));
