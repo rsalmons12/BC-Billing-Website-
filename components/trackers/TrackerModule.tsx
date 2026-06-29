@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -156,6 +157,14 @@ export default function TrackerModule({
     setTimeout(() => setSaveState(""), 1500);
   }, [supabase, config.table, userId, facilityFilter, facilities]);
 
+  const facName = useCallback(
+    (id: string | null) => {
+      const f = facilities.find((x) => x.id === id);
+      return f?.short_name || f?.name || "";
+    },
+    [facilities]
+  );
+
   const del = useCallback(
     async (id: string) => {
       if (!confirm("Delete this row? This cannot be undone.")) return;
@@ -191,6 +200,19 @@ export default function TrackerModule({
       return true;
     });
   }, [rows, statusFilter, search, config, archiveView]);
+
+  const exportXlsx = () => {
+    const data = filtered.map((r) => {
+      const o: Record<string, unknown> = { Facility: facName(r.facility_id) };
+      for (const c of config.columns) o[c.label] = c.compute ? c.compute(r) : r[c.key];
+      return o;
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, config.table.slice(0, 28));
+    const fac = facilityFilter !== "all" ? `-${facName(facilityFilter)}` : "";
+    XLSX.writeFile(wb, `${config.table}${fac}.xlsx`);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -263,6 +285,9 @@ export default function TrackerModule({
           </span>
           <button onClick={addRow} className="btn-primary">
             + Add patient
+          </button>
+          <button onClick={exportXlsx} className="btn-ghost" disabled={filtered.length === 0}>
+            ↓ Export
           </button>
           <button onClick={() => setShowImport((s) => !s)} className="btn-gold">
             ↥ Import Excel
