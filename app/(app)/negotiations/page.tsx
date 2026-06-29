@@ -11,7 +11,11 @@ export default async function NegotiationsPage() {
     <>
       <Header profile={profile} email={email} subtitle="Negotiations" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <NegotiationsClient facilities={facilities} userId={profile.id} />
+        <NegotiationsClient
+          facilities={facilities}
+          userId={profile.id}
+          isManagement={profile.role === "management"}
+        />
       </main>
     </>
   );

@@ -11,7 +11,11 @@ export default async function PaymentsPage() {
     <>
       <Header profile={profile} email={email} subtitle="Payments" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <PaymentsClient facilities={facilities} userId={profile.id} />
+        <PaymentsClient
+          facilities={facilities}
+          userId={profile.id}
+          isManagement={profile.role === "management"}
+        />
       </main>
     </>
   );
