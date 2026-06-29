@@ -206,6 +206,7 @@ export default function QueueClient({
 
   const markWorked = async (r: ClaimRow) => {
     setSaveState("Saving…");
+    const alreadyToday = (r.work?.date_worked || "") === today;
     setRows((prev) =>
       prev.map((x) =>
         x.claim_id === r.claim_id
@@ -231,6 +232,18 @@ export default function QueueClient({
       },
       { onConflict: "claim_id" }
     );
+    // Append-only production credit (one per collector/claim/day) for reporting.
+    if (!alreadyToday) {
+      await supabase.from("production_log").upsert(
+        {
+          collector_id: collectorId,
+          claim_id: r.claim_id,
+          facility_id: r.facility_id,
+          worked_on: today,
+        },
+        { onConflict: "collector_id,claim_id,worked_on" }
+      );
+    }
     setSaveState(error ? `Error: ${error.message}` : "Marked worked");
     if (!error) setTimeout(() => setSaveState(""), 900);
   };
@@ -247,6 +260,13 @@ export default function QueueClient({
       { claim_id: r.claim_id, date_worked: null, updated_by: self.id, updated_at: new Date().toISOString() },
       { onConflict: "claim_id" }
     );
+    // Pull back today's production credit so reports stay honest.
+    await supabase
+      .from("production_log")
+      .delete()
+      .eq("collector_id", collectorId)
+      .eq("claim_id", r.claim_id)
+      .eq("worked_on", today);
   };
 
   const saveNote = async (claimId: string, notes: string) => {
