@@ -425,6 +425,30 @@ export default function CollectionsClient({
         </div>
       </div>
 
+      {/* summary bar */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-border bg-surface px-6 py-3 text-sm">
+        <span className="text-surface-muted">
+          Claims <b className="text-surface-ink">{totals.count}</b>
+        </span>
+        <span className="text-surface-muted">
+          Charged{" "}
+          <b className="font-mono text-surface-ink">{money(totals.charge)}</b>
+        </span>
+        <span className="text-surface-muted">
+          Balance{" "}
+          <b className="font-mono text-surface-ink">{money(totals.balance)}</b>
+        </span>
+        <span className="text-surface-muted">
+          Recovered{" "}
+          <b className="font-mono text-recovered">
+            {money(totals.charge - totals.balance)}
+          </b>
+        </span>
+        <span className="text-surface-muted">
+          Risk 65+ <b className="text-risk">{totals.risk}</b>
+        </span>
+      </div>
+
       {/* table */}
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
