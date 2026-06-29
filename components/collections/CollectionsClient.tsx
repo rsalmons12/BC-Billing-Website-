@@ -32,6 +32,9 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   mgmt_needed: false,
   auth_issue_status: "",
   auth_notes: "",
+  resolved: false,
+  resolved_at: null,
+  resolved_by: null,
   updated_by: null,
   updated_at: "",
 });
@@ -109,8 +112,11 @@ export default function CollectionsClient({
       }
     }
 
+    // Resolved (closed-out) claims drop off the active board.
     setRows(
-      claimList.map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
+      claimList
+        .map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
+        .filter((r) => !r.work?.resolved)
     );
     setLoading(false);
   }, [facilityId, supabase]);

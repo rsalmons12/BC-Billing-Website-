@@ -73,6 +73,9 @@ export interface ClaimWork {
   mgmt_needed: boolean;
   auth_issue_status: string; // '', 'open', 'completed'
   auth_notes: string;
+  resolved: boolean;
+  resolved_at: string | null;
+  resolved_by: string | null;
   updated_by: string | null;
   updated_at: string;
 }
