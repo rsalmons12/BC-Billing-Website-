@@ -173,6 +173,27 @@ export default function AuthIssuesClient({
         </div>
       </div>
 
+      {/* summary bar */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-border bg-surface px-6 py-3 text-sm">
+        <span className="text-surface-muted">
+          {view === "completed" ? "Completed" : "Active"} issues{" "}
+          <b className="text-surface-ink">{totals.count}</b>
+        </span>
+        <span className="text-surface-muted">
+          $ at stake{" "}
+          <b className="font-mono text-surface-ink">{money(totals.atRisk)}</b>
+        </span>
+        <span className="text-surface-muted">
+          Needs mgmt <b className="text-gold">{totals.mgmt}</b>
+        </span>
+        <span className="text-surface-muted">
+          From collections{" "}
+          <b className="text-secured">
+            {shown.filter((i) => i.from_collection).length}
+          </b>
+        </span>
+      </div>
+
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">
