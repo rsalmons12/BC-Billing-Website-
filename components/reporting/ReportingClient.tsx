@@ -247,7 +247,15 @@ function CollectorsReport({
   // Notes drill-down: claims a collector worked in range, with their notes.
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailRows, setDetailRows] = useState<
-    { worked_on: string; claim_id: string; patient: string; facility: string; notes: string; initials: string }[]
+    {
+      worked_on: string;
+      claim_id: string;
+      patient: string;
+      facility: string;
+      age: number | null;
+      notes: string;
+      initials: string;
+    }[]
   >([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -282,7 +290,7 @@ function CollectorsReport({
       );
       const ids = Array.from(new Set(events.map((e) => e.claim_id).filter(Boolean))) as string[];
       const workMap: Record<string, { notes: string; initials: string }> = {};
-      const patMap: Record<string, string> = {};
+      const patMap: Record<string, { patient: string; age: number | null }> = {};
       for (let i = 0; i < ids.length; i += 1000) {
         const slice = ids.slice(i, i + 1000);
         const { data: w } = await supabase
@@ -293,17 +301,18 @@ function CollectorsReport({
           workMap[row.claim_id] = { notes: row.notes ?? "", initials: row.initials ?? "" };
         const { data: c } = await supabase
           .from("claims")
-          .select("claim_id,patient_name")
+          .select("claim_id,patient_name,age_days")
           .in("claim_id", slice);
-        for (const row of (c as { claim_id: string; patient_name: string }[]) ?? [])
-          patMap[row.claim_id] = row.patient_name ?? "";
+        for (const row of (c as { claim_id: string; patient_name: string; age_days: number | null }[]) ?? [])
+          patMap[row.claim_id] = { patient: row.patient_name ?? "", age: row.age_days };
       }
       const rows = events
         .map((e) => ({
           worked_on: e.worked_on,
           claim_id: e.claim_id ?? "",
-          patient: patMap[e.claim_id ?? ""] ?? "—",
+          patient: patMap[e.claim_id ?? ""]?.patient || "—",
           facility: facName(e.facility_id),
+          age: patMap[e.claim_id ?? ""]?.age ?? null,
           notes: workMap[e.claim_id ?? ""]?.notes ?? "",
           initials: workMap[e.claim_id ?? ""]?.initials ?? "",
         }))
@@ -665,6 +674,7 @@ function CollectorsReport({
                       <th className="th text-left">Date</th>
                       <th className="th text-left">Patient</th>
                       <th className="th text-left">Facility</th>
+                      <th className="th text-right">Age</th>
                       <th className="th text-left">Notes</th>
                     </tr>
                   </thead>
@@ -674,6 +684,7 @@ function CollectorsReport({
                         <td className="td whitespace-nowrap text-xs">{d.worked_on}</td>
                         <td className="td font-medium">{d.patient}</td>
                         <td className="td text-xs text-surface-muted">{d.facility}</td>
+                        <td className="td text-right font-mono">{d.age ?? "—"}{d.age != null ? "d" : ""}</td>
                         <td className="td whitespace-pre-wrap">{d.notes || "—"}</td>
                       </tr>
                     ))}
@@ -687,6 +698,7 @@ function CollectorsReport({
                   Date: d.worked_on,
                   Patient: d.patient,
                   Facility: d.facility,
+                  "Age (days)": d.age ?? "",
                   "Claim ID": d.claim_id,
                   Initials: d.initials,
                   Notes: d.notes,
