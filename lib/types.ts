@@ -7,6 +7,21 @@ export interface Facility {
   npi: string | null;
   ein: string | null;
   state: string | null;
+  email: string | null;
+  created_at: string;
+}
+
+export interface FacilityMessage {
+  id: string;
+  facility_id: string | null;
+  claim_id: string | null;
+  patient_name: string | null;
+  subject: string;
+  body: string;
+  direction: "outbound" | "inbound";
+  from_email: string;
+  to_email: string;
+  sender_id: string | null;
   created_at: string;
 }
 

@@ -143,6 +143,28 @@ create policy hist_select on historical_data for select using (auth.uid() is not
 drop policy if exists hist_write on historical_data;
 create policy hist_write on historical_data for all using (is_management()) with check (is_management());
 
+-- ---- Facility messaging (email a facility + thread) ----
+alter table facilities add column if not exists email text;
+create table if not exists facility_messages (
+  id uuid primary key default gen_random_uuid(),
+  facility_id uuid references facilities(id) on delete cascade,
+  claim_id text, patient_name text,
+  subject text default '', body text default '',
+  direction text default 'outbound', from_email text default '', to_email text default '',
+  sender_id uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists facility_messages_facility_idx on facility_messages(facility_id);
+create index if not exists facility_messages_claim_idx on facility_messages(claim_id);
+alter table facility_messages enable row level security;
+drop policy if exists fmsg_select on facility_messages;
+create policy fmsg_select on facility_messages for select
+  using (is_management() or facility_id in (select accessible_facility_ids()));
+drop policy if exists fmsg_insert on facility_messages;
+create policy fmsg_insert on facility_messages for insert
+  with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())));
+grant select, insert, update, delete on facility_messages to authenticated;
+
 -- ---- Production log: append-only staff-production events for reporting ----
 create table if not exists production_log (
   id          uuid primary key default gen_random_uuid(),
