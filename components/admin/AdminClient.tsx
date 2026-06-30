@@ -4,9 +4,10 @@ import { useCallback, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { TABS } from "@/lib/nav";
 import BackupButton from "@/components/admin/BackupButton";
+import BackupHistory from "@/components/admin/BackupHistory";
 import { JOB_TITLES, type Profile, type Facility, type Assignment, type Role } from "@/lib/types";
 
-type Tab = "users" | "facilities" | "create";
+type Tab = "users" | "facilities" | "create" | "backups";
 
 const ROLES: Role[] = ["management", "staff", "facility", "pending"];
 
@@ -129,6 +130,7 @@ export default function AdminClient({
             ["users", "Users"],
             ["facilities", "Facilities"],
             ["create", "Create User"],
+            ["backups", "Backups"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -173,6 +175,17 @@ export default function AdminClient({
 
       {tab === "create" && (
         <CreateUserTab onCreated={reloadProfiles} flash={flash} />
+      )}
+
+      {tab === "backups" && (
+        <div className="space-y-4">
+          <p className="text-sm text-surface-muted">
+            A full backup runs automatically every day at 4 AM UTC and is stored
+            in Supabase Storage. You can also download one manually with the
+            button above.
+          </p>
+          <BackupHistory />
+        </div>
       )}
     </div>
   );
