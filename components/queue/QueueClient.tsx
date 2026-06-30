@@ -83,8 +83,12 @@ export default function QueueClient({
   // anything younger. Management can lift it.
   const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
 
+  // Which claims to show: today's queue, or just what this collector worked today.
+  const [view, setView] = useState<"queue" | "today">("queue");
+
   // Email-a-facility-about-this-claim modal.
   const [emailClaim, setEmailClaim] = useState<ClaimRow | null>(null);
+  const [emailSubject, setEmailSubject] = useState("");
   const [emailReason, setEmailReason] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
@@ -221,9 +225,11 @@ export default function QueueClient({
   // collector can't skip ahead.
   const riskLock = enforceRiskFirst && riskRemaining > 0;
 
-  // Apply on-screen filters to the board.
+  // Apply on-screen filters. "Worked Today" view = only what this collector
+  // closed out today (so they can review their notes / what they did).
+  const baseRows = view === "today" ? workedTodayRows : boardRows;
   const q = search.trim().toLowerCase();
-  const shown = boardRows.filter((r) => {
+  const shown = baseRows.filter((r) => {
     if (riskOnly && (r.age_days ?? 0) <= RISK_AGE_THRESHOLD) return false;
     if (q) {
       const hay = `${r.patient_name ?? ""} ${r.claim_id ?? ""} ${r.member_id ?? ""} ${
@@ -341,7 +347,7 @@ export default function QueueClient({
         facility_id: emailClaim.facility_id,
         claim_id: emailClaim.claim_id,
         patient_name: name,
-        subject: `Patient: ${name}`,
+        subject: emailSubject.trim() || `Patient: ${name}`,
         message: `Patient: ${name}\n\nReason: ${emailReason.trim()}`,
       }),
     });
@@ -431,6 +437,28 @@ export default function QueueClient({
             {collector.full_name || "Your"} queue
           </div>
         )}
+
+        {/* view toggle: today's queue vs. what I worked today */}
+        <div className="flex items-center gap-1 rounded-lg border border-surface-border p-0.5">
+          {(
+            [
+              ["queue", "Queue"],
+              ["today", `Worked Today (${workedTodayRows.length})`],
+            ] as [typeof view, string][]
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setView(key)}
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
+                view === key
+                  ? "bg-command text-command-text"
+                  : "text-surface-muted hover:bg-surface"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {/* search */}
         <input
@@ -552,7 +580,9 @@ export default function QueueClient({
             {!loading && visible.length === 0 && (
               <tr>
                 <td colSpan={18} className="td py-10 text-center text-surface-muted">
-                  {rows.length === 0 ? (
+                  {view === "today" ? (
+                    "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
+                  ) : rows.length === 0 ? (
                     "No claims assigned. Ask management to assign you facilities."
                   ) : backlog === 0 ? (
                     "🎉 Backlog clear — nice work."
@@ -704,6 +734,7 @@ export default function QueueClient({
                         <button
                           onClick={() => {
                             setEmailClaim(r);
+                            setEmailSubject(`Patient: ${r.patient_name ?? ""}`);
                             setEmailReason("");
                             setEmailMsg("");
                           }}
@@ -759,6 +790,15 @@ export default function QueueClient({
                   value={emailClaim.patient_name ?? ""}
                   readOnly
                   className="input bg-surface"
+                />
+              </div>
+              <div>
+                <span className="label">Subject</span>
+                <input
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="input"
+                  placeholder="Subject line"
                 />
               </div>
               <div>
