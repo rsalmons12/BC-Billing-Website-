@@ -12,6 +12,7 @@ export async function updateSession(request: NextRequest) {
     path === "/login" ||
     path.startsWith("/auth") ||
     path === "/privacy" ||
+    path === "/api/messages/inbound" || // Resend webhook; secured by its own token
     path === "/manifest.webmanifest";
 
   const toLogin = () => {
