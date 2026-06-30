@@ -437,6 +437,7 @@ function FacilitiesTab({
               <th className="th">Legal name</th>
               <th className="th">Short name</th>
               <th className="th">State</th>
+              <th className="th">Email (for Messages)</th>
               <th className="th"></th>
             </tr>
           </thead>
@@ -470,6 +471,18 @@ function FacilitiesTab({
                       save(f, { state: e.target.value })
                     }
                     className="cell-input w-16"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="email"
+                    defaultValue={f.email ?? ""}
+                    onBlur={(e) =>
+                      e.target.value !== (f.email ?? "") &&
+                      save(f, { email: e.target.value })
+                    }
+                    className="cell-input min-w-[14rem]"
+                    placeholder="billing@facility.com"
                   />
                 </td>
                 <td className="td text-right">
