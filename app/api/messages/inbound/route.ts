@@ -14,6 +14,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<br\s*\/?>(?=)/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function pickAddress(v: unknown): string {
   if (!v) return "";
   if (typeof v === "string") return v;
@@ -42,14 +56,27 @@ export async function POST(request: Request) {
   const toRaw = pickAddress(data.to ?? data.recipient ?? data.envelope);
   const from = pickAddress(data.from ?? data.sender);
   const subject = String(data.subject ?? "");
-  const body =
-    String(
-      (data.text as string) ??
-        (data.html as string) ??
-        (data.body as string) ??
-        (data.stripped_text as string) ??
-        ""
-    ) || "(no text — open in email)";
+
+  // The webhook is metadata-only — the body must be fetched separately by
+  // email_id via the Resend API.
+  let body = String(
+    (data.text as string) ?? (data.html as string) ?? (data.body as string) ?? ""
+  );
+  const emailId = String(data.email_id ?? data.id ?? "");
+  if (!body && emailId && process.env.RESEND_API_KEY) {
+    try {
+      const r = await fetch(`https://api.resend.com/emails/${emailId}`, {
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+      });
+      if (r.ok) {
+        const full = (await r.json()) as { text?: string; html?: string };
+        body = full.text || stripHtml(full.html || "") || body;
+      }
+    } catch {
+      /* keep going; we'll store a placeholder */
+    }
+  }
+  body = body.trim() || "(no text)";
 
   // Recover the facility id from the recipient address localpart (a UUID).
   let facilityId: string | null = null;
