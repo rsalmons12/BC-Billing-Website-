@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import type { Facility, FacilityMessage } from "@/lib/types";
@@ -24,6 +24,17 @@ export default function MessagesClient({
   const [bodyText, setBodyText] = useState("");
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState("");
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pre-fill the composer to reply to a specific message.
+  const startReply = (m: FacilityMessage) => {
+    if (m.facility_id) setFacilityId(m.facility_id);
+    const s = m.subject ?? "";
+    setSubject(s.toLowerCase().startsWith("re:") ? s : s ? `Re: ${s}` : "Re:");
+    if (m.claim_id) setClaimId(m.claim_id);
+    if (m.patient_name) setPatient(m.patient_name);
+    setTimeout(() => bodyRef.current?.focus(), 50);
+  };
 
   const facility = facilities.find((f) => f.id === facilityId);
   const facName = useCallback(
@@ -229,6 +240,7 @@ export default function MessagesClient({
                 <div>
                   <span className="label">Message</span>
                   <textarea
+                    ref={bodyRef}
                     value={bodyText}
                     onChange={(e) => setBodyText(e.target.value)}
                     rows={6}
@@ -277,6 +289,14 @@ export default function MessagesClient({
                   </div>
                   {m.subject && <div className="font-semibold">{m.subject}</div>}
                   <div className="whitespace-pre-wrap">{m.body}</div>
+                  {canSend && (
+                    <button
+                      onClick={() => startReply(m)}
+                      className="mt-2 badge bg-command px-2.5 py-1 text-[11px] font-semibold text-command-text"
+                    >
+                      ↩ Reply
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
