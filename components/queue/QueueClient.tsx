@@ -93,6 +93,12 @@ export default function QueueClient({
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
 
+  // Flag-claim-for-adjustment modal.
+  const [adjustClaim, setAdjustClaim] = useState<ClaimRow | null>(null);
+  const [adjustReason, setAdjustReason] = useState("");
+  const [adjustBusy, setAdjustBusy] = useState(false);
+  const [adjustMsg, setAdjustMsg] = useState("");
+
   // Customizable daily target (per collector, stored on profiles.daily_target).
   const [target, setTarget] = useState<number>(self.daily_target ?? DEFAULT_TARGET);
   // Extra claims pulled mid-day after the target is met (not persisted —
@@ -330,6 +336,40 @@ export default function QueueClient({
 
   const emailFacilityHasAddr = (r: ClaimRow) =>
     Boolean(facilities.find((f) => f.id === r.facility_id)?.email);
+
+  const submitAdjustment = async () => {
+    if (!adjustClaim) return;
+    setAdjustBusy(true);
+    setAdjustMsg("Saving…");
+    const c = adjustClaim;
+    const { error } = await supabase.from("claim_adjustments").insert({
+      claim_id: c.claim_id,
+      facility_id: c.facility_id,
+      patient_name: c.patient_name,
+      member_id: c.member_id,
+      dob: c.dob,
+      dos_from: c.dos_from,
+      dos_to: c.dos_to,
+      charge_amount: c.charge_amount,
+      balance: c.balance,
+      age_days: c.age_days,
+      claim_status: c.claim_status,
+      reason: adjustReason.trim(),
+      initials: collector.initials || "",
+      created_by: self.id,
+    });
+    setAdjustBusy(false);
+    if (error) {
+      setAdjustMsg(`Error: ${error.message}`);
+      return;
+    }
+    setAdjustMsg("✓ Sent to Adjustments");
+    setTimeout(() => {
+      setAdjustClaim(null);
+      setAdjustReason("");
+      setAdjustMsg("");
+    }, 1100);
+  };
 
   const sendFacilityEmail = async () => {
     if (!emailClaim) return;
@@ -743,6 +783,17 @@ export default function QueueClient({
                         >
                           ✉
                         </button>
+                        <button
+                          onClick={() => {
+                            setAdjustClaim(r);
+                            setAdjustReason("");
+                            setAdjustMsg("");
+                          }}
+                          className="badge bg-gold/15 px-2 py-1 text-[11px] font-semibold text-gold hover:bg-gold/25"
+                          title="Flag this claim for adjustment"
+                        >
+                          ✎ Adjust
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -829,6 +880,51 @@ export default function QueueClient({
                   <span className="text-xs font-medium text-secured">{emailMsg}</span>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust-claim modal */}
+      {adjustClaim && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !adjustBusy && setAdjustClaim(null)}
+        >
+          <div className="card w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-display font-bold">Flag for adjustment</h3>
+              <button
+                onClick={() => setAdjustClaim(null)}
+                className="text-sm text-surface-muted hover:underline"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-surface p-3 text-xs">
+              <div><span className="text-surface-muted">Patient</span><div className="font-medium">{adjustClaim.patient_name || "—"}</div></div>
+              <div><span className="text-surface-muted">Claim ID</span><div className="font-mono">{adjustClaim.claim_id || "—"}</div></div>
+              <div><span className="text-surface-muted">Facility</span><div>{facName(adjustClaim.facility_id)}</div></div>
+              <div><span className="text-surface-muted">DOB</span><div>{adjustClaim.dob || "—"}</div></div>
+              <div><span className="text-surface-muted">DOS</span><div>{adjustClaim.dos_from || "—"}{adjustClaim.dos_to ? `–${adjustClaim.dos_to}` : ""}</div></div>
+              <div><span className="text-surface-muted">Balance</span><div className="font-mono">{money(adjustClaim.balance)}</div></div>
+            </div>
+            <div className="mt-3">
+              <span className="label">Reason for adjustment</span>
+              <textarea
+                value={adjustReason}
+                onChange={(e) => setAdjustReason(e.target.value)}
+                rows={4}
+                className="input resize-none"
+                placeholder="e.g. Wrong units billed — should be 4, billed 6."
+                autoFocus
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button onClick={submitAdjustment} disabled={adjustBusy} className="btn-primary disabled:opacity-60">
+                {adjustBusy ? "Saving…" : "✎ Send to Adjustments"}
+              </button>
+              {adjustMsg && <span className="text-xs font-medium text-secured">{adjustMsg}</span>}
             </div>
           </div>
         </div>
