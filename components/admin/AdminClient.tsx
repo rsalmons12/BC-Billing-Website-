@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { TABS } from "@/lib/nav";
+import BackupButton from "@/components/admin/BackupButton";
 import { JOB_TITLES, type Profile, type Facility, type Assignment, type Role } from "@/lib/types";
 
 type Tab = "users" | "facilities" | "create";
@@ -142,9 +143,10 @@ export default function AdminClient({
             {label}
           </button>
         ))}
-        {msg && (
-          <span className="ml-auto text-sm font-medium text-secured">{msg}</span>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {msg && <span className="text-sm font-medium text-secured">{msg}</span>}
+          <BackupButton />
+        </div>
       </div>
 
       {tab === "users" && (
