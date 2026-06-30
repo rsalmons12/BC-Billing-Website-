@@ -30,14 +30,14 @@ workflows:
       cocoapods: default
     scripts:
       - name: Install npm dependencies
-        script: npm ci
+        script: npm ci || npm install
       - name: Generate / sync the iOS native project
         script: |
           if [ ! -d "ios" ]; then npx cap add ios; fi
           npx cap sync ios
       - name: Install CocoaPods
         script: |
-          cd ios/App && pod install
+          cd ios/App && pod install --repo-update
       - name: Apply automatic signing profiles
         script: xcode-project use-profiles
       - name: Build the signed .ipa
