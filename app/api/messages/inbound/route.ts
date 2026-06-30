@@ -28,6 +28,26 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+// Keep just the new reply text, dropping the quoted original + signature.
+function extractReply(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let cut = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*>/.test(l)) { cut = i; break; }
+    if (/^-{3,}\s*Original Message/i.test(l)) { cut = i; break; }
+    if (/^On\b.*\bwrote:/.test(l)) { cut = i; break; }
+    if (/^On\b/.test(l) && i + 1 < lines.length && /\bwrote:/.test(lines[i + 1])) {
+      cut = i;
+      break;
+    }
+    if (/^--\s*$/.test(l)) { cut = i; break; } // signature delimiter
+    if (/^_{5,}$/.test(l)) { cut = i; break; } // Outlook divider
+  }
+  const trimmed = lines.slice(0, cut).join("\n").trim();
+  return trimmed || text.trim();
+}
+
 function pickAddress(v: unknown): string {
   if (!v) return "";
   if (typeof v === "string") return v;
@@ -98,7 +118,7 @@ export async function POST(request: Request) {
       }
     }
   }
-  body = body.trim() || "(no text)";
+  body = extractReply(body) || "(no text)";
 
   // Recover the facility id from the recipient address localpart (a UUID).
   let facilityId: string | null = null;
