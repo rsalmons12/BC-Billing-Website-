@@ -69,10 +69,14 @@ export async function POST(request: Request) {
   const diag: Record<string, unknown> = { emailId };
   if (!body && emailId && process.env.RESEND_API_KEY) {
     const candidates = [
-      `https://api.resend.com/emails/${emailId}`,
-      `https://api.resend.com/emails/received/${emailId}`,
-      `https://api.resend.com/inbound/emails/${emailId}`,
-      `https://api.resend.com/receiving/emails/${emailId}`,
+      `https://api.resend.com/inbound/${emailId}`,
+      `https://api.resend.com/received/${emailId}`,
+      `https://api.resend.com/received-emails/${emailId}`,
+      `https://api.resend.com/inbound-emails/${emailId}`,
+      `https://api.resend.com/emails/inbound/${emailId}`,
+      `https://api.resend.com/emails/${emailId}/content`,
+      `https://api.resend.com/emails/${emailId}/raw`,
+      `https://api.resend.com/emails/${emailId}/received`,
     ];
     for (const url of candidates) {
       try {
