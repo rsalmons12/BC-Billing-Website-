@@ -4,9 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 // Sends an email to a facility via Resend and logs it to facility_messages.
 // The Resend key lives only in the server env (RESEND_API_KEY).
 const FROM = process.env.MESSAGES_FROM_EMAIL || "BC Billing <collections@bcbilling.cloud>";
+// When inbound replies are configured (Phase 2), replies route to the app via
+// this subdomain. Until it's set, replies go to the sender's inbox.
+const REPLY_DOMAIN = process.env.MESSAGES_REPLY_DOMAIN; // e.g. reply.bcbilling.cloud
 
-const HIPAA_FOOTER = `
-<hr style="margin-top:24px;border:none;border-top:1px solid #ddd" />
+const SIGNATURE = `
+<div style="margin-top:20px;color:#222;font-size:14px">
+  <p style="margin:0;font-weight:bold">Collections Department</p>
+  <p style="margin:0;color:#555">BC Billing Solutions</p>
+</div>
+<hr style="margin-top:16px;border:none;border-top:1px solid #ddd" />
 <p style="font-size:11px;color:#888;line-height:1.5;margin-top:8px">
 CONFIDENTIALITY NOTICE: This email and any attachments are intended only for the
 named recipient and may contain Protected Health Information (PHI) that is
@@ -67,11 +74,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const replyTo = user.email ?? undefined;
+  // If inbound is configured, replies route to the app thread for this
+  // facility; otherwise they go to the sender's own inbox.
+  const replyTo = REPLY_DOMAIN ? `${facility_id}@${REPLY_DOMAIN}` : user.email ?? undefined;
   const safeBody = message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6">
     <p style="white-space:pre-wrap">${safeBody}</p>
-    ${HIPAA_FOOTER}
+    ${SIGNATURE}
   </div>`;
 
   // Send via Resend.
