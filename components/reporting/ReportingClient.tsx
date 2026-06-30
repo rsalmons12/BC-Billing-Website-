@@ -241,7 +241,15 @@ function CollectorsReport({
   facName: (id: string | null) => string;
   colName: (id: string | null) => string;
 }) {
+  const supabase = useMemo(() => createClient(), []);
   const days = useMemo(() => dateRange(from, to), [from, to]);
+
+  // Notes drill-down: claims a collector worked in range, with their notes.
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailRows, setDetailRows] = useState<
+    { worked_on: string; claim_id: string; patient: string; facility: string; notes: string; initials: string }[]
+  >([]);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const inRange = useCallback(
     (d: string) => d >= from && d <= to,
@@ -258,6 +266,52 @@ function CollectorsReport({
   const ranged = useMemo(
     () => logs.filter((l) => inRange(l.worked_on) && matchFilters(l)),
     [logs, inRange, matchFilters]
+  );
+
+  // Load the notes a collector wrote on the claims they worked in range.
+  const openNotes = useCallback(
+    async (collectorId: string) => {
+      setDetailId(collectorId);
+      setDetailLoading(true);
+      setDetailRows([]);
+      const events = logs.filter(
+        (l) =>
+          l.collector_id === collectorId &&
+          inRange(l.worked_on) &&
+          (facilityFilter === "all" || l.facility_id === facilityFilter)
+      );
+      const ids = Array.from(new Set(events.map((e) => e.claim_id).filter(Boolean))) as string[];
+      const workMap: Record<string, { notes: string; initials: string }> = {};
+      const patMap: Record<string, string> = {};
+      for (let i = 0; i < ids.length; i += 1000) {
+        const slice = ids.slice(i, i + 1000);
+        const { data: w } = await supabase
+          .from("claim_work")
+          .select("claim_id,notes,initials")
+          .in("claim_id", slice);
+        for (const row of (w as { claim_id: string; notes: string; initials: string }[]) ?? [])
+          workMap[row.claim_id] = { notes: row.notes ?? "", initials: row.initials ?? "" };
+        const { data: c } = await supabase
+          .from("claims")
+          .select("claim_id,patient_name")
+          .in("claim_id", slice);
+        for (const row of (c as { claim_id: string; patient_name: string }[]) ?? [])
+          patMap[row.claim_id] = row.patient_name ?? "";
+      }
+      const rows = events
+        .map((e) => ({
+          worked_on: e.worked_on,
+          claim_id: e.claim_id ?? "",
+          patient: patMap[e.claim_id ?? ""] ?? "—",
+          facility: facName(e.facility_id),
+          notes: workMap[e.claim_id ?? ""]?.notes ?? "",
+          initials: workMap[e.claim_id ?? ""]?.initials ?? "",
+        }))
+        .sort((a, b) => b.worked_on.localeCompare(a.worked_on));
+      setDetailRows(rows);
+      setDetailLoading(false);
+    },
+    [logs, inRange, facilityFilter, facName, supabase]
   );
 
   // per-collector aggregates over the range
@@ -472,6 +526,7 @@ function CollectorsReport({
                     <th className="th text-right">Attainment</th>
                     <th className="th text-right">This Wk</th>
                     <th className="th text-right">Last Wk</th>
+                    <th className="th"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -491,6 +546,14 @@ function CollectorsReport({
                         </td>
                         <td className="td text-right font-mono">{w.tw}</td>
                         <td className="td text-right font-mono text-surface-muted">{w.lw}</td>
+                        <td className="td text-right">
+                          <button
+                            onClick={() => openNotes(r.id)}
+                            className="badge bg-brand-blue/15 px-2 py-1 text-[11px] font-semibold text-brand-blue hover:bg-brand-blue/25"
+                          >
+                            📝 Notes
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -501,7 +564,7 @@ function CollectorsReport({
                       Total
                     </td>
                     <td className="td text-right font-mono">{grandTotal}</td>
-                    <td className="td" colSpan={6}></td>
+                    <td className="td" colSpan={7}></td>
                   </tr>
                 </tfoot>
               </table>
@@ -567,6 +630,74 @@ function CollectorsReport({
             </div>
           </div>
         </>
+      )}
+
+      {/* notes drill-down modal */}
+      {detailId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setDetailId(null)}
+        >
+          <div
+            className="card flex max-h-[80vh] w-full max-w-3xl flex-col p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-display font-bold">
+                {colName(detailId)} — notes ({from} to {to})
+              </h3>
+              <button
+                onClick={() => setDetailId(null)}
+                className="text-sm text-surface-muted hover:underline"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 min-h-0 flex-1 overflow-auto">
+              {detailLoading && <p className="text-sm text-surface-muted">Loading…</p>}
+              {!detailLoading && detailRows.length === 0 && (
+                <p className="text-sm text-surface-muted">No worked claims in this range.</p>
+              )}
+              {!detailLoading && detailRows.length > 0 && (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface">
+                    <tr>
+                      <th className="th text-left">Date</th>
+                      <th className="th text-left">Patient</th>
+                      <th className="th text-left">Facility</th>
+                      <th className="th text-left">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailRows.map((d, i) => (
+                      <tr key={`${d.claim_id}-${i}`} className={i % 2 ? "bg-surface/40" : ""}>
+                        <td className="td whitespace-nowrap text-xs">{d.worked_on}</td>
+                        <td className="td font-medium">{d.patient}</td>
+                        <td className="td text-xs text-surface-muted">{d.facility}</td>
+                        <td className="td whitespace-pre-wrap">{d.notes || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="mt-3 text-right">
+              <ExportButton
+                rows={detailRows.map((d) => ({
+                  Date: d.worked_on,
+                  Patient: d.patient,
+                  Facility: d.facility,
+                  "Claim ID": d.claim_id,
+                  Initials: d.initials,
+                  Notes: d.notes,
+                }))}
+                filename={`${colName(detailId)}_notes_${from}_to_${to}.xlsx`}
+                sheet="Notes"
+                label="Export notes"
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
