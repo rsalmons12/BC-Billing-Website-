@@ -163,7 +163,7 @@ create policy fmsg_select on facility_messages for select
 drop policy if exists fmsg_insert on facility_messages;
 create policy fmsg_insert on facility_messages for insert
   with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())));
-grant select, insert, update, delete on facility_messages to authenticated;
+grant select, insert, update, delete on facility_messages to authenticated, service_role;
 
 -- ---- Production log: append-only staff-production events for reporting ----
 create table if not exists production_log (
