@@ -475,14 +475,14 @@ function FacilitiesTab({
                 </td>
                 <td className="td">
                   <input
-                    type="email"
+                    type="text"
                     defaultValue={f.email ?? ""}
                     onBlur={(e) =>
                       e.target.value !== (f.email ?? "") &&
                       save(f, { email: e.target.value })
                     }
-                    className="cell-input min-w-[14rem]"
-                    placeholder="billing@facility.com"
+                    className="cell-input min-w-[18rem]"
+                    placeholder="billing@facility.com, ar@facility.com"
                   />
                 </td>
                 <td className="td text-right">

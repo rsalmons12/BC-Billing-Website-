@@ -184,7 +184,15 @@ export default function MessagesClient({
           {facility && (
             <span className="text-xs text-surface-muted">
               {facility.email ? (
-                <>Emails go to <b className="text-surface-ink">{facility.email}</b></>
+                <>
+                  Emails go to{" "}
+                  <b className="text-surface-ink">
+                    {facility.email
+                      .split(/[,;\s]+/)
+                      .filter((e) => e.includes("@"))
+                      .join(", ")}
+                  </b>
+                </>
               ) : (
                 <span className="text-risk">
                   No email on file — add one in Admin → Facilities.

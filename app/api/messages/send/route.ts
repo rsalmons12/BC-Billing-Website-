@@ -74,6 +74,19 @@ export async function POST(request: Request) {
     );
   }
 
+  // A facility may list several contact emails (comma/semicolon/space separated);
+  // send to all of them.
+  const toList = String(fac.email)
+    .split(/[,;\s]+/)
+    .map((e) => e.trim())
+    .filter((e) => e.includes("@"));
+  if (toList.length === 0) {
+    return NextResponse.json(
+      { error: "That facility's email looks invalid. Fix it in Admin → Facilities." },
+      { status: 400 }
+    );
+  }
+
   // If inbound is configured, replies route to the app thread for this
   // facility; otherwise they go to the sender's own inbox.
   const replyTo = REPLY_DOMAIN ? `${facility_id}@${REPLY_DOMAIN}` : user.email ?? undefined;
@@ -92,7 +105,7 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       from: FROM,
-      to: [fac.email],
+      to: toList,
       reply_to: replyTo,
       subject,
       html,
