@@ -35,4 +35,6 @@ drop policy if exists fmsg_insert on facility_messages;
 create policy fmsg_insert on facility_messages for insert
   with check (can_edit() and (is_management() or facility_id in (select accessible_facility_ids())));
 
-grant select, insert, update, delete on facility_messages to authenticated;
+-- authenticated for the app; service_role for the inbound webhook (writes
+-- replies via the service-role client, bypassing a user session).
+grant select, insert, update, delete on facility_messages to authenticated, service_role;
