@@ -11,6 +11,25 @@ export interface Facility {
   created_at: string;
 }
 
+export interface ClaimAdjustment {
+  id: string;
+  claim_id: string | null;
+  facility_id: string | null;
+  patient_name: string | null;
+  member_id: string | null;
+  dob: string | null;
+  dos_from: string | null;
+  dos_to: string | null;
+  charge_amount: number | null;
+  balance: number | null;
+  age_days: number | null;
+  claim_status: string | null;
+  reason: string;
+  initials: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface FacilityMessage {
   id: string;
   facility_id: string | null;
