@@ -63,17 +63,35 @@ export async function POST(request: Request) {
     (data.text as string) ?? (data.html as string) ?? (data.body as string) ?? ""
   );
   const emailId = String(data.email_id ?? data.id ?? "");
+  // Try the known retrieve endpoints (Resend's inbound path has shifted); the
+  // first that returns text/html wins. `diag` is surfaced in the response so we
+  // can see which endpoint works without server logs.
+  const diag: Record<string, unknown> = { emailId };
   if (!body && emailId && process.env.RESEND_API_KEY) {
-    try {
-      const r = await fetch(`https://api.resend.com/emails/${emailId}`, {
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-      });
-      if (r.ok) {
-        const full = (await r.json()) as { text?: string; html?: string };
-        body = full.text || stripHtml(full.html || "") || body;
+    const candidates = [
+      `https://api.resend.com/emails/${emailId}`,
+      `https://api.resend.com/emails/received/${emailId}`,
+      `https://api.resend.com/inbound/emails/${emailId}`,
+      `https://api.resend.com/receiving/emails/${emailId}`,
+    ];
+    for (const url of candidates) {
+      try {
+        const r = await fetch(url, {
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        });
+        diag[url] = r.status;
+        if (r.ok) {
+          const full = (await r.json()) as { text?: string; html?: string };
+          const t = full.text || stripHtml(full.html || "");
+          diag[`${url}#keys`] = Object.keys(full).join(",");
+          if (t) {
+            body = t;
+            break;
+          }
+        }
+      } catch (e) {
+        diag[url] = e instanceof Error ? e.message : "err";
       }
-    } catch {
-      /* keep going; we'll store a placeholder */
     }
   }
   body = body.trim() || "(no text)";
@@ -116,6 +134,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Always 200 so the provider doesn't retry endlessly.
-  return NextResponse.json({ ok: true });
+  // Always 200 so the provider doesn't retry endlessly. `diag` shows which
+  // retrieve endpoint (if any) returned the body — temporary, for debugging.
+  return NextResponse.json({ ok: true, bodyChars: body.length, diag });
 }
