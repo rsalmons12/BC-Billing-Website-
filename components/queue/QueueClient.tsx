@@ -83,6 +83,12 @@ export default function QueueClient({
   // anything younger. Management can lift it.
   const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
 
+  // Email-a-facility-about-this-claim modal.
+  const [emailClaim, setEmailClaim] = useState<ClaimRow | null>(null);
+  const [emailReason, setEmailReason] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
+
   // Customizable daily target (per collector, stored on profiles.daily_target).
   const [target, setTarget] = useState<number>(self.daily_target ?? DEFAULT_TARGET);
   // Extra claims pulled mid-day after the target is met (not persisted —
@@ -316,6 +322,43 @@ export default function QueueClient({
 
   const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
 
+  const emailFacilityHasAddr = (r: ClaimRow) =>
+    Boolean(facilities.find((f) => f.id === r.facility_id)?.email);
+
+  const sendFacilityEmail = async () => {
+    if (!emailClaim) return;
+    if (!emailReason.trim()) {
+      setEmailMsg("Add a reason.");
+      return;
+    }
+    const name = emailClaim.patient_name ?? "";
+    setEmailBusy(true);
+    setEmailMsg("Sending…");
+    const res = await fetch("/api/messages/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        facility_id: emailClaim.facility_id,
+        claim_id: emailClaim.claim_id,
+        patient_name: name,
+        subject: `Patient: ${name}`,
+        message: `Patient: ${name}\n\nReason: ${emailReason.trim()}`,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    setEmailBusy(false);
+    if (!res.ok) {
+      setEmailMsg(`❌ ${json.error || "Could not send."}`);
+      return;
+    }
+    setEmailMsg("✓ Sent to facility");
+    setTimeout(() => {
+      setEmailClaim(null);
+      setEmailReason("");
+      setEmailMsg("");
+    }, 1100);
+  };
+
   // Auth flag = "Y" routes the claim to the auth team and parks it off the board.
   const raiseAuthIssue = useCallback(
     async (row: ClaimRow) => {
@@ -481,6 +524,7 @@ export default function QueueClient({
               <th className="th sticky left-0 bg-surface">Patient</th>
               <th className="th">Facility</th>
               <th className="th">Member ID</th>
+              <th className="th">DOB</th>
               <th className="th">Age</th>
               <th className="th">DOS</th>
               <th className="th text-right">Balance</th>
@@ -500,14 +544,14 @@ export default function QueueClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={17} className="td py-10 text-center text-surface-muted">
+                <td colSpan={18} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={17} className="td py-10 text-center text-surface-muted">
+                <td colSpan={18} className="td py-10 text-center text-surface-muted">
                   {rows.length === 0 ? (
                     "No claims assigned. Ask management to assign you facilities."
                   ) : backlog === 0 ? (
@@ -551,6 +595,7 @@ export default function QueueClient({
                     <td className="td font-mono text-xs text-surface-muted">
                       {r.member_id || "—"}
                     </td>
+                    <td className="td text-xs text-surface-muted">{r.dob || "—"}</td>
                     <td className="td">
                       <AgeBadge age={r.age_days} />
                     </td>
@@ -632,29 +677,42 @@ export default function QueueClient({
                       />
                     </td>
                     <td className="td">
-                      {done ? (
+                      <div className="flex items-center gap-1.5">
+                        {done ? (
+                          <button
+                            onClick={() => undoWorked(r)}
+                            className="badge bg-recovered/15 px-2 py-1 text-[11px] font-semibold text-recovered hover:bg-risk/10 hover:text-risk"
+                            title="Undo — put back in the queue"
+                          >
+                            ✓ done ↩
+                          </button>
+                        ) : locked ? (
+                          <span
+                            className="badge cursor-not-allowed bg-surface px-2 py-1 text-[11px] font-semibold text-surface-muted"
+                            title="Clear today's 65+ risk claims first"
+                          >
+                            🔒 65+ first
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => markWorked(r)}
+                            className="btn-primary px-2.5 py-1 text-xs"
+                          >
+                            ✓ Worked
+                          </button>
+                        )}
                         <button
-                          onClick={() => undoWorked(r)}
-                          className="badge bg-recovered/15 px-2 py-1 text-[11px] font-semibold text-recovered hover:bg-risk/10 hover:text-risk"
-                          title="Undo — put back in the queue"
+                          onClick={() => {
+                            setEmailClaim(r);
+                            setEmailReason("");
+                            setEmailMsg("");
+                          }}
+                          className="badge bg-brand-blue/15 px-2 py-1 text-[11px] font-semibold text-brand-blue hover:bg-brand-blue/25"
+                          title="Email the facility about this claim"
                         >
-                          ✓ done ↩
+                          ✉
                         </button>
-                      ) : locked ? (
-                        <span
-                          className="badge cursor-not-allowed bg-surface px-2 py-1 text-[11px] font-semibold text-surface-muted"
-                          title="Clear today's 65+ risk claims first"
-                        >
-                          🔒 65+ first
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => markWorked(r)}
-                          className="btn-primary px-2.5 py-1 text-xs"
-                        >
-                          ✓ Worked
-                        </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -662,6 +720,79 @@ export default function QueueClient({
           </tbody>
         </table>
       </div>
+
+      {/* Email-the-facility modal */}
+      {emailClaim && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !emailBusy && setEmailClaim(null)}
+        >
+          <div
+            className="card w-full max-w-md p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-display font-bold">Email facility</h3>
+              <button
+                onClick={() => setEmailClaim(null)}
+                className="text-sm text-surface-muted hover:underline"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-1 text-xs text-surface-muted">
+              To <b className="text-surface-ink">{facName(emailClaim.facility_id)}</b>
+              {emailFacilityHasAddr(emailClaim) ? (
+                <>
+                  {" · "}
+                  {facilities.find((f) => f.id === emailClaim.facility_id)?.email}
+                </>
+              ) : (
+                <span className="text-risk"> · no email on file (Admin → Facilities)</span>
+              )}
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <span className="label">Patient</span>
+                <input
+                  value={emailClaim.patient_name ?? ""}
+                  readOnly
+                  className="input bg-surface"
+                />
+              </div>
+              <div>
+                <span className="label">Reason</span>
+                <textarea
+                  value={emailReason}
+                  onChange={(e) => setEmailReason(e.target.value)}
+                  rows={5}
+                  className="input resize-none"
+                  placeholder="e.g. Please provide the 10 dates of service for this patient."
+                  autoFocus
+                />
+              </div>
+              <p className="text-[11px] text-surface-muted">
+                The email includes the patient name + your reason, with the
+                Collections Department / HIPAA signature. The reply lands in
+                Messages.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={sendFacilityEmail}
+                  disabled={emailBusy || !emailFacilityHasAddr(emailClaim)}
+                  className="btn-primary disabled:opacity-60"
+                >
+                  {emailBusy ? "Sending…" : "✉ Send to facility"}
+                </button>
+                {emailMsg && (
+                  <span className="text-xs font-medium text-secured">{emailMsg}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
