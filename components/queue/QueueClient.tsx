@@ -79,6 +79,9 @@ export default function QueueClient({
   // Filters
   const [search, setSearch] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
+  // Risk-first enforcement: collectors must clear today's 65+ before working
+  // anything younger. Management can lift it.
+  const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
 
   // Customizable daily target (per collector, stored on profiles.daily_target).
   const [target, setTarget] = useState<number>(self.daily_target ?? DEFAULT_TARGET);
@@ -207,6 +210,10 @@ export default function QueueClient({
   ).length;
   const balanceRemaining = todaySet.reduce((s, r) => s + (r.balance ?? 0), 0);
   const backlog = unworked.length; // everything not yet worked, incl. rollover
+
+  // While any 65+ risk claim is still open today, lock the younger ones so the
+  // collector can't skip ahead.
+  const riskLock = enforceRiskFirst && riskRemaining > 0;
 
   // Apply on-screen filters to the board.
   const q = search.trim().toLowerCase();
@@ -400,6 +407,19 @@ export default function QueueClient({
           65+ only
         </button>
 
+        {/* risk-first enforcement (management can lift it) */}
+        {isManagement && (
+          <button
+            onClick={() => setEnforceRiskFirst((v) => !v)}
+            className={`badge px-3 py-1.5 text-xs font-semibold ${
+              enforceRiskFirst ? "bg-risk/15 text-risk" : "bg-surface text-surface-muted"
+            }`}
+            title="Require collectors to clear 65+ risk before working younger claims"
+          >
+            {enforceRiskFirst ? "🔒 Risk-first ON" : "Risk-first OFF"}
+          </button>
+        )}
+
         {/* daily target editor */}
         <label className="flex items-center gap-1.5 text-xs font-semibold text-surface-muted">
           Daily target
@@ -443,6 +463,15 @@ export default function QueueClient({
           count never stacks to {target * 2}.
         </p>
       </div>
+
+      {/* risk-first lock banner */}
+      {riskLock && (
+        <div className="border-b border-risk/30 bg-risk/10 px-6 py-2 text-xs font-semibold text-risk">
+          🔒 Work your <b>{riskRemaining}</b> remaining 65+ risk claim
+          {riskRemaining === 1 ? "" : "s"} first — younger claims unlock once
+          today&apos;s risk is cleared.
+        </div>
+      )}
 
       {/* queue */}
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
@@ -506,13 +535,14 @@ export default function QueueClient({
               visible.map((r, i) => {
                 const risk = (r.age_days ?? 0) > RISK_AGE_THRESHOLD;
                 const done = (r.work?.date_worked || "") === today;
+                const locked = riskLock && !risk && !done;
                 const w = r.work ?? EMPTY_WORK(r.claim_id);
                 return (
                   <tr
                     key={r.claim_id}
                     className={`${i % 2 ? "bg-surface/40" : "bg-surface-card"} ${
                       risk ? "border-l-2 border-l-risk" : ""
-                    } ${done ? "opacity-60" : ""} hover:bg-gold/5`}
+                    } ${done || locked ? "opacity-50" : ""} hover:bg-gold/5`}
                   >
                     <td className="td sticky left-0 bg-inherit font-medium">
                       {r.patient_name || "—"}
@@ -610,6 +640,13 @@ export default function QueueClient({
                         >
                           ✓ done ↩
                         </button>
+                      ) : locked ? (
+                        <span
+                          className="badge cursor-not-allowed bg-surface px-2 py-1 text-[11px] font-semibold text-surface-muted"
+                          title="Clear today's 65+ risk claims first"
+                        >
+                          🔒 65+ first
+                        </span>
                       ) : (
                         <button
                           onClick={() => markWorked(r)}
