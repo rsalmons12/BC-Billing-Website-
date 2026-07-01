@@ -208,8 +208,11 @@ export default function QueueClient({
         if (isExcludedMember(c.member_id)) return false;
         // Claims shifted to Marketplace / Exchange are out of the queue.
         if (movedIds.has(c.claim_id)) return false;
-        // 100+ specialists only see the 100+ band.
-        if (specialist && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD) return false;
+        // Scope by tier: a 100+ specialist works ONLY 100+ claims; everyone
+        // else works the 0–99 band (65–99 surfaces first via the sort below).
+        const age = c.age_days ?? 0;
+        if (specialist ? age < PRIORITY_AGE_THRESHOLD : age >= PRIORITY_AGE_THRESHOLD)
+          return false;
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
         if (cols.length <= 1) return true;
         const idx = cols.indexOf(collectorId);
