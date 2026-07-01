@@ -178,6 +178,27 @@ export interface Negotiation {
   updated_at: string;
 }
 
+export interface Payment {
+  id: string;
+  facility_id: string | null;
+  payment_entered: string | null;
+  deposit_date: string | null;
+  patient_name: string | null;
+  member_id: string | null;
+  cpt_description: string | null;
+  payment_source: string | null;
+  dos_from: string | null;
+  dos_to: string | null;
+  charge_amount: number | null;
+  paid_amount: number | null;
+  payment_type: string | null;
+  check_number: string | null;
+  notes: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BilledClaim {
   id: string;
   facility_id: string | null;
