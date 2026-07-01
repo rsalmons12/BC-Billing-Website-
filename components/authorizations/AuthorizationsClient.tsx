@@ -55,16 +55,18 @@ function isDueForReview(a: Authorization): boolean {
   return d.getTime() <= today.getTime();
 }
 
-// Recency of an auth — the latest meaningful date on it (falls back to created).
+// Recency of an auth — how recently it BEGAN. The "current" auth for a patient
+// is the one that started most recently (latest Start, else Admit). We do NOT
+// rank by Next Review/End, since a stray future review date on an older auth
+// must not let it outrank the patient's real current authorization. Falls back
+// to created_at only when the auth carries no start/admit date at all.
 function authRecency(a: Authorization): number {
-  const cands = [a.next_review_date, a.end_date, a.start_date, a.admit_date]
+  const begun = [a.start_date, a.admit_date]
     .map(parseDate)
     .filter(Boolean) as Date[];
+  if (begun.length) return Math.max(...begun.map((d) => d.getTime()));
   const created = Date.parse(a.created_at || "");
-  return Math.max(
-    ...cands.map((d) => d.getTime()),
-    isNaN(created) ? 0 : created
-  );
+  return isNaN(created) ? 0 : created;
 }
 
 interface PatientGroup {
@@ -386,6 +388,7 @@ export default function AuthorizationsClient({
               <th className="th">Facility</th>
               <th className="th">LOC</th>
               <th className="th">Status</th>
+              <th className="th">Admit</th>
               <th className="th">Start</th>
               <th className="th">End</th>
               <th className="th text-right">Total Days</th>
@@ -396,14 +399,14 @@ export default function AuthorizationsClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={10} className="td py-10 text-center text-surface-muted">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={10} className="td py-10 text-center text-surface-muted">
                   No patients here. Use “+ Add patient” or “Import Excel.”
                 </td>
               </tr>
@@ -424,6 +427,7 @@ export default function AuthorizationsClient({
                     <td className="td text-xs text-surface-muted">{facName(g.facility_id)}</td>
                     <td className="td">{c.level_of_care || "—"}</td>
                     <td className="td text-xs">{c.status || "—"}</td>
+                    <td className="td text-xs">{c.admit_date || "—"}</td>
                     <td className="td text-xs">{c.start_date || "—"}</td>
                     <td className="td text-xs">{c.end_date || "—"}</td>
                     <td className="td text-right font-mono">{authDays(c) ?? "—"}</td>
