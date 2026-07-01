@@ -8,6 +8,7 @@ import { isExcludedMember } from "@/lib/claims";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   RISK_AGE_THRESHOLD,
+  PRIORITY_AGE_THRESHOLD,
   type Claim,
   type ClaimWork,
   type ClaimRow,
@@ -54,8 +55,16 @@ function todayStr(): string {
 
 function AgeBadge({ age }: { age: number | null }) {
   const a = age ?? 0;
+  // 100+ is the top priority tier — make it unmistakable.
+  if (a >= PRIORITY_AGE_THRESHOLD) {
+    return (
+      <span className="badge bg-risk font-mono font-bold text-white" title="100+ priority">
+        {a}d ★
+      </span>
+    );
+  }
   let cls = "bg-recovered/12 text-recovered";
-  if (a > RISK_AGE_THRESHOLD) cls = "bg-risk/12 text-risk";
+  if (a > RISK_AGE_THRESHOLD) cls = "bg-risk/12 text-risk"; // 65–99 risk band
   else if (a >= 36) cls = "bg-gold/15 text-gold";
   return <span className={`badge ${cls} font-mono`}>{a}d</span>;
 }
@@ -180,11 +189,16 @@ export default function QueueClient({
       for (const w of (data as ClaimWork[]) ?? []) workMap[w.claim_id] = w;
     }
 
+    // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
+    const specialist = (collector.queue_tier ?? "standard") === "priority_100";
+
     // This collector's split of each facility's claims.
     const mine = claims
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
         if (isExcludedMember(c.member_id)) return false;
+        // 100+ specialists only see the 100+ band.
+        if (specialist && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD) return false;
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
         if (cols.length <= 1) return true;
         const idx = cols.indexOf(collectorId);
@@ -192,17 +206,22 @@ export default function QueueClient({
       })
       .map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }));
 
-    // Risk (65+) first, then oldest first.
+    // Priority tiers: 100+ first, then 65–99, then younger; oldest-first within.
+    const tier = (age: number | null) => {
+      const a = age ?? 0;
+      if (a >= PRIORITY_AGE_THRESHOLD) return 2;
+      if (a > RISK_AGE_THRESHOLD) return 1;
+      return 0;
+    };
     mine.sort((a, b) => {
-      const ar = (a.age_days ?? 0) > RISK_AGE_THRESHOLD ? 1 : 0;
-      const br = (b.age_days ?? 0) > RISK_AGE_THRESHOLD ? 1 : 0;
-      if (ar !== br) return br - ar;
+      const t = tier(b.age_days) - tier(a.age_days);
+      if (t !== 0) return t;
       return (b.age_days ?? 0) - (a.age_days ?? 0);
     });
 
     setRows(mine);
     setLoading(false);
-  }, [supabase, collectorId]);
+  }, [supabase, collectorId, collector.queue_tier]);
 
   useEffect(() => {
     load();

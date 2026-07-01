@@ -61,6 +61,17 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : "Job title set");
   };
 
+  const setQueueTier = async (p: Profile, queue_tier: string) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, queue_tier } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ queue_tier })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : "Queue tier set");
+  };
+
   const setFacilityId = async (p: Profile, facility_id: string | null) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, facility_id } : x))
@@ -157,6 +168,7 @@ export default function AdminClient({
           selfId={selfId}
           setRole={setRole}
           setJobTitle={setJobTitle}
+          setQueueTier={setQueueTier}
           setFacilityId={setFacilityId}
           toggleAssignment={toggleAssignment}
           toggleTab={toggleTab}
@@ -185,6 +197,7 @@ function UsersTab({
   selfId,
   setRole,
   setJobTitle,
+  setQueueTier,
   setFacilityId,
   toggleAssignment,
   toggleTab,
@@ -195,6 +208,7 @@ function UsersTab({
   selfId: string;
   setRole: (p: Profile, r: Role) => void;
   setJobTitle: (p: Profile, title: string) => void;
+  setQueueTier: (p: Profile, tier: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
   toggleAssignment: (p: Profile, facilityId: string) => void;
   toggleTab: (p: Profile, href: string) => void;
@@ -249,6 +263,21 @@ function UsersTab({
                         {t}
                       </option>
                     ))}
+                  </select>
+                </div>
+              )}
+
+              {p.role === "staff" && (
+                <div>
+                  <span className="label">Queue tier</span>
+                  <select
+                    value={p.queue_tier ?? "standard"}
+                    onChange={(e) => setQueueTier(p, e.target.value)}
+                    className="input min-w-[12rem]"
+                    title="100+ specialist only sees 100+ claims, capped at their daily target"
+                  >
+                    <option value="standard">Standard (100+ then 65–99)</option>
+                    <option value="priority_100">100+ specialist only</option>
                   </select>
                 </div>
               )}
