@@ -52,6 +52,17 @@ export interface TrackerConfig {
   // currently-filtered rows).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   renderSummary?: (rows: Array<Record<string, any>>) => React.ReactNode;
+  // Optional extra dropdown filter(s) rendered next to the status filter.
+  // Each option keeps only rows for which test() returns true.
+  extraFilters?: {
+    label: string; // dropdown placeholder, e.g. "All reviews"
+    options: {
+      value: string;
+      label: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      test: (r: Record<string, any>) => boolean;
+    }[];
+  };
   // Optional boolean "bucket" column (e.g. discharged) with an Active/Archived
   // toggle and a per-row move action.
   archiveKey?: string;
@@ -98,6 +109,7 @@ export default function TrackerModule({
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [extraFilter, setExtraFilter] = useState("all");
   const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
   const hasActions = !readOnly && (Boolean(config.archiveKey) || isManagement);
 
@@ -194,6 +206,10 @@ export default function TrackerModule({
         String(r[config.statusKey] ?? "") !== statusFilter
       )
         return false;
+      if (config.extraFilters && extraFilter !== "all") {
+        const opt = config.extraFilters.options.find((o) => o.value === extraFilter);
+        if (opt && !opt.test(r)) return false;
+      }
       if (q) {
         const hay = config.searchKeys
           .map((k) => String(r[k] ?? ""))
@@ -203,7 +219,7 @@ export default function TrackerModule({
       }
       return true;
     });
-  }, [rows, statusFilter, search, config, archiveView]);
+  }, [rows, statusFilter, extraFilter, search, config, archiveView]);
 
   // Only render a window of rows so big tabs stay fast (totals/export still
   // use the full filtered set).
@@ -298,6 +314,21 @@ export default function TrackerModule({
                   {s}
                 </option>
               ))}
+          </select>
+        )}
+
+        {config.extraFilters && (
+          <select
+            value={extraFilter}
+            onChange={(e) => setExtraFilter(e.target.value)}
+            className="input max-w-[12rem]"
+          >
+            <option value="all">{config.extraFilters.label}</option>
+            {config.extraFilters.options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         )}
 
