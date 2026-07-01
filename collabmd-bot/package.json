@@ -1,0 +1,14 @@
+{
+  "name": "collabmd-bot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pushes BC Billing notes into CollaborateMD, keyed by claim ID.",
+  "scripts": {
+    "notes": "node push-notes.mjs",
+    "dry-run": "DRY_RUN=1 node push-notes.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
