@@ -276,7 +276,7 @@ function UsersTab({
                     className="input min-w-[12rem]"
                     title="100+ specialist only sees 100+ claims, capped at their daily target"
                   >
-                    <option value="standard">Standard (100+ then 65–99)</option>
+                    <option value="standard">Standard (0–99, 65–99 first)</option>
                     <option value="priority_100">100+ specialist only</option>
                   </select>
                 </div>
