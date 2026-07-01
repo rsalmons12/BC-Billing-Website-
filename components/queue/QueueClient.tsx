@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
+import { isExcludedMember } from "@/lib/claims";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   RISK_AGE_THRESHOLD,
@@ -182,6 +183,8 @@ export default function QueueClient({
     // This collector's split of each facility's claims.
     const mine = claims
       .filter((c) => {
+        // Excluded plans (e.g. VMAH member ids) never enter the queue.
+        if (isExcludedMember(c.member_id)) return false;
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
         if (cols.length <= 1) return true;
         const idx = cols.indexOf(collectorId);
