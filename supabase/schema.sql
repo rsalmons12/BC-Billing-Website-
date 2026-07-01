@@ -140,7 +140,13 @@ begin
   if r = 'management' then
     return query select id from facilities;
   elsif r = 'facility' then
-    return query select facility_id from profiles where id = auth.uid() and facility_id is not null;
+    -- Primary facility on the profile, PLUS any extra facilities granted via
+    -- the assignments table (multi-facility facility logins).
+    return query
+      select facility_id from profiles
+        where id = auth.uid() and facility_id is not null
+      union
+      select facility_id from assignments where profile_id = auth.uid();
   elsif r = 'staff' then
     return query select facility_id from assignments where profile_id = auth.uid();
   else
