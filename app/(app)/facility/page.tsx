@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
+import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import type {
   Claim,
   Payment,
@@ -138,6 +138,13 @@ export default async function FacilityDashboard({
   }
   const arRows = Array.from(arByPayer.entries()).sort((a, b) => b[1] - a[1]);
 
+  // AR at risk of non-reimbursement (marketplace/exchange payers). Matched on
+  // the claim status so it catches "Denied at Highmark", "at Independence", etc.
+  const riskAR = claims.reduce(
+    (s, c) => s + (isRiskPayer(c.claim_status) ? c.balance ?? 0 : 0),
+    0
+  );
+
   // ---- Payments collected this month + per payer ---------------------------
   const monthPayments = payments.filter(
     (p) => isThisMonth(p.deposit_date, now) || isThisMonth(p.payment_entered, now)
@@ -224,11 +231,37 @@ export default async function FacilityDashboard({
             <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
           </section>
 
+          {/* Non-reimbursement risk (marketplace / exchange payers) */}
+          {riskAR > 0 && (
+            <section className="card border border-risk/40 bg-risk/5 p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="font-semibold text-risk">
+                    ⚠ Risk of non-reimbursement
+                  </div>
+                  <div className="mt-0.5 text-xs text-surface-muted">
+                    Marketplace / exchange plans — Highmark, Capital Blue Cross,
+                    Independence Blue Cross. Prioritize before these age out.
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-display text-2xl font-bold text-risk">
+                    {money(riskAR)}
+                  </div>
+                  <div className="text-xs text-surface-muted">
+                    {totalAR > 0 ? Math.round((riskAR / totalAR) * 100) : 0}% of AR
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* AR by payer */}
           <Breakdown
             title="Outstanding AR by payer"
             total={totalAR}
             rows={arRows}
+            flagRisk
             empty="No outstanding balance on file."
             accent="gold"
           />
@@ -332,14 +365,15 @@ function Breakdown({
   rows,
   empty,
   accent,
+  flagRisk = false,
 }: {
   title: string;
   total: number;
   rows: [string, number][];
   empty: string;
   accent: "gold" | "recovered";
+  flagRisk?: boolean;
 }) {
-  const bar = accent === "gold" ? "bg-gold" : "bg-recovered";
   const max = rows.length ? rows[0][1] : 0;
   return (
     <section className="card p-5">
@@ -351,23 +385,37 @@ function Breakdown({
         <p className="text-sm text-surface-muted">{empty}</p>
       ) : (
         <div className="space-y-2">
-          {rows.map(([payer, amt]) => (
-            <div key={payer} className="flex items-center gap-3">
-              <div className="w-40 shrink-0 truncate text-sm font-medium" title={payer}>
-                {payer}
-              </div>
-              <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface">
+          {rows.map(([payer, amt]) => {
+            const risk = flagRisk && isRiskPayer(payer);
+            const bar = risk
+              ? "bg-risk"
+              : accent === "gold"
+                ? "bg-gold"
+                : "bg-recovered";
+            return (
+              <div key={payer} className="flex items-center gap-3">
                 <div
-                  className={`h-full rounded-full ${bar}`}
-                  style={{ width: `${max > 0 ? Math.max(3, (amt / max) * 100) : 0}%` }}
-                />
+                  className={`flex w-44 shrink-0 items-center gap-1 truncate text-sm font-medium ${
+                    risk ? "text-risk" : ""
+                  }`}
+                  title={risk ? `${payer} — non-reimbursement risk` : payer}
+                >
+                  <span className="truncate">{payer}</span>
+                  {risk && <span title="Marketplace / exchange — non-reimbursement risk">⚠</span>}
+                </div>
+                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface">
+                  <div
+                    className={`h-full rounded-full ${bar}`}
+                    style={{ width: `${max > 0 ? Math.max(3, (amt / max) * 100) : 0}%` }}
+                  />
+                </div>
+                <div className="w-28 shrink-0 text-right font-mono text-sm">{money(amt)}</div>
+                <div className="w-12 shrink-0 text-right text-xs text-surface-muted">
+                  {total > 0 ? Math.round((amt / total) * 100) : 0}%
+                </div>
               </div>
-              <div className="w-28 shrink-0 text-right font-mono text-sm">{money(amt)}</div>
-              <div className="w-12 shrink-0 text-right text-xs text-surface-muted">
-                {total > 0 ? Math.round((amt / total) * 100) : 0}%
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

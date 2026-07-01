@@ -9,3 +9,19 @@ export function isExcludedMember(memberId: unknown): boolean {
   if (!id) return false;
   return EXCLUDED_MEMBER_PREFIXES.some((p) => id.startsWith(p));
 }
+
+// Payers whose marketplace / exchange plans carry a high risk of
+// non-reimbursement. AR tied to these is flagged on the facility screen.
+export const RISK_PAYER_PATTERNS: RegExp[] = [
+  /highmark/i,
+  /capital\s*(blue|bcbs)?/i, // Capital Blue Cross / Capital BCBS
+  /independence/i, // Independence Blue Cross
+];
+
+// True when a payer name (or a claim-status string that names the payer, e.g.
+// "Denied at Highmark") matches a non-reimbursement-risk payer.
+export function isRiskPayer(text: unknown): boolean {
+  const s = String(text ?? "");
+  if (!s) return false;
+  return RISK_PAYER_PATTERNS.some((p) => p.test(s));
+}
