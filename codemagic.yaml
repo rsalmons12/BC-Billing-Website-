@@ -35,6 +35,12 @@ workflows:
           # Package Manager, so there are no pods to install.
           if [ ! -d "ios/App" ]; then npx cap add ios; fi
           npx cap sync ios
+          # Force the Xcode target's bundle id to match the provisioning profile
+          # we create for $BUNDLE_ID, so use-profiles can bind them.
+          sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID};/g" \
+            ios/App/App.xcodeproj/project.pbxproj
+          echo "Bundle ids now set to:"
+          grep PRODUCT_BUNDLE_IDENTIFIER ios/App/App.xcodeproj/project.pbxproj || true
       - name: Set up code signing (create cert + profile if missing)
         script: |
           keychain initialize
