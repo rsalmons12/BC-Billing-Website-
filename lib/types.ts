@@ -178,6 +178,18 @@ export interface Negotiation {
   updated_at: string;
 }
 
+export interface Attachment {
+  id: string;
+  category: string; // 'medical_records' | 'licenses_w9'
+  name: string;
+  path: string;
+  size_bytes: number | null;
+  content_type: string | null;
+  facility_id: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
 export interface MedicalRecord {
   id: string;
   facility_id: string | null;
