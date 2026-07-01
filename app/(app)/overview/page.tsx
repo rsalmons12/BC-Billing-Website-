@@ -5,6 +5,7 @@ import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
+import { isExcludedMember } from "@/lib/claims";
 import {
   RISK_AGE_THRESHOLD,
   type Claim,
@@ -28,7 +29,8 @@ export default async function OverviewPage() {
   ]);
 
   const facilities = (facData as Facility[]) ?? [];
-  const claims = claimsData ?? [];
+  // Excluded plans (e.g. VMAH member ids) are hidden from every total.
+  const claims = (claimsData ?? []).filter((c) => !isExcludedMember(c.member_id));
   const issues = issuesData ?? [];
 
   const facName = (id: string) => {
