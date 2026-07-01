@@ -19,29 +19,22 @@ workflows:
       app_store_connect: BC_BILLING_APP_STORE_KEY
     environment:
       vars:
-        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        # Capacitor 8 uses Swift Package Manager (no CocoaPods / no .xcworkspace).
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "cloud.bcbilling.app"
       node: 22
       xcode: latest
-      cocoapods: default
     scripts:
       - name: Install npm dependencies
         script: npm ci || npm install
-      - name: Generate the iOS native project + install pods
+      - name: Generate the iOS native project
         script: |
           set -e
-          # A fresh clone has no ios/ — scaffold it (creates ios/App + Podfile).
+          # A fresh clone has no ios/ — scaffold it. Capacitor 8 wires up Swift
+          # Package Manager, so there are no pods to install.
           if [ ! -d "ios/App" ]; then npx cap add ios; fi
           npx cap sync ios
-          echo "----- ios/ -----";      ls -la ios || true
-          echo "----- ios/App/ -----";  ls -la ios/App || true
-          PODFILE="$(find ios -maxdepth 3 -name Podfile | head -1)"
-          if [ -z "$PODFILE" ]; then
-            echo "ERROR: Capacitor did not generate a Podfile"; exit 1
-          fi
-          echo "Using Podfile at: $PODFILE"
-          cd "$(dirname "$PODFILE")" && pod install --repo-update
       - name: Set up code signing (create cert + profile if missing)
         script: |
           keychain initialize
@@ -55,7 +48,7 @@ workflows:
       - name: Build the signed .ipa
         script: |
           xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
+            --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
