@@ -13,6 +13,7 @@ export const TABS: Tab[] = [
   { href: "/queue", label: "My Queue", icon: "◎", roles: ["management", "staff"] },
   { href: "/collections", label: "Collections", icon: "▤", roles: ["management", "staff"] },
   { href: "/adjustments", label: "Adjustments", icon: "✎", roles: ["management", "staff"] },
+  { href: "/marketplace", label: "Marketplace / Exchange", icon: "⇄", roles: ["management", "staff"] },
   { href: "/auth-issues", label: "Auth Issues", icon: "✦", roles: ["management", "staff"] },
   { href: "/messages", label: "Messages", icon: "✉", roles: ["management", "staff", "facility"] },
   { href: "/management", label: "Management", icon: "★", roles: ["management", "staff"] },
