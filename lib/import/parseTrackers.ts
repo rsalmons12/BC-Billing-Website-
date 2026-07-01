@@ -70,8 +70,17 @@ export interface AuthRow {
   next_review_date: string;
   auth_number: string;
   level_of_care: string;
+  total_days: number | null;
   status: string;
   notes: string;
+}
+
+// Inclusive day count between two M/D/YYYY strings, or null if either is bad.
+function inclusiveDays(start: string, end: string): number | null {
+  const a = Date.parse(start);
+  const b = Date.parse(end);
+  if (isNaN(a) || isNaN(b) || b < a) return null;
+  return Math.round((b - a) / 86400000) + 1;
 }
 
 export function parseAuthorizations(
@@ -97,6 +106,7 @@ export function parseAuthorizations(
       review: findCol(h, [/review/]),
       auth: findCol(h, [/auth number|auth #|auth/]),
       loc: findCol(h, [/level of care|loc/]),
+      days: findCol(h, [/total days|days approved|# days|# of days|^days$|days/]),
       status: findCol(h, [/status|approv/]),
       notes: findCol(h, [/notes/]),
     };
@@ -112,16 +122,21 @@ export function parseAuthorizations(
       }
       const patient = toStr(r[col.patient >= 0 ? col.patient : 0]);
       if (!patient) continue;
+      const start = col.start >= 0 ? toDateStr(r[col.start]) : "";
+      const end = col.end >= 0 ? toDateStr(r[col.end]) : "";
+      // Prefer an explicit "days" column; otherwise derive from start/end.
+      const days = col.days >= 0 ? toNum(r[col.days]) : null;
       out.push({
         facility_name: col.facility >= 0 ? lastFacility : name,
         patient_name: patient,
         admit_date: col.admit >= 0 ? toDateStr(r[col.admit]) : "",
-        start_date: col.start >= 0 ? toDateStr(r[col.start]) : "",
-        end_date: col.end >= 0 ? toDateStr(r[col.end]) : "",
+        start_date: start,
+        end_date: end,
         discharge_date: col.discharge >= 0 ? toDateStr(r[col.discharge]) : "",
         next_review_date: col.review >= 0 ? toDateStr(r[col.review]) : "",
         auth_number: col.auth >= 0 ? toStr(r[col.auth]) : "",
         level_of_care: col.loc >= 0 ? toStr(r[col.loc]) : "",
+        total_days: days != null ? days : inclusiveDays(start, end),
         status: col.status >= 0 ? toStr(r[col.status]) : "Pending",
         notes: col.notes >= 0 ? toStr(r[col.notes]) : "",
       });

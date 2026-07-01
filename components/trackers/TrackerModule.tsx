@@ -711,7 +711,7 @@ function AutoTextarea({
 }
 
 // ----- import panel (parse -> map facilities -> replace per facility) -----
-function ImportPanel({
+export function ImportPanel({
   config,
   facilities,
   onClose,

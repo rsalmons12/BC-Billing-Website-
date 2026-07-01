@@ -17,6 +17,9 @@ create table if not exists authorizations (
 );
 create index if not exists authorizations_facility_idx on authorizations(facility_id);
 alter table authorizations add column if not exists discharged boolean not null default false;
+-- Number of days approved on this auth (e.g. 10 days of PHP). Used to total
+-- days per level of care on the patient drill-down.
+alter table authorizations add column if not exists total_days int;
 
 create table if not exists negotiations (
   id uuid primary key default gen_random_uuid(),
