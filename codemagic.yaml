@@ -43,11 +43,17 @@ workflows:
           grep PRODUCT_BUNDLE_IDENTIFIER ios/App/App.xcodeproj/project.pbxproj || true
       - name: Set up code signing (create cert + profile if missing)
         script: |
+          set -e
           keychain initialize
-          # Creates a distribution certificate and an App Store provisioning
-          # profile for the bundle id automatically when none exist yet.
+          # Apple distribution certificates can't be created without a private
+          # key. Generate one, then create/fetch the distribution certificate
+          # AND the App Store provisioning profile for the bundle id, saving
+          # both locally so the keychain + Xcode project can use them.
+          CERT_KEY="$CM_BUILD_DIR/dist_cert_key.pem"
+          openssl genrsa -out "$CERT_KEY" 2048
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
+            --certificate-key @file:"$CERT_KEY" \
             --create
           keychain add-certificates
           xcode-project use-profiles
