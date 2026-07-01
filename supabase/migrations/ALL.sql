@@ -139,6 +139,18 @@ begin
   end loop;
 end $$;
 
+-- ---- Facilities RLS (scope the facility list itself) ----
+-- Without this, a facility login could read every facility row (names, etc.).
+-- Financial tables are already scoped, but the facilities table needs its own
+-- policy so the list a facility sees is limited to what they may access.
+alter table facilities enable row level security;
+drop policy if exists fac_select on facilities;
+create policy fac_select on facilities for select
+  using (is_management() or id in (select accessible_facility_ids()));
+drop policy if exists fac_write on facilities;
+create policy fac_write on facilities for all
+  using (is_management()) with check (is_management());
+
 -- ---- Historical Data RLS (read for any signed-in user, write management) ----
 alter table historical_data enable row level security;
 drop policy if exists hist_select on historical_data;

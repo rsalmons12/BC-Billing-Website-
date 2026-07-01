@@ -56,9 +56,21 @@ export default async function FacilityDashboard({
   const now = new Date();
   const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  // RLS returns every facility this login may see (primary + any extras granted
-  // via assignments). Each data query below is likewise scoped to those.
-  const [{ data: facList }, allClaims, allPayments, allNegotiations, allBilled] =
+  // The exact set of facilities THIS login may see: its primary facility plus
+  // any explicitly granted via assignments. Computed in-app so the dashboard
+  // never depends on the facilities table's RLS to scope what's shown.
+  const { data: asgData } = await supabase
+    .from("assignments")
+    .select("facility_id")
+    .eq("profile_id", profile.id);
+  const accessibleIds = new Set<string>(
+    [
+      profile.facility_id,
+      ...((asgData ?? []).map((a) => (a as { facility_id: string }).facility_id)),
+    ].filter(Boolean) as string[]
+  );
+
+  const [{ data: facList }, allClaimsRaw, allPaymentsRaw, allNegRaw, allBilledRaw] =
     await Promise.all([
       supabase.from("facilities").select("*").order("name", { ascending: true }),
       selectAll<Claim>((f, t) =>
@@ -73,7 +85,17 @@ export default async function FacilityDashboard({
       ),
     ]);
 
-  const facilities = (facList as Facility[]) ?? [];
+  // Hard scope everything to this login's facilities.
+  const inScope = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
+    rows.filter((r) => r.facility_id != null && accessibleIds.has(r.facility_id));
+
+  const facilities = ((facList as Facility[]) ?? []).filter((f) =>
+    accessibleIds.has(f.id)
+  );
+  const allClaims = inScope(allClaimsRaw);
+  const allPayments = inScope(allPaymentsRaw);
+  const allNegotiations = inScope(allNegRaw);
+  const allBilled = inScope(allBilledRaw);
   const multi = facilities.length > 1;
 
   // Which facility is being viewed: a specific one, or "all" (combined).
