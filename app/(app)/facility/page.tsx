@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import { money } from "@/lib/format";
+import { isExcludedMember } from "@/lib/claims";
 import type {
   Claim,
   Payment,
@@ -86,7 +87,8 @@ export default async function FacilityDashboard({
   const scoped = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
     selectedId === "all" ? rows : rows.filter((r) => r.facility_id === selectedId);
 
-  const claims = scoped(allClaims);
+  // Excluded plans (e.g. VMAH member ids) are removed from AR entirely.
+  const claims = scoped(allClaims).filter((c) => !isExcludedMember(c.member_id));
   const payments = scoped(allPayments);
   const negotiations = scoped(allNegotiations);
   const billed = scoped(allBilled);
