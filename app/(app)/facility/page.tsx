@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -42,7 +43,11 @@ function isThisMonth(v: unknown, now: Date): boolean {
   );
 }
 
-export default async function FacilityDashboard() {
+export default async function FacilityDashboard({
+  searchParams,
+}: {
+  searchParams: { facility?: string };
+}) {
   const { profile, email } = await requireProfile();
   if (profile.role !== "facility") redirect("/");
 
@@ -50,10 +55,11 @@ export default async function FacilityDashboard() {
   const now = new Date();
   const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  // RLS scopes every query to the user's single facility automatically.
-  const [{ data: facData }, claims, payments, negotiations, billed] =
+  // RLS returns every facility this login may see (primary + any extras granted
+  // via assignments). Each data query below is likewise scoped to those.
+  const [{ data: facList }, allClaims, allPayments, allNegotiations, allBilled] =
     await Promise.all([
-      supabase.from("facilities").select("*").limit(1).maybeSingle(),
+      supabase.from("facilities").select("*").order("name", { ascending: true }),
       selectAll<Claim>((f, t) =>
         supabase.from("claims").select("*").eq("present", true).range(f, t)
       ),
@@ -66,7 +72,30 @@ export default async function FacilityDashboard() {
       ),
     ]);
 
-  const facility = facData as Facility | null;
+  const facilities = (facList as Facility[]) ?? [];
+  const multi = facilities.length > 1;
+
+  // Which facility is being viewed: a specific one, or "all" (combined).
+  const selectedId =
+    searchParams.facility && facilities.some((f) => f.id === searchParams.facility)
+      ? searchParams.facility
+      : "all";
+  const facility =
+    selectedId === "all" ? null : facilities.find((f) => f.id === selectedId) ?? null;
+
+  const scoped = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
+    selectedId === "all" ? rows : rows.filter((r) => r.facility_id === selectedId);
+
+  const claims = scoped(allClaims);
+  const payments = scoped(allPayments);
+  const negotiations = scoped(allNegotiations);
+  const billed = scoped(allBilled);
+
+  const viewLabel = facility
+    ? facility.short_name || facility.name
+    : multi
+      ? "All facilities (combined)"
+      : facilities[0]?.short_name || facilities[0]?.name || "Facility Dashboard";
 
   // ---- AR (Outstanding Collections) + breakdown by payer (from status) -----
   const totalAR = claims.reduce((s, c) => s + (c.balance ?? 0), 0);
@@ -121,16 +150,26 @@ export default async function FacilityDashboard() {
 
   return (
     <>
-      <Header
-        profile={profile}
-        email={email}
-        subtitle={facility?.short_name || facility?.name || "Facility Dashboard"}
-      />
+      <Header profile={profile} email={email} subtitle={viewLabel} />
       <main className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
           <div className="rounded-lg bg-secured/8 px-4 py-2 text-xs font-medium text-secured">
-            Read-only overview · {facility?.short_name || facility?.name || "your facility"}
+            Read-only overview · {viewLabel}
           </div>
+
+          {multi && (
+            <div className="flex flex-wrap gap-2">
+              <FacilityChip href="/facility" label="All (combined)" active={selectedId === "all"} />
+              {facilities.map((f) => (
+                <FacilityChip
+                  key={f.id}
+                  href={`/facility?facility=${f.id}`}
+                  label={f.short_name || f.name}
+                  active={selectedId === f.id}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Headline numbers */}
           <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -194,6 +233,29 @@ export default async function FacilityDashboard() {
         </div>
       </main>
     </>
+  );
+}
+
+function FacilityChip({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`badge border transition ${
+        active
+          ? "border-command bg-command text-command-text"
+          : "border-surface-border bg-surface text-surface-muted hover:border-surface-muted"
+      }`}
+    >
+      {label}
+    </Link>
   );
 }
 

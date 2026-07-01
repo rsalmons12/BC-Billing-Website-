@@ -274,9 +274,13 @@ function UsersTab({
               )}
             </div>
 
-            {p.role === "staff" && (
+            {(p.role === "staff" || p.role === "facility") && (
               <div className="mt-3">
-                <span className="label">Assigned facilities</span>
+                <span className="label">
+                  {p.role === "facility"
+                    ? "Additional facilities (beyond the primary above)"
+                    : "Assigned facilities"}
+                </span>
                 <div className="flex flex-wrap gap-2">
                   {facilities.map((f) => {
                     const on = assigned.has(f.id);
