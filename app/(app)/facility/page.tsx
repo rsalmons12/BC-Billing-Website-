@@ -110,7 +110,11 @@ export default async function FacilityDashboard({
     selectedId === "all" ? rows : rows.filter((r) => r.facility_id === selectedId);
 
   // Excluded plans (e.g. VMAH member ids) are removed from AR entirely.
-  const claims = scoped(allClaims).filter((c) => !isExcludedMember(c.member_id));
+  const inView = scoped(allClaims);
+  const claims = inView.filter((c) => !isExcludedMember(c.member_id));
+  // How much VMAH we pulled out — shown so this is verifiable at a glance.
+  const excludedClaims = inView.filter((c) => isExcludedMember(c.member_id));
+  const excludedAR = excludedClaims.reduce((s, c) => s + (c.balance ?? 0), 0);
   const payments = scoped(allPayments);
   const negotiations = scoped(allNegotiations);
   const billed = scoped(allBilled);
@@ -180,6 +184,14 @@ export default async function FacilityDashboard({
           <div className="rounded-lg bg-secured/8 px-4 py-2 text-xs font-medium text-secured">
             Read-only overview · {viewLabel}
           </div>
+
+          {excludedClaims.length > 0 && (
+            <div className="rounded-lg bg-surface-card px-4 py-2 text-xs text-surface-muted">
+              Excluded from AR (VMAH plans):{" "}
+              <b className="text-surface-ink">{money(excludedAR)}</b> across{" "}
+              {excludedClaims.length} claim{excludedClaims.length === 1 ? "" : "s"}.
+            </div>
+          )}
 
           {multi && (
             <div className="flex flex-wrap gap-2">
