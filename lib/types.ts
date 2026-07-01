@@ -178,6 +178,25 @@ export interface Negotiation {
   updated_at: string;
 }
 
+export interface BilledClaim {
+  id: string;
+  facility_id: string | null;
+  claim_id: string;
+  times_billed: number | null;
+  from_date: string | null;
+  to_date: string | null;
+  entered_date: string | null;
+  total_amount: number | null;
+  balance: number | null;
+  patient_id: string | null;
+  patient_name: string | null;
+  payer_name: string | null;
+  payer_type: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Attachment {
   id: string;
   category: string; // 'medical_records' | 'licenses_w9'
