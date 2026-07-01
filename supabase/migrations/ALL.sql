@@ -105,6 +105,7 @@ alter table profiles add column if not exists allowed_tabs text[];
 -- ---- Collection Queue: per-collector daily target + job title ----
 alter table profiles add column if not exists daily_target int default 100;
 alter table profiles add column if not exists job_title text default 'Collector';
+alter table profiles add column if not exists queue_tier text default 'standard';
 
 -- ---- Resolve / close out claims (counted in Reporting) ----
 alter table claim_work add column if not exists resolved   boolean default false;

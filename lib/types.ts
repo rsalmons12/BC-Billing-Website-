@@ -53,6 +53,7 @@ export interface Profile {
   allowed_tabs: string[] | null;
   daily_target: number | null;
   job_title: string | null;
+  queue_tier: string | null; // 'standard' | 'priority_100'
   created_at: string;
 }
 
@@ -251,6 +252,15 @@ export interface MedicalRecord {
 }
 
 export const RISK_AGE_THRESHOLD = 65;
+// Claims at or past this age are the top priority tier ("100+"), worked ahead
+// of the 65–99 risk band.
+export const PRIORITY_AGE_THRESHOLD = 100;
+
+// A collector's queue tier. "standard" works everything (100+ first, then
+// 65–99, then younger). "priority_100" is a dedicated 100+ specialist: their
+// queue shows only 100+ claims, capped by their daily target.
+export const QUEUE_TIERS = ["standard", "priority_100"] as const;
+export type QueueTier = (typeof QUEUE_TIERS)[number];
 
 export const AUTH_STATUS_OPTIONS = [
   "Pending",

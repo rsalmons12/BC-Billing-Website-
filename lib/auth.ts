@@ -34,6 +34,7 @@ export async function requireProfile(): Promise<{
       allowed_tabs: null,
       daily_target: 100,
       job_title: null,
+      queue_tier: "standard",
       created_at: new Date().toISOString(),
     } as Profile);
 
