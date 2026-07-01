@@ -179,6 +179,15 @@ export default function QueueClient({
       claims.push(...c);
     }
 
+    // Claims already shifted to Marketplace / Exchange leave the queue.
+    const movedIds = new Set<string>(
+      (
+        await selectAll<{ claim_id: string }>((f, t) =>
+          supabase.from("marketplace_claims").select("claim_id").range(f, t)
+        )
+      ).map((m) => m.claim_id)
+    );
+
     const ids = claims.map((c) => c.claim_id);
     const workMap: Record<string, ClaimWork> = {};
     for (let i = 0; i < ids.length; i += 1000) {
@@ -197,6 +206,8 @@ export default function QueueClient({
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
         if (isExcludedMember(c.member_id)) return false;
+        // Claims shifted to Marketplace / Exchange are out of the queue.
+        if (movedIds.has(c.claim_id)) return false;
         // 100+ specialists only see the 100+ band.
         if (specialist && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD) return false;
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
@@ -355,6 +366,38 @@ export default function QueueClient({
     });
 
   const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
+
+  // Shift a claim to the Marketplace / Exchange tab (removes it from the queue).
+  const moveToMarketplace = async (r: ClaimRow) => {
+    if (
+      !confirm(
+        `Move ${r.patient_name || r.claim_id} to Marketplace / Exchange? It will leave the queue.`
+      )
+    )
+      return;
+    setRows((prev) => prev.filter((x) => x.claim_id !== r.claim_id));
+    const { error } = await supabase.from("marketplace_claims").upsert(
+      {
+        claim_id: r.claim_id,
+        facility_id: r.facility_id,
+        patient_name: r.patient_name,
+        member_id: r.member_id,
+        dob: r.dob,
+        dos_from: r.dos_from,
+        dos_to: r.dos_to,
+        charge_amount: r.charge_amount,
+        balance: r.balance,
+        age_days: r.age_days,
+        claim_status: r.claim_status,
+        payer: r.claim_status, // status carries the payer ("at X")
+        initials: collector.initials || "",
+        created_by: self.id,
+      },
+      { onConflict: "claim_id" }
+    );
+    setSaveState(error ? `Error: ${error.message}` : "→ Marketplace / Exchange");
+    if (!error) setTimeout(() => setSaveState(""), 1200);
+  };
 
   const emailFacilityHasAddr = (r: ClaimRow) =>
     Boolean(facilities.find((f) => f.id === r.facility_id)?.email);
@@ -629,19 +672,20 @@ export default function QueueClient({
               <th className="th min-w-[16rem]">Notes</th>
               <th className="th">Init</th>
               <th className="th">Done</th>
+              <th className="th">Market/Exch</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={18} className="td py-10 text-center text-surface-muted">
+                <td colSpan={19} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={18} className="td py-10 text-center text-surface-muted">
+                <td colSpan={19} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
@@ -817,6 +861,15 @@ export default function QueueClient({
                           ✎ Adjust
                         </button>
                       </div>
+                    </td>
+                    <td className="td text-center">
+                      <button
+                        onClick={() => moveToMarketplace(r)}
+                        className="badge bg-risk/12 px-2 py-1 text-[11px] font-semibold text-risk hover:bg-risk/25"
+                        title="Marketplace / Exchange plan — shift this claim to that tab"
+                      >
+                        ⇄ Shift
+                      </button>
                     </td>
                   </tr>
                 );
