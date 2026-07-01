@@ -384,6 +384,101 @@ export interface MedRow {
   notes: string;
 }
 
+// Billed claims (CollaborateMD "Claims Billed Report") --------------------
+// One facility per file (banner "Customer is X"). Carries the payer name, so
+// it powers AR-by-payer and Billed-this-month on the facility dashboard.
+export interface BilledRow {
+  claim_id: string;
+  times_billed: number | null;
+  from_date: string;
+  to_date: string;
+  entered_date: string;
+  total_amount: number | null;
+  balance: number | null;
+  patient_id: string;
+  patient_name: string;
+  payer_name: string;
+  payer_type: string;
+}
+
+export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const out: (BilledRow & { facility_name: string })[] = [];
+  const sheets: string[] = [];
+
+  for (const name of wb.SheetNames) {
+    if (/total claims per patient|^_?lists$|^sheet\d+$/.test(norm(name))) continue;
+    const rows = rowsOf(wb.Sheets[name]);
+    // Facility from the "Customer is X" banner in the first few rows.
+    let bannerFacility = name;
+    for (let i = 0; i < Math.min(rows.length, 8); i++) {
+      const joined = rows[i].map(toStr).join(" ");
+      const m = joined.match(/customer is\s+(.+?)(?:\s{2,}|$)/i);
+      if (m) {
+        bannerFacility = m[1].trim();
+        break;
+      }
+    }
+    const hr = findHeaderRow(
+      rows,
+      /claim total amount|primary payer|claim balance|claim id/,
+      10
+    );
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      claim: findCol(h, [/^claim id$|claim id/]),
+      times: findCol(h, [/times billed|cntall/]),
+      from: findCol(h, [/from date/]),
+      to: findCol(h, [/to date/]),
+      entered: findCol(h, [/date entered|billed date/]),
+      total: findCol(h, [/claim total amount|total amount/]),
+      balance: findCol(h, [/claim balance|balance/]),
+      patientId: findCol(h, [/patient id/]),
+      patient: findCol(h, [/patient full name|patient name/]),
+      payer: findCol(h, [/primary payer name|payer name|primary payer/]),
+      ptype: findCol(h, [/payer type/]),
+    };
+    let added = 0;
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const claim = col.claim >= 0 ? toStr(r[col.claim]) : "";
+      const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
+      // A real row has both a claim id and a patient — this skips the footer
+      // totals row (which has an aggregate count in the claim column and no
+      // patient/payer).
+      if (!claim || !patient) continue;
+      out.push({
+        facility_name: bannerFacility,
+        claim_id: claim,
+        times_billed: col.times >= 0 ? toNum(r[col.times]) : null,
+        from_date: col.from >= 0 ? toDateStr(r[col.from]) : "",
+        to_date: col.to >= 0 ? toDateStr(r[col.to]) : "",
+        entered_date: col.entered >= 0 ? toDateStr(r[col.entered]) : "",
+        total_amount: col.total >= 0 ? toNum(r[col.total]) : null,
+        balance: col.balance >= 0 ? toNum(r[col.balance]) : null,
+        patient_id: col.patientId >= 0 ? toStr(r[col.patientId]) : "",
+        patient_name: patient,
+        payer_name: col.payer >= 0 ? toStr(r[col.payer]) : "",
+        payer_type: col.ptype >= 0 ? toStr(r[col.ptype]) : "",
+      });
+      added++;
+    }
+    if (added) sheets.push(name);
+  }
+
+  // De-dupe by claim id (last wins) so claim-id upsert stays unique.
+  const byId = new Map<string, BilledRow & { facility_name: string }>();
+  for (const r of out) byId.set(r.claim_id, r);
+  const deduped = [...byId.values()];
+
+  return {
+    rows: deduped,
+    facilities: Array.from(new Set(deduped.map((r) => r.facility_name).filter(Boolean))),
+    sheetsParsed: sheets,
+  };
+}
+
 // Payment (Facility Paid per CPT / Level of Care) -------------------------
 export interface PaymentRow {
   payment_entered: string;
