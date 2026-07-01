@@ -145,8 +145,10 @@ export interface Authorization {
   next_review_date: string | null;
   auth_number: string | null;
   level_of_care: string | null;
+  total_days: number | null;
   status: string;
   notes: string;
+  discharged: boolean;
   updated_by: string | null;
   created_at: string;
   updated_at: string;
