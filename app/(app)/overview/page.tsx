@@ -8,10 +8,16 @@ import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
 import {
   RISK_AGE_THRESHOLD,
+  PRIORITY_AGE_THRESHOLD,
   type Claim,
   type AuthIssue,
   type Facility,
 } from "@/lib/types";
+
+// Age band helpers. 100+ is the top priority tier; 65–99 is the risk band.
+const isPriority = (c: Claim) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD;
+const isRisk65 = (c: Claim) =>
+  (c.age_days ?? 0) > RISK_AGE_THRESHOLD && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD;
 
 export default async function OverviewPage() {
   const { profile, email } = await requireProfile();
@@ -38,15 +44,17 @@ export default async function OverviewPage() {
     return f?.short_name || f?.name || "—";
   };
 
-  // Per-facility aggregation.
+  // Per-facility aggregation, split into the 100+ and 65–99 bands.
   type Agg = {
     id: string;
     name: string;
     charged: number;
     balance: number;
     recovered: number;
-    riskCount: number;
-    riskBalance: number;
+    pri100Count: number;
+    pri100Balance: number;
+    risk65Count: number;
+    risk65Balance: number;
     openIssues: number;
   };
   const aggMap: Record<string, Agg> = {};
@@ -57,8 +65,10 @@ export default async function OverviewPage() {
       charged: 0,
       balance: 0,
       recovered: 0,
-      riskCount: 0,
-      riskBalance: 0,
+      pri100Count: 0,
+      pri100Balance: 0,
+      risk65Count: 0,
+      risk65Balance: 0,
       openIssues: 0,
     };
   }
@@ -67,9 +77,12 @@ export default async function OverviewPage() {
     if (!a) continue;
     a.charged += c.charge_amount ?? 0;
     a.balance += c.balance ?? 0;
-    if ((c.age_days ?? 0) > RISK_AGE_THRESHOLD) {
-      a.riskCount++;
-      a.riskBalance += c.balance ?? 0;
+    if (isPriority(c)) {
+      a.pri100Count++;
+      a.pri100Balance += c.balance ?? 0;
+    } else if (isRisk65(c)) {
+      a.risk65Count++;
+      a.risk65Balance += c.balance ?? 0;
     }
   }
   for (const a of Object.values(aggMap)) a.recovered = a.charged - a.balance;
@@ -84,23 +97,25 @@ export default async function OverviewPage() {
       charged: s.charged + a.charged,
       balance: s.balance + a.balance,
       recovered: s.recovered + a.recovered,
-      riskCount: s.riskCount + a.riskCount,
-      riskBalance: s.riskBalance + a.riskBalance,
+      pri100Count: s.pri100Count + a.pri100Count,
+      pri100Balance: s.pri100Balance + a.pri100Balance,
+      risk65Count: s.risk65Count + a.risk65Count,
+      risk65Balance: s.risk65Balance + a.risk65Balance,
       openIssues: s.openIssues + a.openIssues,
     }),
-    { charged: 0, balance: 0, recovered: 0, riskCount: 0, riskBalance: 0, openIssues: 0 }
+    {
+      charged: 0, balance: 0, recovered: 0,
+      pri100Count: 0, pri100Balance: 0,
+      risk65Count: 0, risk65Balance: 0, openIssues: 0,
+    }
   );
 
-  // Worst offenders — highest-balance 65+ day claims.
-  const worst = claims
-    .filter((c) => (c.age_days ?? 0) > RISK_AGE_THRESHOLD)
-    .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0))
-    .slice(0, 30);
+  const byBalance = (a: Claim, b: Claim) => (b.balance ?? 0) - (a.balance ?? 0);
+  const worst100 = claims.filter(isPriority).sort(byBalance).slice(0, 30);
+  const worst65 = claims.filter(isRisk65).sort(byBalance).slice(0, 30);
 
-  const exportRows: ExportRow[] = claims
-    .filter((c) => (c.age_days ?? 0) > RISK_AGE_THRESHOLD)
-    .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0))
-    .map((c) => ({
+  const toExport = (list: Claim[]): ExportRow[] =>
+    list.map((c) => ({
       Facility: facName(c.facility_id),
       "Claim ID": c.claim_id,
       Patient: c.patient_name ?? "",
@@ -112,6 +127,8 @@ export default async function OverviewPage() {
       Balance: c.balance ?? 0,
       Status: c.claim_status ?? "",
     }));
+  const export100 = toExport(claims.filter(isPriority).sort(byBalance));
+  const export65 = toExport(claims.filter(isRisk65).sort(byBalance));
 
   return (
     <>
@@ -119,88 +136,44 @@ export default async function OverviewPage() {
       <main className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-7xl space-y-6">
           {/* Network totals */}
-          <section className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <section className="grid grid-cols-2 gap-4 md:grid-cols-6">
             <Stat label="Charged" value={money(totals.charged)} />
-            <Stat
-              label="Recovered"
-              value={money(totals.recovered)}
-              accent="recovered"
-            />
+            <Stat label="Recovered" value={money(totals.recovered)} accent="recovered" />
             <Stat label="Outstanding" value={money(totals.balance)} accent="gold" />
-            <Stat
-              label="65+ Risk Claims"
-              value={String(totals.riskCount)}
-              accent="risk"
-            />
+            <Stat label="100+ Priority" value={String(totals.pri100Count)} accent="risk" />
+            <Stat label="65–99 Risk" value={String(totals.risk65Count)} accent="gold" />
             <Stat label="Open Auth Issues" value={String(totals.openIssues)} accent="secured" />
           </section>
 
-          {/* High-risk management panel */}
-          <section className="card overflow-hidden border-risk/30">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border bg-risk/5 px-5 py-4">
-              <div>
-                <h2 className="font-display text-lg font-bold text-risk">
-                  High-Risk · Over 65 Days
-                </h2>
-                <p className="text-sm text-surface-muted">
-                  {totals.riskCount} claims ·{" "}
-                  <span className="font-semibold text-risk">
-                    {money(totals.riskBalance)}
-                  </span>{" "}
-                  at risk across the network
-                </p>
-              </div>
-              <ExportButton
-                rows={exportRows}
-                filename="high-risk-65day.xlsx"
-                sheet="High Risk 65+"
-                label="Export 65+ to Excel"
-              />
-            </div>
-            <div className="scroll-x max-h-[24rem] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-card">
-                  <tr>
-                    <th className="th">Patient</th>
-                    <th className="th">Facility</th>
-                    <th className="th">Age</th>
-                    <th className="th">DOS</th>
-                    <th className="th text-right">Balance</th>
-                    <th className="th">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {worst.map((c, idx) => (
-                    <tr key={c.claim_id} className={idx % 2 ? "bg-surface/40" : ""}>
-                      <td className="td font-medium">{c.patient_name || "—"}</td>
-                      <td className="td text-xs text-surface-muted">
-                        {facName(c.facility_id)}
-                      </td>
-                      <td className="td">
-                        <span className="badge bg-risk/12 font-mono text-risk">
-                          {c.age_days ?? 0}d
-                        </span>
-                      </td>
-                      <td className="td text-xs text-surface-muted">
-                        {c.dos_from || "—"}
-                      </td>
-                      <td className="td text-right font-mono font-semibold">
-                        {money(c.balance)}
-                      </td>
-                      <td className="td text-xs">{c.claim_status || "—"}</td>
-                    </tr>
-                  ))}
-                  {worst.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="td py-8 text-center text-surface-muted">
-                        No claims over 65 days. 🎉
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          {/* 100+ priority panel */}
+          <RiskPanel
+            title="Priority · 100+ Days"
+            accent="risk"
+            count={totals.pri100Count}
+            balance={totals.pri100Balance}
+            rows={worst100}
+            facName={facName}
+            emptyMsg="No claims 100+ days. 🎉"
+            exportRows={export100}
+            exportName="priority-100day.xlsx"
+            exportSheet="Priority 100+"
+            exportLabel="Export 100+ to Excel"
+          />
+
+          {/* 65–99 risk panel */}
+          <RiskPanel
+            title="Risk · 65–99 Days"
+            accent="gold"
+            count={totals.risk65Count}
+            balance={totals.risk65Balance}
+            rows={worst65}
+            facName={facName}
+            emptyMsg="No claims in the 65–99 day band. 🎉"
+            exportRows={export65}
+            exportName="risk-65to99day.xlsx"
+            exportSheet="Risk 65-99"
+            exportLabel="Export 65–99 to Excel"
+          />
 
           {/* Per-facility table */}
           <section className="card overflow-hidden">
@@ -215,7 +188,8 @@ export default async function OverviewPage() {
                     <th className="th text-right">Charged</th>
                     <th className="th text-right">Recovered</th>
                     <th className="th text-right">Outstanding</th>
-                    <th className="th text-right">65+ Risk</th>
+                    <th className="th text-right">100+</th>
+                    <th className="th text-right">65–99</th>
                     <th className="th text-right">Open Issues</th>
                   </tr>
                 </thead>
@@ -229,19 +203,22 @@ export default async function OverviewPage() {
                       </td>
                       <td className="td text-right font-mono">{money(a.balance)}</td>
                       <td className="td text-right">
-                        {a.riskCount > 0 ? (
-                          <span className="font-semibold text-risk">
-                            {a.riskCount}
-                          </span>
+                        {a.pri100Count > 0 ? (
+                          <span className="font-bold text-risk">{a.pri100Count}</span>
+                        ) : (
+                          <span className="text-surface-muted">0</span>
+                        )}
+                      </td>
+                      <td className="td text-right">
+                        {a.risk65Count > 0 ? (
+                          <span className="font-semibold text-gold">{a.risk65Count}</span>
                         ) : (
                           <span className="text-surface-muted">0</span>
                         )}
                       </td>
                       <td className="td text-right">
                         {a.openIssues > 0 ? (
-                          <span className="font-semibold text-secured">
-                            {a.openIssues}
-                          </span>
+                          <span className="font-semibold text-secured">{a.openIssues}</span>
                         ) : (
                           <span className="text-surface-muted">0</span>
                         )}
@@ -257,7 +234,8 @@ export default async function OverviewPage() {
                       {money(totals.recovered)}
                     </td>
                     <td className="td text-right font-mono">{money(totals.balance)}</td>
-                    <td className="td text-right text-risk">{totals.riskCount}</td>
+                    <td className="td text-right text-risk">{totals.pri100Count}</td>
+                    <td className="td text-right text-gold">{totals.risk65Count}</td>
                     <td className="td text-right text-secured">{totals.openIssues}</td>
                   </tr>
                 </tfoot>
@@ -267,6 +245,85 @@ export default async function OverviewPage() {
         </div>
       </main>
     </>
+  );
+}
+
+function RiskPanel({
+  title,
+  accent,
+  count,
+  balance,
+  rows,
+  facName,
+  emptyMsg,
+  exportRows,
+  exportName,
+  exportSheet,
+  exportLabel,
+}: {
+  title: string;
+  accent: "risk" | "gold";
+  count: number;
+  balance: number;
+  rows: Claim[];
+  facName: (id: string) => string;
+  emptyMsg: string;
+  exportRows: ExportRow[];
+  exportName: string;
+  exportSheet: string;
+  exportLabel: string;
+}) {
+  const text = accent === "risk" ? "text-risk" : "text-gold";
+  const bg = accent === "risk" ? "bg-risk/5" : "bg-gold/5";
+  const badge = accent === "risk" ? "bg-risk/12 text-risk" : "bg-gold/15 text-gold";
+  return (
+    <section className={`card overflow-hidden ${accent === "risk" ? "border-risk/30" : "border-gold/30"}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-3 border-b border-surface-border ${bg} px-5 py-4`}>
+        <div>
+          <h2 className={`font-display text-lg font-bold ${text}`}>{title}</h2>
+          <p className="text-sm text-surface-muted">
+            {count} claims ·{" "}
+            <span className={`font-semibold ${text}`}>{money(balance)}</span> across the network
+          </p>
+        </div>
+        <ExportButton rows={exportRows} filename={exportName} sheet={exportSheet} label={exportLabel} />
+      </div>
+      <div className="scroll-x max-h-[24rem] overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-surface-card">
+            <tr>
+              <th className="th">Patient</th>
+              <th className="th">Facility</th>
+              <th className="th">Age</th>
+              <th className="th">DOS</th>
+              <th className="th text-right">Balance</th>
+              <th className="th">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c, idx) => (
+              <tr key={c.claim_id} className={idx % 2 ? "bg-surface/40" : ""}>
+                <td className="td font-medium">{c.patient_name || "—"}</td>
+                <td className="td text-xs text-surface-muted">{facName(c.facility_id)}</td>
+                <td className="td">
+                  <span className={`badge font-mono ${badge}`}>{c.age_days ?? 0}d</span>
+                </td>
+                <td className="td text-xs text-surface-muted">{c.dos_from || "—"}</td>
+                <td className="td text-right font-mono font-semibold">{money(c.balance)}</td>
+                <td className="td text-xs">{c.claim_status || "—"}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="td py-8 text-center text-surface-muted">
+                  {emptyMsg}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
