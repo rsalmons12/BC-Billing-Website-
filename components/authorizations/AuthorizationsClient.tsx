@@ -23,6 +23,16 @@ function parseReviewDate(v: unknown): Date | null {
   return d;
 }
 
+// A claim is up for its Next Review once today lands on the Next Review date
+// or later (e.g. review date 4/22 counts from 4/22 onward).
+function isDueForReview(row: Record<string, unknown>): boolean {
+  const d = parseReviewDate(row.next_review_date);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d.getTime() <= today.getTime();
+}
+
 const config: TrackerConfig = {
   table: "authorizations",
   statusKey: "status",
@@ -48,21 +58,20 @@ const config: TrackerConfig = {
     { key: "status", label: "Status", kind: "select", options: AUTH_STATUS_OPTIONS, editable: true, min: "min-w-[8rem]" },
     { key: "notes", label: "Notes", kind: "notes", editable: true },
   ],
+  extraFilters: {
+    label: "All reviews",
+    options: [{ value: "due", label: "Next Review due", test: isDueForReview }],
+  },
   renderSummary: (rows) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
     const approved = rows.filter((r) => /approv/.test(norm(r.status))).length;
-    const pending = rows.filter((r) => /pending|review/.test(norm(r.status))).length;
-    // "Needs Review": a next-review date that is today or in the past.
-    const needsReview = rows.filter((r) => {
-      const d = parseReviewDate(r.next_review_date);
-      return d != null && d.getTime() <= today.getTime();
-    }).length;
+    const pending = rows.filter((r) => /pending/.test(norm(r.status))).length;
+    // "Next Review": rows whose Next Review date is today or earlier.
+    const nextReview = rows.filter(isDueForReview).length;
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <SumCard label="Authorizations" value={String(rows.length)} />
-        <SumCard label="Needs Review" value={String(needsReview)} accent="risk" />
+        <SumCard label="Next Review" value={String(nextReview)} accent="risk" />
         <SumCard label="Approved" value={String(approved)} accent="recovered" />
         <SumCard label="Pending" value={String(pending)} accent="gold" />
       </div>
