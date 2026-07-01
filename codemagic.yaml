@@ -22,7 +22,7 @@ workflows:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "cloud.bcbilling.app"
-      node: 20
+      node: 22
       xcode: latest
       cocoapods: default
     scripts:
