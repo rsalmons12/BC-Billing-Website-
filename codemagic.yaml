@@ -28,13 +28,20 @@ workflows:
     scripts:
       - name: Install npm dependencies
         script: npm ci || npm install
-      - name: Generate / sync the iOS native project
+      - name: Generate the iOS native project + install pods
         script: |
-          if [ ! -d "ios" ]; then npx cap add ios; fi
+          set -e
+          # A fresh clone has no ios/ — scaffold it (creates ios/App + Podfile).
+          if [ ! -d "ios/App" ]; then npx cap add ios; fi
           npx cap sync ios
-      - name: Install CocoaPods
-        script: |
-          cd ios/App && pod install --repo-update
+          echo "----- ios/ -----";      ls -la ios || true
+          echo "----- ios/App/ -----";  ls -la ios/App || true
+          PODFILE="$(find ios -maxdepth 3 -name Podfile | head -1)"
+          if [ -z "$PODFILE" ]; then
+            echo "ERROR: Capacitor did not generate a Podfile"; exit 1
+          fi
+          echo "Using Podfile at: $PODFILE"
+          cd "$(dirname "$PODFILE")" && pod install --repo-update
       - name: Set up code signing (create cert + profile if missing)
         script: |
           keychain initialize
