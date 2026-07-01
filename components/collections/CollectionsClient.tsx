@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
+import { isExcludedMember } from "@/lib/claims";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   RISK_AGE_THRESHOLD,
@@ -98,7 +99,9 @@ export default function CollectionsClient({
         .order("age_days", { ascending: false })
         .range(f, t)
     );
-    const ids = claimList.map((c) => c.claim_id);
+    // Excluded plans (e.g. VMAH member ids) are hidden from Collections entirely.
+    const visibleClaims = claimList.filter((c) => !isExcludedMember(c.member_id));
+    const ids = visibleClaims.map((c) => c.claim_id);
 
     let workMap: Record<string, ClaimWork> = {};
     for (let i = 0; i < ids.length; i += 1000) {
@@ -113,7 +116,7 @@ export default function CollectionsClient({
     }
 
     setRows(
-      claimList.map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
+      visibleClaims.map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }))
     );
     setLoading(false);
   }, [facilityId, supabase]);
