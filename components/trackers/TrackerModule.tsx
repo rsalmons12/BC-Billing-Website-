@@ -792,7 +792,15 @@ export function ImportPanel({
     if (config.importKey) {
       const key = config.importKey;
       const factKeys = config.importFactKeys ?? [];
-      const keyed = prepared.filter((r) => r[key]);
+      // De-dupe within this import by the key (last wins). When several files
+      // are uploaded together — e.g. pulling every facility/instance from
+      // CollaborateMD at once — an overlapping claim id must not be inserted
+      // twice (which would violate the unique key).
+      const dedup = new Map<string, Record<string, unknown>>();
+      for (const r of prepared) {
+        if (r[key]) dedup.set(String(r[key]), r);
+      }
+      const keyed = Array.from(dedup.values());
       add(`Matching ${keyed.length} rows by ${key}…`);
 
       // Which keys already exist? (those keep their note columns)
