@@ -19,6 +19,21 @@ function toStr(v: unknown): string {
   return String(v).trim();
 }
 
+// Like toStr, but converts bare Excel date serial numbers (e.g. 46174) into a
+// readable M/D/YYYY. Non-date values pass through unchanged.
+function toDateStr(v: unknown): string {
+  if (v == null || v === "") return "";
+  if (v instanceof Date) {
+    return `${v.getMonth() + 1}/${v.getDate()}/${v.getFullYear()}`;
+  }
+  if (typeof v === "number" && v > 20000 && v < 90000) {
+    const d = new Date(Date.UTC(1899, 11, 30));
+    d.setUTCDate(d.getUTCDate() + Math.round(v));
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+  }
+  return String(v).trim();
+}
+
 function findCol(headers: string[], patterns: RegExp[]): number {
   for (let i = 0; i < headers.length; i++) {
     if (patterns.some((p) => p.test(headers[i]))) return i;
@@ -69,10 +84,11 @@ export function parseAuthorizations(
   for (const name of wb.SheetNames) {
     if (SKIP_TAB.test(norm(name))) continue;
     const rows = rowsOf(wb.Sheets[name]);
-    const hr = findHeaderRow(rows, /admit date|auth number|level of care/);
+    const hr = findHeaderRow(rows, /admit|discharge|next review|level of care|\bloc\b/);
     if (hr < 0) continue;
     const h = rows[hr].map(norm);
     const col = {
+      facility: findCol(h, [/facility|office|customer/]),
       patient: findCol(h, [/patient name|patient|name/]),
       admit: findCol(h, [/admit/]),
       start: findCol(h, [/start/]),
@@ -85,18 +101,25 @@ export function parseAuthorizations(
       notes: findCol(h, [/notes/]),
     };
     let added = 0;
+    // Facility may be a column (carried down a grouped list) rather than the
+    // sheet name.
+    let lastFacility = name;
     for (let i = hr + 1; i < rows.length; i++) {
       const r = rows[i];
+      if (col.facility >= 0) {
+        const f = toStr(r[col.facility]);
+        if (f) lastFacility = f;
+      }
       const patient = toStr(r[col.patient >= 0 ? col.patient : 0]);
       if (!patient) continue;
       out.push({
-        facility_name: name,
+        facility_name: col.facility >= 0 ? lastFacility : name,
         patient_name: patient,
-        admit_date: col.admit >= 0 ? toStr(r[col.admit]) : "",
-        start_date: col.start >= 0 ? toStr(r[col.start]) : "",
-        end_date: col.end >= 0 ? toStr(r[col.end]) : "",
-        discharge_date: col.discharge >= 0 ? toStr(r[col.discharge]) : "",
-        next_review_date: col.review >= 0 ? toStr(r[col.review]) : "",
+        admit_date: col.admit >= 0 ? toDateStr(r[col.admit]) : "",
+        start_date: col.start >= 0 ? toDateStr(r[col.start]) : "",
+        end_date: col.end >= 0 ? toDateStr(r[col.end]) : "",
+        discharge_date: col.discharge >= 0 ? toDateStr(r[col.discharge]) : "",
+        next_review_date: col.review >= 0 ? toDateStr(r[col.review]) : "",
         auth_number: col.auth >= 0 ? toStr(r[col.auth]) : "",
         level_of_care: col.loc >= 0 ? toStr(r[col.loc]) : "",
         status: col.status >= 0 ? toStr(r[col.status]) : "Pending",

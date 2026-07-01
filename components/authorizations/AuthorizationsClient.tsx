@@ -1,12 +1,27 @@
 "use client";
 
-import TrackerModule, { type TrackerConfig } from "@/components/trackers/TrackerModule";
+import TrackerModule, {
+  type TrackerConfig,
+  SumCard,
+} from "@/components/trackers/TrackerModule";
 import { parseAuthorizations } from "@/lib/import/parseTrackers";
 import {
   AUTH_STATUS_OPTIONS,
   LEVEL_OF_CARE_OPTIONS,
   type Facility,
 } from "@/lib/types";
+
+// Parse a stored review date ("M/D/YYYY" or similar) to a Date at local
+// midnight, or null if it isn't a real date.
+function parseReviewDate(v: unknown): Date | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const t = Date.parse(s);
+  if (isNaN(t)) return null;
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 
 const config: TrackerConfig = {
   table: "authorizations",
@@ -33,6 +48,26 @@ const config: TrackerConfig = {
     { key: "status", label: "Status", kind: "select", options: AUTH_STATUS_OPTIONS, editable: true, min: "min-w-[8rem]" },
     { key: "notes", label: "Notes", kind: "notes", editable: true },
   ],
+  renderSummary: (rows) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+    const approved = rows.filter((r) => /approv/.test(norm(r.status))).length;
+    const pending = rows.filter((r) => /pending|review/.test(norm(r.status))).length;
+    // "Needs Review": a next-review date that is today or in the past.
+    const needsReview = rows.filter((r) => {
+      const d = parseReviewDate(r.next_review_date);
+      return d != null && d.getTime() <= today.getTime();
+    }).length;
+    return (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <SumCard label="Authorizations" value={String(rows.length)} />
+        <SumCard label="Needs Review" value={String(needsReview)} accent="risk" />
+        <SumCard label="Approved" value={String(approved)} accent="recovered" />
+        <SumCard label="Pending" value={String(pending)} accent="gold" />
+      </div>
+    );
+  },
 };
 
 export default function AuthorizationsClient({
