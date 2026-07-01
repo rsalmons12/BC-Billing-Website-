@@ -18,9 +18,6 @@ workflows:
     integrations:
       app_store_connect: BC_BILLING_APP_STORE_KEY
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: cloud.bcbilling.app
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
@@ -38,8 +35,16 @@ workflows:
       - name: Install CocoaPods
         script: |
           cd ios/App && pod install --repo-update
-      - name: Apply automatic signing profiles
-        script: xcode-project use-profiles
+      - name: Set up code signing (create cert + profile if missing)
+        script: |
+          keychain initialize
+          # Creates a distribution certificate and an App Store provisioning
+          # profile for the bundle id automatically when none exist yet.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build the signed .ipa
         script: |
           xcode-project build-ipa \
