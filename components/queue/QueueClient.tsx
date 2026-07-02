@@ -266,7 +266,11 @@ export default function QueueClient({
   // oldest-first). Anything past the allotment simply rolls to tomorrow,
   // when "done today" resets and the next slice surfaces.
   const doneToday = rows.filter((r) => (r.work?.date_worked || "") === today).length;
-  const unworked = rows.filter((r) => !r.work?.date_worked);
+  // A collector's real backlog: unworked AND not routed to the auth team (an
+  // open auth issue is out of their hands, so it must not inflate the count).
+  const unworked = rows.filter(
+    (r) => !r.work?.date_worked && r.work?.auth_issue_status !== "open"
+  );
   // Yesterday's shortfall rolls onto today's target. Only when she actually
   // worked yesterday (so a day off doesn't double the target).
   const carryover =
@@ -687,7 +691,11 @@ export default function QueueClient({
           label="Backlog (all open)"
           value={String(backlog)}
           active={view === "backlog"}
-          onClick={() => setView("backlog")}
+          onClick={() => {
+            setView("backlog");
+            setRiskOnly(false);
+            setSearch("");
+          }}
         />
         <Card label="Balance Today" value={money(balanceRemaining)} />
       </div>
