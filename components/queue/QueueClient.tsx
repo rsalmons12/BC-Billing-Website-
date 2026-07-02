@@ -52,6 +52,13 @@ function todayStr(): string {
     d.getDate()
   ).padStart(2, "0")}`;
 }
+function yesterdayStr(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
 
 function AgeBadge({ age }: { age: number | null }) {
   const a = age ?? 0;
@@ -114,8 +121,12 @@ export default function QueueClient({
   // Extra claims pulled mid-day after the target is met (not persisted —
   // resets next load; 65+ stay on top because the backlog is already sorted).
   const [bonus, setBonus] = useState(0);
+  // How many this collector worked yesterday — anything short of the target
+  // rolls onto today's target (100 done 64 yesterday -> today shows 100+36).
+  const [workedYesterday, setWorkedYesterday] = useState<number | null>(null);
 
   const today = todayStr();
+  const yesterday = yesterdayStr();
 
   const collector = useMemo(
     () =>
@@ -233,9 +244,17 @@ export default function QueueClient({
       return (b.age_days ?? 0) - (a.age_days ?? 0);
     });
 
+    // Yesterday's production, so today's target can absorb any shortfall.
+    const { count: yCount } = await supabase
+      .from("production_log")
+      .select("id", { count: "exact", head: true })
+      .eq("collector_id", collectorId)
+      .eq("worked_on", yesterday);
+    setWorkedYesterday(yCount ?? 0);
+
     setRows(mine);
     setLoading(false);
-  }, [supabase, collectorId, collector.queue_tier]);
+  }, [supabase, collectorId, collector.queue_tier, yesterday]);
 
   useEffect(() => {
     load();
@@ -248,7 +267,14 @@ export default function QueueClient({
   // when "done today" resets and the next slice surfaces.
   const doneToday = rows.filter((r) => (r.work?.date_worked || "") === today).length;
   const unworked = rows.filter((r) => !r.work?.date_worked);
-  const allotment = Math.max(0, target + bonus - doneToday);
+  // Yesterday's shortfall rolls onto today's target. Only when she actually
+  // worked yesterday (so a day off doesn't double the target).
+  const carryover =
+    workedYesterday && workedYesterday > 0
+      ? Math.max(0, target - workedYesterday)
+      : 0;
+  const effectiveTarget = target + carryover;
+  const allotment = Math.max(0, effectiveTarget + bonus - doneToday);
   const todaySet = unworked.slice(0, allotment);
 
   // Show today's allotment AND anything already worked today (so a collector
@@ -620,7 +646,11 @@ export default function QueueClient({
 
       {/* progress cards */}
       <div className="grid grid-cols-2 gap-3 border-b border-surface-border bg-surface px-6 py-3 md:grid-cols-6">
-        <Card label="Daily Target" value={bonus ? `${target}+${bonus}` : String(target)} />
+        <Card
+          label="Daily Target"
+          value={`${target}${carryover ? `+${carryover}` : ""}${bonus ? `+${bonus}` : ""}`}
+          accent={carryover ? "risk" : undefined}
+        />
         <Card label="Done Today" value={String(doneToday)} accent="recovered" />
         <Card label="Today Left" value={String(todaySet.length)} accent="gold" />
         <Card label="Risk 65+ Today" value={String(riskRemaining)} accent="risk" />
@@ -633,13 +663,19 @@ export default function QueueClient({
         <div className="h-2 w-full overflow-hidden rounded-full bg-surface-border">
           <div
             className="h-full rounded-full bg-recovered"
-            style={{ width: `${Math.min((doneToday / Math.max(target, 1)) * 100, 100)}%` }}
+            style={{ width: `${Math.min((doneToday / Math.max(effectiveTarget, 1)) * 100, 100)}%` }}
           />
         </div>
         <p className="mt-1.5 text-[11px] text-surface-muted">
-          You only ever get <b>{target}</b> for the day. Unfinished claims wait in
-          the backlog ({backlog}) and come back at the top tomorrow — the daily
-          count never stacks to {target * 2}.
+          Target is <b>{target}</b>/day.{" "}
+          {carryover > 0 && (
+            <>
+              Today includes <b className="text-risk">+{carryover}</b> that rolled
+              over from yesterday ({workedYesterday}/{target} done).{" "}
+            </>
+          )}
+          Anything you don&apos;t finish rolls onto tomorrow&apos;s target;
+          unfinished claims wait in the backlog ({backlog}).
         </p>
       </div>
 
@@ -647,7 +683,7 @@ export default function QueueClient({
       {view === "queue" && todaySet.length === 0 && backlog > 0 && (
         <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-recovered/10 px-6 py-2 text-xs">
           <span className="font-semibold text-recovered">
-            🎉 Daily target met ({doneToday}/{target + bonus}).
+            🎉 Daily target met ({doneToday}/{effectiveTarget + bonus}).
           </span>
           <span className="text-surface-muted">
             <b className="text-surface-ink">{backlog}</b> still open in the backlog.
@@ -716,7 +752,7 @@ export default function QueueClient({
                   ) : todaySet.length === 0 ? (
                     <div className="flex flex-col items-center gap-3">
                       <div>
-                        🎉 Daily target met ({doneToday}/{target + bonus}). {backlog}{" "}
+                        🎉 Daily target met ({doneToday}/{effectiveTarget + bonus}). {backlog}{" "}
                         still open — roll to tomorrow or grab more now.
                       </div>
                       <button
