@@ -113,6 +113,7 @@ export default function AuthIssuesClient({
       Patient: i.patient_name ?? "",
       Facility: (i.facility_id && facMap[i.facility_id]) || "",
       Payer: i.payer ?? "",
+      "Submitted By": i.submitted_by_name ?? "",
       "DOS From": i.dos_from ?? "",
       "DOS To": i.dos_to ?? "",
       Amount: i.charge_amount ?? 0,
@@ -196,6 +197,7 @@ export default function AuthIssuesClient({
               <th className="th">Patient</th>
               <th className="th">Facility</th>
               <th className="th">Payer</th>
+              <th className="th">Submitted by</th>
               <th className="th">DOS</th>
               <th className="th text-right">Amount</th>
               <th className="th">Source</th>
@@ -207,14 +209,14 @@ export default function AuthIssuesClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={10} className="td py-10 text-center text-surface-muted">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && shown.length === 0 && (
               <tr>
-                <td colSpan={9} className="td py-10 text-center text-surface-muted">
+                <td colSpan={10} className="td py-10 text-center text-surface-muted">
                   No {view} auth issues.
                 </td>
               </tr>
@@ -230,6 +232,9 @@ export default function AuthIssuesClient({
                     {(i.facility_id && facMap[i.facility_id]) || "—"}
                   </td>
                   <td className="td text-xs">{i.payer || "—"}</td>
+                  <td className="td text-xs font-medium">
+                    {i.submitted_by_name || "—"}
+                  </td>
                   <td className="td text-xs text-surface-muted">
                     {i.dos_from || "—"}
                     {i.dos_to ? `–${i.dos_to}` : ""}

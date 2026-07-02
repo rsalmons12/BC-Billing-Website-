@@ -99,6 +99,10 @@ create table if not exists weekly_assignments (
 );
 create index if not exists weekly_assignments_facility_idx on weekly_assignments(facility_id);
 
+-- ---- Auth issues: who routed the claim over (collector name) ----
+alter table auth_issues add column if not exists submitted_by uuid references auth.users(id);
+alter table auth_issues add column if not exists submitted_by_name text;
+
 -- ---- Per-user tab access ----
 alter table profiles add column if not exists allowed_tabs text[];
 

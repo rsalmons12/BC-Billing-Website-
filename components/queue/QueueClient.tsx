@@ -124,6 +124,9 @@ export default function QueueClient({
   // How many this collector worked yesterday — anything short of the target
   // rolls onto today's target (100 done 64 yesterday -> today shows 100+36).
   const [workedYesterday, setWorkedYesterday] = useState<number | null>(null);
+  // A Standard collector who has cleared their 0–99 queue can opt to pull the
+  // 100+ overflow rather than sit idle.
+  const [pullPriority, setPullPriority] = useState(false);
 
   const today = todayStr();
   const yesterday = yesterdayStr();
@@ -140,6 +143,7 @@ export default function QueueClient({
   useEffect(() => {
     setTarget(collector.daily_target ?? DEFAULT_TARGET);
     setBonus(0);
+    setPullPriority(false);
   }, [collector]);
 
   const facName = useCallback(
@@ -221,9 +225,14 @@ export default function QueueClient({
         if (movedIds.has(c.claim_id)) return false;
         // Scope by tier: a 100+ specialist works ONLY 100+ claims; everyone
         // else works the 0–99 band (65–99 surfaces first via the sort below).
+        // A Standard collector who opted into overflow (pullPriority) also gets
+        // the 100+ pile.
         const age = c.age_days ?? 0;
-        if (specialist ? age < PRIORITY_AGE_THRESHOLD : age >= PRIORITY_AGE_THRESHOLD)
+        if (specialist) {
+          if (age < PRIORITY_AGE_THRESHOLD) return false;
+        } else if (age >= PRIORITY_AGE_THRESHOLD && !pullPriority) {
           return false;
+        }
         const cols = collectorsByFac[c.facility_id] ?? [collectorId];
         if (cols.length <= 1) return true;
         const idx = cols.indexOf(collectorId);
@@ -254,7 +263,7 @@ export default function QueueClient({
 
     setRows(mine);
     setLoading(false);
-  }, [supabase, collectorId, collector.queue_tier, yesterday]);
+  }, [supabase, collectorId, collector.queue_tier, yesterday, pullPriority]);
 
   useEffect(() => {
     load();
@@ -292,6 +301,10 @@ export default function QueueClient({
   ).length;
   const balanceRemaining = todaySet.reduce((s, r) => s + (r.balance ?? 0), 0);
   const backlog = unworked.length; // everything not yet worked, incl. rollover
+  const isSpecialist = (collector.queue_tier ?? "standard") === "priority_100";
+  // A standard collector who has cleared their 0–99 queue can pull the 100+ pile.
+  const canPullPriority =
+    !isSpecialist && !pullPriority && view === "queue" && backlog === 0;
 
   // While any 65+ risk claim is still open today, lock the younger ones so the
   // collector can't skip ahead.
@@ -523,6 +536,8 @@ export default function QueueClient({
         charge_amount: row.balance ?? row.charge_amount,
         status: "Not Worked",
         from_collection: true,
+        submitted_by: collector.id,
+        submitted_by_name: collector.full_name || collector.initials || "",
       });
       if (error) {
         setSaveState(`Error: ${error.message}`);
@@ -736,6 +751,29 @@ export default function QueueClient({
           >
             ➕ Take 25 more
           </button>
+        </div>
+      )}
+
+      {/* 0–99 cleared — offer the 100+ overflow (standard collectors only) */}
+      {canPullPriority && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-command/5 px-6 py-2 text-xs">
+          <span className="font-semibold text-command">
+            ✅ Your 0–99 queue is clear.
+          </span>
+          <span className="text-surface-muted">
+            The remaining work is 100+ day claims. Pull them if you have capacity.
+          </span>
+          <button
+            onClick={() => setPullPriority(true)}
+            className="btn-primary ml-auto px-4 py-1.5 text-xs"
+          >
+            ➕ Pull 100+ claims
+          </button>
+        </div>
+      )}
+      {pullPriority && !isSpecialist && (
+        <div className="border-b border-surface-border bg-risk/5 px-6 py-2 text-xs font-semibold text-risk">
+          ★ Now including 100+ day claims in this queue.
         </div>
       )}
 

@@ -148,6 +148,8 @@ export interface AuthIssue {
   mgmt_needed: boolean;
   notes: string;
   from_collection: boolean;
+  submitted_by: string | null;
+  submitted_by_name: string | null;
   completed_at: string | null;
   created_at: string;
 }
