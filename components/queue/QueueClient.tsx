@@ -101,7 +101,7 @@ export default function QueueClient({
   const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
 
   // Which claims to show: today's queue, or just what this collector worked today.
-  const [view, setView] = useState<"queue" | "today">("queue");
+  const [view, setView] = useState<"queue" | "today" | "backlog">("queue");
 
   // Email-a-facility-about-this-claim modal.
   const [emailClaim, setEmailClaim] = useState<ClaimRow | null>(null);
@@ -295,7 +295,12 @@ export default function QueueClient({
 
   // Apply on-screen filters. "Worked Today" view = only what this collector
   // closed out today (so they can review their notes / what they did).
-  const baseRows = view === "today" ? workedTodayRows : boardRows;
+  const baseRows =
+    view === "today"
+      ? workedTodayRows
+      : view === "backlog"
+        ? unworked // the full backlog, so a stray leftover claim is findable
+        : boardRows;
   const q = search.trim().toLowerCase();
   const shown = baseRows.filter((r) => {
     if (riskOnly && (r.age_days ?? 0) <= RISK_AGE_THRESHOLD) return false;
@@ -651,10 +656,39 @@ export default function QueueClient({
           value={`${target}${carryover ? `+${carryover}` : ""}${bonus ? `+${bonus}` : ""}`}
           accent={carryover ? "risk" : undefined}
         />
-        <Card label="Done Today" value={String(doneToday)} accent="recovered" />
-        <Card label="Today Left" value={String(todaySet.length)} accent="gold" />
-        <Card label="Risk 65+ Today" value={String(riskRemaining)} accent="risk" />
-        <Card label="Backlog (rollover)" value={String(backlog)} />
+        <Card
+          label="Done Today"
+          value={String(doneToday)}
+          accent="recovered"
+          active={view === "today"}
+          onClick={() => setView("today")}
+        />
+        <Card
+          label="Today Left"
+          value={String(todaySet.length)}
+          accent="gold"
+          active={view === "queue" && !riskOnly}
+          onClick={() => {
+            setView("queue");
+            setRiskOnly(false);
+          }}
+        />
+        <Card
+          label="Risk 65+ Today"
+          value={String(riskRemaining)}
+          accent="risk"
+          active={riskOnly}
+          onClick={() => {
+            setView("queue");
+            setRiskOnly((v) => !v);
+          }}
+        />
+        <Card
+          label="Backlog (all open)"
+          value={String(backlog)}
+          active={view === "backlog"}
+          onClick={() => setView("backlog")}
+        />
         <Card label="Balance Today" value={money(balanceRemaining)} />
       </div>
 
@@ -1069,10 +1103,14 @@ function Card({
   label,
   value,
   accent,
+  onClick,
+  active,
 }: {
   label: string;
   value: string;
   accent?: "recovered" | "gold" | "risk";
+  onClick?: () => void;
+  active?: boolean;
 }) {
   const color =
     accent === "recovered"
@@ -1082,13 +1120,23 @@ function Card({
         : accent === "risk"
           ? "text-risk"
           : "text-surface-ink";
-  return (
-    <div className="card p-3">
+  const cls = `card p-3 text-left ${active ? "ring-2 ring-command" : ""} ${
+    onClick ? "cursor-pointer hover:bg-surface-card" : ""
+  }`;
+  const inner = (
+    <>
       <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
         {label}
       </div>
       <div className={`font-display text-xl font-bold ${color}`}>{value}</div>
-    </div>
+    </>
+  );
+  return onClick ? (
+    <button type="button" onClick={onClick} className={`${cls} w-full`}>
+      {inner}
+    </button>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
