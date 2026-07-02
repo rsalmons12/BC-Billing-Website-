@@ -124,6 +124,16 @@ export default function QueueClient({
   // How many this collector worked yesterday — anything short of the target
   // rolls onto today's target (100 done 64 yesterday -> today shows 100+36).
   const [workedYesterday, setWorkedYesterday] = useState<number | null>(null);
+  // Why-is-this-empty breakdown for the selected collector's facilities.
+  const [diag, setDiag] = useState<{
+    facilities: number;
+    total: number;
+    under100: number;
+    workedUnder100: number;
+    authOpenUnder100: number;
+    over100: number;
+    excluded: number;
+  } | null>(null);
 
   const today = todayStr();
   const yesterday = yesterdayStr();
@@ -208,6 +218,27 @@ export default function QueueClient({
         .in("claim_id", ids.slice(i, i + 1000));
       for (const w of (data as ClaimWork[]) ?? []) workMap[w.claim_id] = w;
     }
+
+    // Diagnostic breakdown of this collector's facility claims, so management
+    // can see WHY a queue is empty.
+    const excludedC = claims.filter(
+      (c) => isExcludedMember(c.member_id) || movedIds.has(c.claim_id)
+    ).length;
+    const live = claims.filter(
+      (c) => !isExcludedMember(c.member_id) && !movedIds.has(c.claim_id)
+    );
+    const under = live.filter((c) => (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD);
+    setDiag({
+      facilities: myFacilities.length,
+      total: claims.length,
+      under100: under.length,
+      workedUnder100: under.filter((c) => workMap[c.claim_id]?.date_worked).length,
+      authOpenUnder100: under.filter(
+        (c) => workMap[c.claim_id]?.auth_issue_status === "open"
+      ).length,
+      over100: live.filter((c) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD).length,
+      excluded: excludedC,
+    });
 
     // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
     const specialist = (collector.queue_tier ?? "standard") === "priority_100";
@@ -748,6 +779,32 @@ export default function QueueClient({
           🔒 Work your <b>{riskRemaining}</b> remaining 65+ risk claim
           {riskRemaining === 1 ? "" : "s"} first — younger claims unlock once
           today&apos;s risk is cleared.
+        </div>
+      )}
+
+      {/* why-is-this-empty breakdown (shows when the 0–99 queue is empty) */}
+      {!loading && view === "queue" && backlog === 0 && diag && (
+        <div className="border-b border-surface-border bg-surface px-6 py-2 text-xs text-surface-muted">
+          {diag.facilities === 0 ? (
+            <span className="font-semibold text-risk">
+              This collector isn&apos;t assigned to any facility — assign one in Admin → Users.
+            </span>
+          ) : (
+            <span>
+              Why empty · Facilities: <b className="text-surface-ink">{diag.facilities}</b> ·
+              Claims in them: <b className="text-surface-ink">{diag.total}</b> ·
+              Under 100d: <b className="text-surface-ink">{diag.under100}</b>{" "}
+              (worked <b className="text-surface-ink">{diag.workedUnder100}</b>, with auth team{" "}
+              <b className="text-surface-ink">{diag.authOpenUnder100}</b>) ·
+              100+ (Admin-only): <b className="text-surface-ink">{diag.over100}</b> ·
+              Excluded (VMAH/Marketplace): <b className="text-surface-ink">{diag.excluded}</b>
+              {diag.under100 === 0 && (
+                <b className="ml-1 text-risk">
+                  → no under-100 claims exist for her facilities.
+                </b>
+              )}
+            </span>
+          )}
         </div>
       )}
 
