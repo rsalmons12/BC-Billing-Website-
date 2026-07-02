@@ -252,7 +252,10 @@ export default function QueueClient({
     // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
     const specialist = (collector.queue_tier ?? "standard") === "priority_100";
 
-    // This collector's split of each facility's claims.
+    // All eligible claims for this collector's facilities, each tagged with
+    // whether it's their own hash-split share (_mine). Co-collector claims are
+    // kept as a shared pool the collector can fill from once their own share is
+    // done — they never sit idle while under-100 work remains in the facility.
     const mine = claims
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
@@ -265,12 +268,15 @@ export default function QueueClient({
         const age = c.age_days ?? 0;
         if (specialist ? age < PRIORITY_AGE_THRESHOLD : age >= PRIORITY_AGE_THRESHOLD)
           return false;
-        const cols = collectorsByFac[c.facility_id] ?? [collectorId];
-        if (cols.length <= 1) return true;
-        const idx = cols.indexOf(collectorId);
-        return hashInt(c.claim_id) % cols.length === idx;
+        return true;
       })
-      .map((c) => ({ ...c, work: workMap[c.claim_id] ?? null }));
+      .map((c) => {
+        const cols = collectorsByFac[c.facility_id] ?? [collectorId];
+        const _mine =
+          cols.length <= 1 ||
+          hashInt(c.claim_id) % cols.length === cols.indexOf(collectorId);
+        return { ...c, work: workMap[c.claim_id] ?? null, _mine };
+      });
 
     // Priority tiers: 100+ first, then 65–99, then younger; oldest-first within.
     const tier = (age: number | null) => {
@@ -312,6 +318,12 @@ export default function QueueClient({
   const unworked = rows.filter(
     (r) => !r.work?.date_worked && r.work?.auth_issue_status !== "open"
   );
+  // Split the backlog into the collector's own share and the shared facility
+  // pool (co-collectors' under-100 claims they can help with once done).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const herUnworked = unworked.filter((r) => (r as any)._mine);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sharedUnworked = unworked.filter((r) => !(r as any)._mine);
   // Yesterday's shortfall rolls onto today's target. Only when she actually
   // worked yesterday (so a day off doesn't double the target).
   const carryover =
@@ -319,8 +331,13 @@ export default function QueueClient({
       ? Math.max(0, target - workedYesterday)
       : 0;
   const effectiveTarget = target + carryover;
-  const allotment = Math.max(0, effectiveTarget + bonus - doneToday);
-  const todaySet = unworked.slice(0, allotment);
+  // Fill the day from the collector's own share first; if that runs out before
+  // the target, top up from the shared pool (still 0–99). Bonus pulls more.
+  const baseAllot = Math.max(0, effectiveTarget - doneToday);
+  const herSet = herUnworked.slice(0, baseAllot);
+  const fillNeed = baseAllot - herSet.length + Math.max(0, bonus);
+  const sharedSet = fillNeed > 0 ? sharedUnworked.slice(0, fillNeed) : [];
+  const todaySet = [...herSet, ...sharedSet];
 
   // Show today's allotment AND anything already worked today (so a collector
   // can keep editing a claim they just finished without it vanishing).
