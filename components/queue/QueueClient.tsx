@@ -174,6 +174,15 @@ export default function QueueClient({
     );
     if (myFacilities.length === 0) {
       setRows([]);
+      setDiag({
+        facilities: 0,
+        total: 0,
+        under100: 0,
+        workedUnder100: 0,
+        authOpenUnder100: 0,
+        over100: 0,
+        excluded: 0,
+      });
       setLoading(false);
       return;
     }
