@@ -117,6 +117,11 @@ alter table claim_work add column if not exists resolved_at timestamptz;
 alter table claim_work add column if not exists resolved_by uuid references auth.users(id);
 create index if not exists claim_work_resolved_at_idx on claim_work(resolved_at);
 
+-- Daily claim reservation (keeps two collectors off the same claim).
+alter table claim_work add column if not exists claimed_by uuid references auth.users(id);
+alter table claim_work add column if not exists claimed_at date;
+create index if not exists claim_work_claimed_idx on claim_work(claimed_by, claimed_at);
+
 -- ---- RLS (facility-scoped) for the facility-scoped tables ----
 alter table authorizations    enable row level security;
 alter table negotiations      enable row level security;

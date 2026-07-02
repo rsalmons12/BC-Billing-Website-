@@ -131,6 +131,8 @@ export interface ClaimWork {
   resolved: boolean;
   resolved_at: string | null;
   resolved_by: string | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
   updated_by: string | null;
   updated_at: string;
 }
