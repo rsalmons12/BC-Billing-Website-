@@ -16,7 +16,11 @@ export default async function CollectionsPage() {
     <>
       <Header profile={profile} email={email} subtitle="Collections" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <CollectionsClient facilities={facilities} userId={profile.id} />
+        <CollectionsClient
+          facilities={facilities}
+          userId={profile.id}
+          userName={profile.full_name ?? ""}
+        />
       </main>
     </>
   );

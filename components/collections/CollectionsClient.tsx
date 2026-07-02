@@ -60,9 +60,11 @@ function AgeBadge({ age }: { age: number | null }) {
 export default function CollectionsClient({
   facilities,
   userId,
+  userName = "",
 }: {
   facilities: Facility[];
   userId: string;
+  userName?: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [facilityId, setFacilityId] = useState<string>(
@@ -174,6 +176,8 @@ export default function CollectionsClient({
         charge_amount: row.balance ?? row.charge_amount,
         status: "Not Worked",
         from_collection: true,
+        submitted_by: userId,
+        submitted_by_name: userName,
       });
       if (error) {
         setSaveState(`Error: ${error.message}`);
