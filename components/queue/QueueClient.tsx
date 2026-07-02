@@ -36,16 +36,12 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   resolved: false,
   resolved_at: null,
   resolved_by: null,
+  claimed_by: null,
+  claimed_at: null,
   updated_by: null,
   updated_at: "",
 });
 
-// Stable hash so the same claim always lands with the same collector.
-function hashInt(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
 function todayStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -187,14 +183,6 @@ export default function QueueClient({
       return;
     }
 
-    // Collectors per facility (for splitting), stable order by id.
-    const collectorsByFac: Record<string, string[]> = {};
-    for (const fid of myFacilities) {
-      collectorsByFac[fid] = Array.from(
-        new Set(asg.filter((a) => a.facility_id === fid).map((a) => a.profile_id))
-      ).sort();
-    }
-
     // Claims for those facilities.
     const claims: Claim[] = [];
     for (const fid of myFacilities) {
@@ -252,10 +240,12 @@ export default function QueueClient({
     // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
     const specialist = (collector.queue_tier ?? "standard") === "priority_100";
 
-    // All eligible claims for this collector's facilities, each tagged with
-    // whether it's their own hash-split share (_mine). Co-collector claims are
-    // kept as a shared pool the collector can fill from once their own share is
-    // done — they never sit idle while under-100 work remains in the facility.
+    // Eligible claims for this collector's facilities. Ownership is by daily
+    // RESERVATION (claim_work.claimed_by/claimed_at): a claim reserved by
+    // someone else today is out of the pool; one reserved by me is mine; the
+    // rest are the free shared pool anyone with capacity can pull. This keeps
+    // two collectors off the same claim without relying on the hash split
+    // (which staff can't compute, since they can't see co-collector assignments).
     const mine = claims
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
@@ -263,20 +253,22 @@ export default function QueueClient({
         // Claims shifted to Marketplace / Exchange are out of the queue.
         if (movedIds.has(c.claim_id)) return false;
         // Scope by tier: a 100+ specialist works ONLY 100+ claims; everyone
-        // else works the 0–99 band (65–99 surfaces first via the sort below).
-        // 100+ is Admin-controlled and NEVER handed to a standard collector.
+        // else works the 0–99 band. 100+ is Admin-only, never auto-assigned.
         const age = c.age_days ?? 0;
         if (specialist ? age < PRIORITY_AGE_THRESHOLD : age >= PRIORITY_AGE_THRESHOLD)
           return false;
         return true;
       })
       .map((c) => {
-        const cols = collectorsByFac[c.facility_id] ?? [collectorId];
-        const _mine =
-          cols.length <= 1 ||
-          hashInt(c.claim_id) % cols.length === cols.indexOf(collectorId);
-        return { ...c, work: workMap[c.claim_id] ?? null, _mine };
-      });
+        const w = workMap[c.claim_id] ?? null;
+        const reservedToday = w?.claimed_at === today;
+        const reservedByMe = reservedToday && w?.claimed_by === collectorId;
+        const takenByOther =
+          reservedToday && !!w?.claimed_by && w?.claimed_by !== collectorId;
+        return { ...c, work: w, _mine: reservedByMe, _takenByOther: takenByOther };
+      })
+      // A claim reserved by another collector today is out of this pool.
+      .filter((r) => !r._takenByOther);
 
     // Priority tiers: 100+ first, then 65–99, then younger; oldest-first within.
     const tier = (age: number | null) => {
@@ -338,6 +330,21 @@ export default function QueueClient({
   const fillNeed = baseAllot - herSet.length + Math.max(0, bonus);
   const sharedSet = fillNeed > 0 ? sharedUnworked.slice(0, fillNeed) : [];
   const todaySet = [...herSet, ...sharedSet];
+
+  // Reserve the shared-pool claims this collector is shown, so no one else
+  // gets them. Keyed on the id list so it only writes when the set changes.
+  const sharedShownIds = sharedSet.map((r) => r.claim_id).join(",");
+  useEffect(() => {
+    if (!sharedShownIds) return;
+    void supabase.from("claim_work").upsert(
+      sharedShownIds.split(",").map((id) => ({
+        claim_id: id,
+        claimed_by: collectorId,
+        claimed_at: today,
+      })),
+      { onConflict: "claim_id" }
+    );
+  }, [sharedShownIds, collectorId, today, supabase]);
 
   // Show today's allotment AND anything already worked today (so a collector
   // can keep editing a claim they just finished without it vanishing).

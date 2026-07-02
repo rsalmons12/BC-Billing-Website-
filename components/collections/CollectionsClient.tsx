@@ -36,6 +36,8 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   resolved: false,
   resolved_at: null,
   resolved_by: null,
+  claimed_by: null,
+  claimed_at: null,
   updated_by: null,
   updated_at: "",
 });
