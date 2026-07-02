@@ -643,6 +643,24 @@ export default function QueueClient({
         </p>
       </div>
 
+      {/* target-met banner: grab more even while worked claims are on screen */}
+      {view === "queue" && todaySet.length === 0 && backlog > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-recovered/10 px-6 py-2 text-xs">
+          <span className="font-semibold text-recovered">
+            🎉 Daily target met ({doneToday}/{target + bonus}).
+          </span>
+          <span className="text-surface-muted">
+            <b className="text-surface-ink">{backlog}</b> still open in the backlog.
+          </span>
+          <button
+            onClick={() => setBonus((b) => b + 25)}
+            className="btn-primary ml-auto px-4 py-1.5 text-xs"
+          >
+            ➕ Take 25 more
+          </button>
+        </div>
+      )}
+
       {/* risk-first lock banner */}
       {riskLock && (
         <div className="border-b border-risk/30 bg-risk/10 px-6 py-2 text-xs font-semibold text-risk">
