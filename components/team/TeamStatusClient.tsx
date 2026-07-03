@@ -20,6 +20,9 @@ export default function TeamStatusClient({ collectors }: { collectors: Profile[]
   const [reserved, setReserved] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<string>("");
+  const [exportDate, setExportDate] = useState<string>(today);
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,6 +81,44 @@ export default function TeamStatusClient({ collectors }: { collectors: Profile[]
     [collectors, worked, reserved]
   );
 
+  // Export claim_id + note for claims worked on the chosen day, as the CSV the
+  // CollaborateMD bot reads (claim_id,note).
+  const exportNotes = async () => {
+    setExporting(true);
+    setExportMsg("Gathering notes…");
+    try {
+      const work = await selectAll<{ claim_id: string; notes: string }>((f, t) =>
+        supabase
+          .from("claim_work")
+          .select("claim_id, notes")
+          .eq("date_worked", exportDate)
+          .range(f, t)
+      );
+      const withNotes = work.filter((w) => (w.notes ?? "").trim() && w.claim_id);
+      if (withNotes.length === 0) {
+        setExportMsg("No worked-claim notes on that date.");
+        setExporting(false);
+        return;
+      }
+      const esc = (s: string) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+      const csv =
+        "claim_id,note\n" +
+        withNotes.map((w) => `${esc(w.claim_id)},${esc(w.notes)}`).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `notes.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setExportMsg(`Exported ${withNotes.length} notes → notes.csv`);
+    } catch (e) {
+      setExportMsg(`Error: ${e instanceof Error ? e.message : "failed"}`);
+    }
+    setExporting(false);
+    setTimeout(() => setExportMsg(""), 4000);
+  };
+
   const totals = rows.reduce(
     (s, r) => ({ done: s.done + r.done, held: s.held + r.held }),
     { done: 0, held: 0 }
@@ -92,9 +133,28 @@ export default function TeamStatusClient({ collectors }: { collectors: Profile[]
         <span className="text-xs text-surface-muted">
           Auto-refreshes every 20s{refreshedAt ? ` · last ${refreshedAt}` : ""}
         </span>
-        <div className="ml-auto text-xs text-surface-muted">
-          Today: <b className="text-surface-ink">{totals.done}</b> worked ·{" "}
-          <b className="text-surface-ink">{totals.held}</b> reserved
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {exportMsg && <span className="text-xs font-medium text-secured">{exportMsg}</span>}
+          <span className="text-xs text-surface-muted">
+            Today: <b className="text-surface-ink">{totals.done}</b> worked ·{" "}
+            <b className="text-surface-ink">{totals.held}</b> reserved
+          </span>
+          <span className="mx-1 h-4 w-px bg-surface-border" />
+          <span className="label">Notes for</span>
+          <input
+            type="date"
+            value={exportDate}
+            onChange={(e) => setExportDate(e.target.value)}
+            className="input py-1 text-xs"
+          />
+          <button
+            onClick={exportNotes}
+            disabled={exporting}
+            className="btn-gold text-xs disabled:opacity-50"
+            title="Download claim_id,note for that day's worked claims — feed this to the CollaborateMD bot"
+          >
+            {exporting ? "Exporting…" : "↓ Export notes → CollaborateMD"}
+          </button>
         </div>
       </div>
 
