@@ -1,7 +1,11 @@
 // ===========================================================================
 // CollaborateMD note bot
 // ---------------------------------------------------------------------------
-// Reads a list of { claim_id, note } from notes.csv and, for each one:
+// Reads a list of { claim_id, facility, note } from notes.csv. Because
+// CollaborateMD is multi-customer, a claim only appears in search when the
+// app is set to the CUSTOMER (facility) that claim belongs to. So the bot:
+//   0. groups the notes by facility, and before each facility's claims it
+//      pauses so YOU switch CollaborateMD to that customer, then press Enter,
 //   1. opens the Claim search in CollaborateMD,
 //   2. searches the claim id and opens the claim,
 //   3. expands Patient Notes -> Add Note, types the note, clicks Done,
@@ -12,6 +16,8 @@
 //   - Runs in a VISIBLE browser window so you can watch every step.
 //   - You log in yourself (handles any account picker / prompts); the bot
 //     only does the repetitive note entry after you press Enter.
+//   - YOU pick the customer/facility for each group (the bot never guesses
+//     which practice a claim belongs to).
 //   - Set DRY_RUN=1 to do everything EXCEPT the final Save (a safe rehearsal).
 //
 // This is a first version built from the walkthrough video. A couple of the
@@ -57,16 +63,33 @@ function parseCsv(text) {
 
 function readNotes() {
   if (!fs.existsSync(NOTES_FILE)) {
-    console.error(`\n  Could not find ${NOTES_FILE}. Create it with two columns:\n  claim_id,note\n`);
+    console.error(`\n  Could not find ${NOTES_FILE}. Create it with three columns:\n  claim_id,facility,note\n`);
     process.exit(1);
   }
   const rows = parseCsv(fs.readFileSync(NOTES_FILE, "utf8")).filter((r) => r.some((c) => c.trim()));
   if (!rows.length) { console.error("  notes.csv is empty."); process.exit(1); }
   // Detect + drop a header row.
-  const [h0, h1] = rows[0].map((s) => (s || "").trim().toLowerCase());
-  const start = h0 === "claim_id" || h1 === "note" ? 1 : 0;
-  return rows.slice(start)
-    .map((r) => ({ claim_id: (r[0] || "").trim(), note: (r[1] || "").trim() }))
+  const header = rows[0].map((s) => (s || "").trim().toLowerCase());
+  const hasHeader = header[0] === "claim_id" || header.includes("facility") || header.includes("note");
+  // Support both the new 3-column layout (claim_id,facility,note) and the
+  // old 2-column one (claim_id,note) so older files still run.
+  const facilityIdx = header.indexOf("facility");
+  const noteIdx = header.indexOf("note");
+  return rows.slice(hasHeader ? 1 : 0)
+    .map((r) => {
+      if (r.length >= 3 || facilityIdx >= 0) {
+        // 3-column: claim_id, facility, note  (or ordered by header names)
+        const fi = facilityIdx >= 0 ? facilityIdx : 1;
+        const ni = noteIdx >= 0 ? noteIdx : 2;
+        return {
+          claim_id: (r[0] || "").trim(),
+          facility: (r[fi] || "").trim(),
+          note: (r[ni] || "").trim(),
+        };
+      }
+      // 2-column fallback: claim_id, note (facility unknown)
+      return { claim_id: (r[0] || "").trim(), facility: "", note: (r[1] || "").trim() };
+    })
     .filter((r) => r.claim_id && r.note);
 }
 
@@ -83,19 +106,25 @@ function record(claim_id, status, detail = "") {
 }
 
 // ---- the per-claim automation --------------------------------------------
+// NOTE: the correct CollaborateMD customer (facility) must already be selected
+// before this runs — the operator does that between facility groups. A claim
+// only appears in Claim search under the customer it belongs to.
 async function pushNote(page, claim_id, note) {
-  // 1) Open Claim search. The search box placeholder is distinctive.
+  // 1) Make sure we're on the Claim search screen. Its search box placeholder
+  //    is distinctive: "Search by name, DOB, account#, member ID, claim ID...".
   const searchBox = page.getByPlaceholder(/Search by name.*claim ID/i);
   if (!(await searchBox.isVisible().catch(() => false))) {
-    // Not on the Claim screen — use the left-nav "Find a Section" jump box.
+    // Not on the Claim screen — use the top-left "Find a Section" jump box.
     const finder = page.getByPlaceholder(/Find a Section/i);
     await finder.click({ timeout: T });
     await finder.fill("Claim");
     await page.getByText("Claim", { exact: true }).first().click({ timeout: T });
+    await searchBox.waitFor({ timeout: T });
   }
   await searchBox.click({ timeout: T });
   await searchBox.fill(claim_id);
   await searchBox.press("Enter");
+  await page.waitForTimeout(600); // let results come back
 
   // 2) Open the matching claim row (the row that shows this claim id).
   const row = page.getByRole("row", { name: new RegExp(claim_id) }).first();
@@ -104,11 +133,17 @@ async function pushNote(page, claim_id, note) {
     : page.getByText(claim_id, { exact: true }).first();
   await cell.click({ timeout: T });
 
-  // 3) Confirm the claim opened (Claim # field carries the id).
-  await page.getByText("Patient Notes", { exact: true }).first().click({ timeout: T });
+  // 3) Expand the Patient Notes panel (right side). It's a collapsible header;
+  //    only click it if Add Note isn't already showing, so we don't collapse a
+  //    panel that a previous claim left open.
+  const addNote = page.getByRole("button", { name: /Add Note/i });
+  if (!(await addNote.isVisible().catch(() => false))) {
+    await page.getByText("Patient Notes", { exact: false }).first().click({ timeout: T });
+    await addNote.waitFor({ timeout: T });
+  }
 
   // 4) Add Note -> type message -> Done.
-  await page.getByRole("button", { name: /Add Note/i }).click({ timeout: T });
+  await addNote.click({ timeout: T });
   const dialog = page.getByRole("dialog");
   const message = (await dialog.locator("textarea").first().isVisible().catch(() => false))
     ? dialog.locator("textarea").first()
@@ -120,16 +155,21 @@ async function pushNote(page, claim_id, note) {
   // 5) Save the claim.
   if (DRY_RUN) {
     console.log(`   [DRY RUN] would Save note on claim ${claim_id}`);
+    // Leave the claim as-is; close it so the next claim starts clean.
+    await page.getByRole("button", { name: /^Close$/i }).first().click({ timeout: T }).catch(() => {});
     return "dry-run";
   }
   await page.getByRole("button", { name: /^Save$/i }).first().click({ timeout: T });
   await page.waitForTimeout(1200); // let the save settle
+  // Return to the claim list so the next search is clean.
+  await page.getByRole("button", { name: /^Close$/i }).first().click({ timeout: T }).catch(() => {});
   return "ok";
 }
 
 async function main() {
   const notes = readNotes();
-  console.log(`\n  Loaded ${notes.length} note(s) from ${NOTES_FILE}.`);
+  const facilities = [...new Set(notes.map((n) => n.facility || "(facility not set)"))];
+  console.log(`\n  Loaded ${notes.length} note(s) from ${NOTES_FILE}, across ${facilities.length} facility group(s).`);
   if (DRY_RUN) console.log("  DRY RUN: will do everything except the final Save.\n");
 
   if (!fs.existsSync(RESULTS_FILE)) fs.writeFileSync(RESULTS_FILE, "claim_id,status,detail\n");
@@ -141,22 +181,42 @@ async function main() {
   console.log("\n  A browser window opened. Log in to CollaborateMD yourself.");
   await ask("  When you are fully logged in and see the home screen, press Enter here to start... ");
 
-  let ok = 0, fail = 0;
-  for (let i = 0; i < notes.length; i++) {
-    const { claim_id, note } = notes[i];
-    process.stdout.write(`\n  (${i + 1}/${notes.length}) Claim ${claim_id}… `);
-    try {
-      const status = await pushNote(page, claim_id, note);
-      record(claim_id, status);
-      console.log(status === "ok" ? "✓ saved" : "✓ (dry run)");
-      ok++;
-    } catch (err) {
-      const msg = (err && err.message ? err.message : String(err)).split("\n")[0];
-      record(claim_id, "error", msg);
-      console.log(`✗ ${msg}`);
-      fail++;
-      // Try to get back to a clean state for the next claim.
-      await page.keyboard.press("Escape").catch(() => {});
+  // Group the claims by facility, preserving order, so we switch the
+  // CollaborateMD customer as few times as possible.
+  const groups = [];
+  const byFacility = new Map();
+  for (const n of notes) {
+    const key = n.facility || "(facility not set)";
+    if (!byFacility.has(key)) { byFacility.set(key, []); groups.push(key); }
+    byFacility.get(key).push(n);
+  }
+
+  let ok = 0, fail = 0, done = 0;
+  for (const facility of groups) {
+    const items = byFacility.get(facility);
+    console.log(`\n  ────────────────────────────────────────────────────────`);
+    console.log(`  Next: ${items.length} claim(s) for customer: ${facility}`);
+    console.log(`  ────────────────────────────────────────────────────────`);
+    await ask(
+      `  In CollaborateMD, switch to the customer "${facility}", then press Enter here to run this group... `
+    );
+
+    for (const { claim_id, note } of items) {
+      done++;
+      process.stdout.write(`\n  (${done}/${notes.length}) [${facility}] Claim ${claim_id}… `);
+      try {
+        const status = await pushNote(page, claim_id, note);
+        record(claim_id, status, facility);
+        console.log(status === "ok" ? "✓ saved" : "✓ (dry run)");
+        ok++;
+      } catch (err) {
+        const msg = (err && err.message ? err.message : String(err)).split("\n")[0];
+        record(claim_id, "error", `${facility}: ${msg}`);
+        console.log(`✗ ${msg}`);
+        fail++;
+        // Try to get back to a clean state for the next claim.
+        await page.keyboard.press("Escape").catch(() => {});
+      }
     }
   }
 

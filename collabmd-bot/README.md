@@ -12,15 +12,19 @@ It **shows you the browser the whole time** so you can watch, and it has a
 
 ## What it does, in plain English
 
-For every row in `notes.csv` it:
+CollaborateMD is split by **customer (facility)** — a claim only shows up in
+search when the app is set to the customer that claim belongs to. So the bot
+groups your notes by facility. For each facility group it **pauses and asks you
+to switch CollaborateMD to that customer**, then, for every row in that group:
 
 1. Searches the **Claim ID** in CollaborateMD's Claim search.
 2. Opens that claim.
 3. Opens **Patient Notes → Add Note**, types your note, clicks **Done**.
 4. Clicks **Save**.
 
-It writes a `results.csv` telling you which claims succeeded and which need a
-second look.
+You handle the customer switch (you know that screen); the bot handles the
+repetitive note typing. It writes a `results.csv` telling you which claims
+succeeded and which need a second look.
 
 ---
 
@@ -53,15 +57,23 @@ That's it — setup is done.
 ## Each time you want to push notes
 
 ### 1. Make your notes file
-Create a file named `notes.csv` in this folder with two columns. The easiest
-way: in Excel, put **claim_id** in column A and **note** in column B, then
-"Save As" → CSV. It should look like `notes.example.csv`.
+The easiest way is to let BC Billing build it for you: open the **Collector
+Status** tab and click **"↓ Export notes → CollaborateMD"** — it downloads a
+`notes.csv` already filled in with the day's claims, facilities, and notes.
+Drop that file into this folder.
+
+If you'd rather make it by hand, create `notes.csv` here with **three columns**.
+In Excel: **claim_id** in column A, **facility** in column B, **note** in
+column C, then "Save As" → CSV. It should look like `notes.example.csv`.
 
 ```
-claim_id,note
-297554670,"Called Horizon 7/1 - reprocessing, ETA 2 weeks. - BC"
-294746976,"Payment posted, zero balance. - BC"
+claim_id,facility,note
+297554670,Core Behavioral,"Called Horizon 7/1 - reprocessing, ETA 2 weeks. - BC"
+294746976,Pathways,"Payment posted, zero balance. - BC"
 ```
+
+The **facility** must match the CollaborateMD customer name you'd pick on
+screen. Rows for the same facility are grouped together automatically.
 
 ### 2. Do a rehearsal first (recommended)
 This runs the whole thing but **never clicks Save** — a safe dry run:
@@ -71,8 +83,10 @@ npm run dry-run
 ```
 
 A browser opens. **Log in to CollaborateMD yourself.** When you're on the home
-screen, come back to the terminal and press **Enter**. Watch it open each claim
-and fill the note. Nothing is saved.
+screen, come back to the terminal and press **Enter**. For each facility group
+the bot pauses and asks you to **switch CollaborateMD to that customer** — do
+it, then press **Enter**. Watch it open each claim and fill the note. Nothing
+is saved.
 
 ### 3. Do it for real
 When the rehearsal looks right:
