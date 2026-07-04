@@ -6,7 +6,7 @@
   "description": "Pushes BC Billing notes into CollaborateMD, keyed by claim ID.",
   "scripts": {
     "notes": "node push-notes.mjs",
-    "dry-run": "DRY_RUN=1 node push-notes.mjs"
+    "dry-run": "node push-notes.mjs --dry-run"
   },
   "dependencies": {
     "playwright": "^1.47.0"

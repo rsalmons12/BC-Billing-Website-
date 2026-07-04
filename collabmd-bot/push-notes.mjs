@@ -24,7 +24,10 @@ import fs from "node:fs";
 import readline from "node:readline";
 
 const START_URL = process.env.CMD_URL || "https://app.collaboratemd.com/";
-const DRY_RUN = process.env.DRY_RUN === "1";
+// DRY RUN can be turned on two ways so it works on every operating system:
+//   Windows / Mac / Linux:  node push-notes.mjs --dry-run   (or: npm run dry-run)
+//   Advanced:               DRY_RUN=1 node push-notes.mjs
+const DRY_RUN = process.env.DRY_RUN === "1" || process.argv.includes("--dry-run");
 const NOTES_FILE = process.env.NOTES_FILE || "notes.csv";
 const RESULTS_FILE = "results.csv";
 // Per-claim timeout for finding elements (ms). Bump if the site is slow.
