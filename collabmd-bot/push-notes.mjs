@@ -197,9 +197,21 @@ async function main() {
     console.log(`\n  ────────────────────────────────────────────────────────`);
     console.log(`  Next: ${items.length} claim(s) for customer: ${facility}`);
     console.log(`  ────────────────────────────────────────────────────────`);
-    await ask(
-      `  In CollaborateMD, switch to the customer "${facility}", then press Enter here to run this group... `
-    );
+    console.log(`  1. Switch CollaborateMD to the customer "${facility}".`);
+    console.log(`  2. Open the Claim screen (left menu → Claim → Claim) so you`);
+    console.log(`     see the claim search box at the top.`);
+    await ask(`  Then press Enter here to run this group... `);
+
+    // Confirm we're actually on the Claim search screen before firing off
+    // clicks — a clear message beats a 20-second mystery timeout.
+    const ready = page.getByPlaceholder(/Search by name.*claim ID/i);
+    if (!(await ready.isVisible().catch(() => false))) {
+      console.log(
+        `  ⚠ I don't see the claim search box yet. Open the Claim screen`
+      );
+      console.log(`     (left menu → Claim → Claim), then press Enter again.`);
+      await ask("  Press Enter once you see the claim search box... ");
+    }
 
     for (const { claim_id, note } of items) {
       done++;
