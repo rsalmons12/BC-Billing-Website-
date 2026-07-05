@@ -47,14 +47,22 @@ function isThisMonth(v: unknown, now: Date): boolean {
 export default async function FacilityDashboard({
   searchParams,
 }: {
-  searchParams: { facility?: string };
+  searchParams: { facility?: string; month?: string };
 }) {
   const { profile, email } = await requireProfile();
   if (profile.role !== "facility") redirect("/");
 
   const supabase = createClient();
   const now = new Date();
-  const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
+  // Which month the dashboard's "this month" figures show. Defaults to the
+  // current month; ?month=YYYY-MM lets a facility look back at prior months.
+  const monthParam = /^\d{4}-\d{2}$/.test(searchParams.month ?? "")
+    ? (searchParams.month as string)
+    : "";
+  const viewMonth = monthParam
+    ? new Date(Number(monthParam.slice(0, 4)), Number(monthParam.slice(5, 7)) - 1, 1)
+    : now;
+  const monthLabel = viewMonth.toLocaleString("en-US", { month: "long", year: "numeric" });
 
   // The exact set of facilities THIS login may see: its primary facility plus
   // any explicitly granted via assignments. Computed in-app so the dashboard
@@ -145,9 +153,9 @@ export default async function FacilityDashboard({
     0
   );
 
-  // ---- Payments collected this month + per payer ---------------------------
+  // ---- Payments collected in the viewed month + per payer ------------------
   const monthPayments = payments.filter(
-    (p) => isThisMonth(p.deposit_date, now) || isThisMonth(p.payment_entered, now)
+    (p) => isThisMonth(p.deposit_date, viewMonth) || isThisMonth(p.payment_entered, viewMonth)
   );
   const collectedThisMonth = monthPayments.reduce(
     (s, p) => s + (p.paid_amount ?? 0),
@@ -162,10 +170,36 @@ export default async function FacilityDashboard({
     .filter(([, v]) => v > 0)
     .sort((a, b) => b[1] - a[1]);
 
-  // ---- Billed this month (from the CollaborateMD billed report) ------------
+  // ---- Billed in the viewed month (from the CollaborateMD billed report) ---
   const billedThisMonth = billed
-    .filter((b) => isThisMonth(b.entered_date, now))
+    .filter((b) => isThisMonth(b.entered_date, viewMonth))
     .reduce((s, b) => s + (b.total_amount ?? 0), 0);
+
+  // Months available to look back at (from payment + billed dates), newest
+  // first, for the month picker.
+  const monthSet = new Set<string>();
+  const addMonth = (v: unknown) => {
+    const d = parseDate(v);
+    if (d) monthSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  };
+  for (const p of allPayments) {
+    addMonth(p.deposit_date);
+    addMonth(p.payment_entered);
+  }
+  for (const b of allBilled) addMonth(b.entered_date);
+  monthSet.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const availableMonths = Array.from(monthSet).sort().reverse().slice(0, 12);
+  const curMonthKey = monthParam || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthShort = (ym: string) => {
+    const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1);
+    return d.toLocaleString("en-US", { month: "short", year: "numeric" });
+  };
+  const withParams = (m: string) => {
+    const p = new URLSearchParams();
+    if (searchParams.facility) p.set("facility", searchParams.facility);
+    p.set("month", m);
+    return `?${p.toString()}`;
+  };
 
   // ---- Negotiations: expected revenue, paid ~14 days after approval --------
   const approvedNegs = negotiations.filter((n) => /approv|signed/i.test(n.status || ""));
@@ -213,6 +247,21 @@ export default async function FacilityDashboard({
               ))}
             </div>
           )}
+
+          {/* Month picker — Collected & Billed reflect the chosen month */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              Month:
+            </span>
+            {availableMonths.map((m) => (
+              <FacilityChip
+                key={m}
+                href={withParams(m)}
+                label={monthShort(m)}
+                active={curMonthKey === m}
+              />
+            ))}
+          </div>
 
           {/* Headline numbers */}
           <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">

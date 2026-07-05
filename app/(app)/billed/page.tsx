@@ -5,9 +5,11 @@ import BilledClient from "@/components/billed/BilledClient";
 
 export default async function BilledPage() {
   const { profile, email } = await requireProfile();
-  if (profile.role !== "staff" && profile.role !== "management") redirect("/");
+  if (!["staff", "management", "facility"].includes(profile.role)) redirect("/");
 
   const facilities = await accessibleFacilities();
+  // Facility logins see their own billed claims read-only (RLS scopes rows).
+  const isFacility = profile.role === "facility";
 
   return (
     <>
@@ -17,6 +19,7 @@ export default async function BilledPage() {
           facilities={facilities}
           userId={profile.id}
           isManagement={profile.role === "management"}
+          readOnly={isFacility}
         />
       </main>
     </>

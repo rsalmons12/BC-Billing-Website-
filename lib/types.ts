@@ -117,6 +117,7 @@ export interface Claim {
 export interface ClaimWork {
   claim_id: string;
   notes: string;
+  collab_note: string; // the single note to push into CollaborateMD (required to mark worked)
   initials: string;
   date_worked: string;
   med_rec: string;

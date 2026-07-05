@@ -22,6 +22,7 @@ type Worked = "all" | "unworked" | "worked";
 const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
   notes: "",
+  collab_note: "",
   initials: "",
   date_worked: "",
   med_rec: "",

@@ -6,7 +6,16 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { normFacility } from "@/lib/import/parse";
+import { periodOf } from "@/lib/import/parseTrackers";
 import type { Facility } from "@/lib/types";
+
+// "2026-06" -> "Jun 2026" for the month dropdown.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function monthLabel(ym: string): string {
+  const m = ym.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return ym;
+  return `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
+}
 
 export type ColumnKind =
   | "text"
@@ -43,11 +52,20 @@ export interface TrackerConfig {
   // Import behaviour:
   //  - default: replace all rows for the mapped facilities.
   //  - importMode "append": only insert (never delete) — for historical logs.
+  //  - importMode "replace_period": replace only the month(s) in the file for
+  //    the mapped facilities (payments accumulate month over month). Uses
+  //    the `period` column (YYYY-MM).
   //  - importKey: upsert by this column; existing rows keep their non-fact
   //    columns (notes etc.), only importFactKeys are refreshed.
-  importMode?: "replace" | "append";
+  importMode?: "replace" | "append" | "replace_period";
   importKey?: string;
   importFactKeys?: string[];
+  // When set, show a Month dropdown that filters rows by the month derived from
+  // this date field (e.g. "deposit_date") — lets you view prior months.
+  monthFrom?: string;
+  // Set false for read-only "visual" reports (e.g. Billed) so the import log
+  // doesn't talk about preserving notes.
+  preservesNotes?: boolean;
   // Optional summary/analytics block rendered above the table (uses the
   // currently-filtered rows).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,6 +124,7 @@ export default function TrackerModule({
   const [loading, setLoading] = useState(true);
   const [facilityFilter, setFacilityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [monthFilter, setMonthFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
@@ -210,6 +229,10 @@ export default function TrackerModule({
         const opt = config.extraFilters.options.find((o) => o.value === extraFilter);
         if (opt && !opt.test(r)) return false;
       }
+      if (config.monthFrom && monthFilter !== "all") {
+        const m = periodOf(String(r[config.monthFrom] ?? ""), String(r.period ?? ""));
+        if (m !== monthFilter) return false;
+      }
       if (q) {
         const hay = config.searchKeys
           .map((k) => String(r[k] ?? ""))
@@ -219,7 +242,18 @@ export default function TrackerModule({
       }
       return true;
     });
-  }, [rows, statusFilter, extraFilter, search, config, archiveView]);
+  }, [rows, statusFilter, extraFilter, monthFilter, search, config, archiveView]);
+
+  // Distinct months present in the data (newest first) for the Month dropdown.
+  const monthOptions = useMemo(() => {
+    if (!config.monthFrom) return [];
+    const set = new Set<string>();
+    for (const r of rows) {
+      const m = periodOf(String(r[config.monthFrom] ?? ""), String(r.period ?? ""));
+      if (m) set.add(m);
+    }
+    return Array.from(set).sort().reverse();
+  }, [rows, config]);
 
   // Only render a window of rows so big tabs stay fast (totals/export still
   // use the full filtered set).
@@ -298,6 +332,22 @@ export default function TrackerModule({
               </button>
             ))}
           </div>
+        )}
+
+        {config.monthFrom && monthOptions.length > 0 && (
+          <select
+            value={monthFilter}
+            onChange={(e) => setMonthFilter(e.target.value)}
+            className="input max-w-[12rem]"
+            title="Show a specific month (or all months)"
+          >
+            <option value="all">All months</option>
+            {monthOptions.map((m) => (
+              <option key={m} value={m}>
+                {monthLabel(m)}
+              </option>
+            ))}
+          </select>
         )}
 
         {config.statusKey && config.statusOptions && (
@@ -854,9 +904,74 @@ export function ImportPanel({
           return;
         }
         upd++;
-        if (upd % 100 === 0) add(`Updated ${upd}/${known.length} (notes kept)…`);
+        const kept = config.preservesNotes === false ? "" : " (notes kept)";
+        if (upd % 100 === 0) add(`Updated ${upd}/${known.length}${kept}…`);
       }
-      add(`✓ Import complete — ${known.length} updated with notes preserved.`);
+      const notePreserved =
+        config.preservesNotes === false ? "" : " with notes preserved";
+      add(`✓ Import complete — ${known.length} updated${notePreserved}.`);
+      setBusy(false);
+      setTimeout(onDone, 800);
+      return;
+    }
+
+    // ----- Mode 1b: replace only the month(s) in the file (accumulate) -----
+    // For payments: importing June replaces June's rows for the touched
+    // facilities and leaves every other month intact; re-importing a month
+    // refreshes just that month. Never touches other months.
+    if (config.importMode === "replace_period") {
+      const periods = Array.from(
+        new Set(prepared.map((r) => String(r.period || "")).filter(Boolean))
+      );
+      if (periods.length === 0) {
+        add("Couldn't read a month (deposit date) from this file — nothing imported.");
+        setBusy(false);
+        return;
+      }
+      const facLabels = touched
+        .map((id) => {
+          const f = facilities.find((x) => x.id === id);
+          return f?.short_name || f?.name || id;
+        })
+        .join(", ");
+      if (
+        !confirm(
+          `Add / refresh month(s): ${periods.join(", ")}\n` +
+            `for: ${facLabels}\n\n` +
+            `Other months stay exactly as they are. Continue?`
+        )
+      ) {
+        add("Import cancelled — nothing was changed.");
+        setBusy(false);
+        return;
+      }
+      // Delete just the touched facilities' rows for these month(s), then insert.
+      // Also sweep any pre-tagged rows (period is null) left from before months
+      // were tracked, so old data doesn't linger as duplicates.
+      for (const fids of chunk(touched, 50)) {
+        const { error } = await supabase
+          .from(config.table)
+          .delete()
+          .in("facility_id", fids)
+          .or(`period.in.(${periods.join(",")}),period.is.null`);
+        if (error) {
+          add(`Error clearing month(s): ${error.message}`);
+          setBusy(false);
+          return;
+        }
+      }
+      let inserted = 0;
+      for (const batch of chunk(prepared, 400)) {
+        const { error } = await supabase.from(config.table).insert(batch);
+        if (error) {
+          add(`Error inserting: ${error.message}`);
+          setBusy(false);
+          return;
+        }
+        inserted += batch.length;
+        add(`Added ${inserted}/${prepared.length}…`);
+      }
+      add(`✓ Import complete — month(s) ${periods.join(", ")} added; other months untouched.`);
       setBusy(false);
       setTimeout(onDone, 800);
       return;

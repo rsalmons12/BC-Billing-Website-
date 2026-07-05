@@ -22,6 +22,7 @@ const DEFAULT_TARGET = 100;
 const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
   notes: "",
+  collab_note: "",
   initials: "",
   date_worked: "",
   med_rec: "",
@@ -462,11 +463,22 @@ export default function QueueClient({
   );
 
   // The "✓ Worked" quick action: stamp today + the collector's initials.
-  const markWorked = (r: ClaimRow) =>
+  // A CollaborateMD note is REQUIRED — a claim can't be marked worked without
+  // one, because that note is what the bot pushes into CollaborateMD.
+  const markWorked = (r: ClaimRow) => {
+    const cmd = (r.work?.collab_note ?? "").trim();
+    if (!cmd) {
+      alert(
+        "Add a CollaborateMD note before marking this claim worked.\n\n" +
+          'Type the update in the "CMD Note" column — that\'s the note pushed into CollaborateMD.'
+      );
+      return;
+    }
     patchRow(r.claim_id, {
       date_worked: today,
       initials: collector.initials || r.work?.initials || "",
     });
+  };
 
   const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
 
@@ -862,6 +874,9 @@ export default function QueueClient({
               <th className="th">Rebill</th>
               <th className="th">Mgmt</th>
               <th className="th min-w-[16rem]">Notes</th>
+              <th className="th min-w-[14rem]">
+                CMD Note <span className="text-risk">*</span>
+              </th>
               <th className="th">Init</th>
               <th className="th">Done</th>
               <th className="th">Market/Exch</th>
@@ -870,14 +885,14 @@ export default function QueueClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={19} className="td py-10 text-center text-surface-muted">
+                <td colSpan={20} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={19} className="td py-10 text-center text-surface-muted">
+                <td colSpan={20} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
@@ -995,6 +1010,18 @@ export default function QueueClient({
                       <NotesCell
                         value={w.notes}
                         onSave={(v) => patchRow(r.claim_id, { notes: v })}
+                      />
+                    </td>
+                    <td className="td">
+                      <NotesCell
+                        value={w.collab_note}
+                        placeholder={done ? "" : "Required — pushed to CollaborateMD"}
+                        className={
+                          !done && !(w.collab_note ?? "").trim()
+                            ? "ring-1 ring-risk/40"
+                            : ""
+                        }
+                        onSave={(v) => patchRow(r.claim_id, { collab_note: v })}
                       />
                     </td>
                     <td className="td">
@@ -1314,9 +1341,13 @@ function StatusCell({
 function NotesCell({
   value,
   onSave,
+  placeholder = "Add a note…",
+  className = "",
 }: {
   value: string;
   onSave: (v: string) => void;
+  placeholder?: string;
+  className?: string;
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
@@ -1325,8 +1356,8 @@ function NotesCell({
       value={v}
       onChange={setV}
       onBlur={() => v !== value && onSave(v)}
-      className="min-w-[16rem] max-w-[28rem]"
-      placeholder="Add a note…"
+      className={`min-w-[14rem] max-w-[28rem] ${className}`}
+      placeholder={placeholder}
     />
   );
 }

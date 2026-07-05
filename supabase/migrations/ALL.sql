@@ -284,7 +284,9 @@ create table if not exists billed_claims (
 );
 create index if not exists billed_claims_facility_idx on billed_claims(facility_id);
 create index if not exists billed_claims_payer_idx on billed_claims(payer_name);
-create unique index if not exists billed_claims_claim_id_key on billed_claims(claim_id);
+-- Billed is a visual report (no claim-id matching) — plain, non-unique index.
+drop index if exists billed_claims_claim_id_key;
+create index if not exists billed_claims_claim_id_idx on billed_claims(claim_id);
 alter table billed_claims enable row level security;
 drop policy if exists billed_select on billed_claims;
 create policy billed_select on billed_claims for select
@@ -339,6 +341,13 @@ create policy attachments_obj_update on storage.objects for update to authentica
 drop policy if exists attachments_obj_delete on storage.objects;
 create policy attachments_obj_delete on storage.objects for delete to authenticated
   using (bucket_id = 'attachments' and public.is_management());
+
+-- ---- collab_note: the single note pushed into CollaborateMD (0023) ----
+alter table claim_work add column if not exists collab_note text default '';
+
+-- ---- payments accumulate by month (0024) ----
+alter table payments add column if not exists period text;
+create index if not exists payments_period_idx on payments(facility_id, period);
 
 -- ---- Grants (RLS still governs rows) ----
 grant select, insert, update, delete on
