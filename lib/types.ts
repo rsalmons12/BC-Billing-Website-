@@ -239,6 +239,7 @@ export interface BilledClaim {
   patient_name: string | null;
   payer_name: string | null;
   payer_type: string | null;
+  period: string | null;
   updated_by: string | null;
   created_at: string;
   updated_at: string;

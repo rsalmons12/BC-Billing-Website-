@@ -399,6 +399,7 @@ export interface BilledRow {
   patient_name: string;
   payer_name: string;
   payer_type: string;
+  period: string; // YYYY-MM the report covers (from the "Claim Billed Date is between…" line)
 }
 
 export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
@@ -409,15 +410,16 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
   for (const name of wb.SheetNames) {
     if (/total claims per patient|^_?lists$|^sheet\d+$/.test(norm(name))) continue;
     const rows = rowsOf(wb.Sheets[name]);
-    // Facility from the "Customer is X" banner in the first few rows.
+    // Facility from the "Customer is X" banner, and the report's month from the
+    // "Claim Billed Date is between MM/DD/YYYY and MM/DD/YYYY" line.
     let bannerFacility = name;
+    let filePeriod = "";
     for (let i = 0; i < Math.min(rows.length, 8); i++) {
       const joined = rows[i].map(toStr).join(" ");
       const m = joined.match(/customer is\s+(.+?)(?:\s{2,}|$)/i);
-      if (m) {
-        bannerFacility = m[1].trim();
-        break;
-      }
+      if (m && bannerFacility === name) bannerFacility = m[1].trim();
+      const d = joined.match(/billed date is between\s+(\S+)/i);
+      if (d && !filePeriod) filePeriod = periodOf(d[1]);
     }
     const hr = findHeaderRow(
       rows,
@@ -452,28 +454,32 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
       // Combined reports carry the facility per row in "Office Name"; single
       // reports fall back to the "Customer is X" banner.
       const office = col.office >= 0 ? toStr(r[col.office]) : "";
+      const entered = col.entered >= 0 ? toDateStr(r[col.entered]) : "";
       out.push({
         facility_name: office || bannerFacility,
         claim_id: claim,
         times_billed: col.times >= 0 ? toNum(r[col.times]) : null,
         from_date: col.from >= 0 ? toDateStr(r[col.from]) : "",
         to_date: col.to >= 0 ? toDateStr(r[col.to]) : "",
-        entered_date: col.entered >= 0 ? toDateStr(r[col.entered]) : "",
+        entered_date: entered,
         total_amount: col.total >= 0 ? toNum(r[col.total]) : null,
         balance: col.balance >= 0 ? toNum(r[col.balance]) : null,
         patient_id: col.patientId >= 0 ? toStr(r[col.patientId]) : "",
         patient_name: patient,
         payer_name: col.payer >= 0 ? toStr(r[col.payer]) : "",
         payer_type: col.ptype >= 0 ? toStr(r[col.ptype]) : "",
+        // The month this billed report covers (falls back to entered date).
+        period: filePeriod || periodOf(entered),
       });
       added++;
     }
     if (added) sheets.push(name);
   }
 
-  // De-dupe by claim id (last wins) so claim-id upsert stays unique.
+  // De-dupe within the file by claim id + month (a claim billed in two months
+  // stays as two rows so months accumulate).
   const byId = new Map<string, BilledRow & { facility_name: string }>();
-  for (const r of out) byId.set(r.claim_id, r);
+  for (const r of out) byId.set(`${r.claim_id}|${r.period}`, r);
   const deduped = [...byId.values()];
 
   return {
@@ -507,7 +513,9 @@ export function periodOf(...candidates: string[]): string {
   for (const raw of candidates) {
     const s = (raw || "").trim();
     if (!s) continue;
-    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/]\d{1,2}/); // YYYY-MM-DD
+    let m = s.match(/^(\d{4})-(\d{2})$/); // already YYYY-MM
+    if (m) return `${m[1]}-${m[2]}`;
+    m = s.match(/^(\d{4})[-/](\d{1,2})[-/]\d{1,2}/); // YYYY-MM-DD
     if (m) return `${m[1]}-${m[2].padStart(2, "0")}`;
     m = s.match(/^(\d{1,2})[-/]\d{1,2}[-/](\d{2,4})/); // MM/DD/YYYY
     if (m) {
