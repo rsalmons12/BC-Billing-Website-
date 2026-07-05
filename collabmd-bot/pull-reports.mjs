@@ -140,9 +140,23 @@ async function runAndExport(page, report) {
   }
 
   // Wait for the report to finish rendering (the Print/Export button appears).
+  // Big "all customers / this week" reports can take a while, so allow up to
+  // 3 minutes — but bail early with a clear message if it says No Data Found.
   step(page, "wait for report to render");
   const exportMenu = page.getByRole("button", { name: /Print.*Export/i }).first();
-  await exportMenu.waitFor({ timeout: T });
+  const noData = page.getByText(/No Data Found/i).first();
+  const deadline = Date.now() + 180000;
+  for (;;) {
+    if (await exportMenu.isVisible().catch(() => false)) break;
+    if (await noData.isVisible().catch(() => false)) {
+      throw new Error(
+        "Report returned No Data Found — the customers weren't selected, or the date range is empty. " +
+          "Re-open it, click Customer -> Select All and set the date, then run again."
+      );
+    }
+    if (Date.now() > deadline) throw new Error("Report took too long to render (over 3 min).");
+    await page.waitForTimeout(1000);
+  }
 
   step(page, "Print/Export -> Export as Excel");
   await exportMenu.click({ timeout: T });
@@ -180,16 +194,14 @@ async function main() {
     console.log(`  ────────────────────────────────────────────────────────`);
     try {
       await openReport(page, report.open);
-      // Best-effort auto-fill; if a control isn't standard it just leaves it
-      // for you to set during the pause below (never blocks the run).
-      await setDatePreset(page, report.datePreset).catch(() => {});
-      await selectAllCustomers(page).catch(() => {});
+      // The bot does NOT touch the date or customer controls — it waits quietly
+      // so nothing interferes with you setting them.
       console.log(
-        `\n\n  ▶ The ${report.open} is open. In the browser, make sure:` +
-          `\n     1. Date range  =  ${report.datePreset}   (General tab)` +
-          `\n     2. Customers   =  Select All             (Customer tab)`
+        `\n\n  ▶ The ${report.open} is open. In the browser, set:` +
+          `\n     1. Customer tab  ->  Select All` +
+          `\n     2. General tab   ->  Date range = ${report.datePreset}`
       );
-      await ask("  Once those two are set, press Enter and I'll run + export it... ");
+      await ask("  Once BOTH are set, press Enter and I'll run + export it... ");
       const file = await runAndExport(page, report);
       console.log(`\n   ✓ Saved ${file}`);
       results.push({ report: report.save, file, ok: true });
