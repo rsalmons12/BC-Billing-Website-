@@ -110,32 +110,57 @@ function record(claim_id, status, detail = "") {
 // before this runs — the operator does that between facility groups. A claim
 // only appears in Claim search under the customer it belongs to.
 async function pushNote(page, claim_id, note) {
+  // Tiny step tracker so a failure tells us EXACTLY which action timed out,
+  // and we can screenshot the screen at that moment.
+  const step = (name) => { page.__step = name; process.stdout.write(`\n      · ${name}`); };
+
   // 1) Make sure we're on the Claim search screen. Its search box placeholder
   //    is distinctive: "Search by name, DOB, account#, member ID, claim ID...".
+  step("find claim search box");
   const searchBox = page.getByPlaceholder(/Search by name.*claim ID/i);
   if (!(await searchBox.isVisible().catch(() => false))) {
     // Not on the Claim screen — use the top-left "Find a Section" jump box.
+    step("open Claim screen via Find a Section");
     const finder = page.getByPlaceholder(/Find a Section/i);
     await finder.click({ timeout: T });
     await finder.fill("Claim");
     await page.getByText("Claim", { exact: true }).first().click({ timeout: T });
     await searchBox.waitFor({ timeout: T });
   }
+  step("type claim id");
   await searchBox.click({ timeout: T });
   await searchBox.fill(claim_id);
+  // Trigger the search: press Enter AND click the Search button if present.
   await searchBox.press("Enter");
-  await page.waitForTimeout(600); // let results come back
+  const searchBtn = page.getByRole("button", { name: /^Search$/i }).first();
+  if (await searchBtn.isVisible().catch(() => false)) {
+    await searchBtn.click({ timeout: T }).catch(() => {});
+  }
+  await page.waitForTimeout(1200); // let results come back
 
-  // 2) Open the matching claim row (the row that shows this claim id).
-  const row = page.getByRole("row", { name: new RegExp(claim_id) }).first();
-  const cell = (await row.isVisible().catch(() => false))
-    ? row
-    : page.getByText(claim_id, { exact: true }).first();
-  await cell.click({ timeout: T });
+  // 2) Open the matching claim. Results render as a table; the claim id shows
+  //    in its own cell. Try a few ways to land on that row.
+  step("open the claim row");
+  const byRow = page.getByRole("row", { name: new RegExp(claim_id) }).first();
+  const byCell = page.getByRole("cell", { name: claim_id, exact: true }).first();
+  const byText = page.getByText(claim_id, { exact: true }).first();
+  let opened = false;
+  for (const target of [byRow, byCell, byText]) {
+    if (await target.isVisible().catch(() => false)) {
+      await target.click({ timeout: T });
+      opened = true;
+      break;
+    }
+  }
+  if (!opened) {
+    // Last resort: double-click the text (some grids open on double-click).
+    await byText.dblclick({ timeout: T });
+  }
 
   // 3) Expand the Patient Notes panel (right side). It's a collapsible header;
   //    only click it if Add Note isn't already showing, so we don't collapse a
   //    panel that a previous claim left open.
+  step("open Patient Notes panel");
   const addNote = page.getByRole("button", { name: /Add Note/i });
   if (!(await addNote.isVisible().catch(() => false))) {
     await page.getByText("Patient Notes", { exact: false }).first().click({ timeout: T });
@@ -143,22 +168,26 @@ async function pushNote(page, claim_id, note) {
   }
 
   // 4) Add Note -> type message -> Done.
+  step("click Add Note");
   await addNote.click({ timeout: T });
+  step("type the note");
   const dialog = page.getByRole("dialog");
   const message = (await dialog.locator("textarea").first().isVisible().catch(() => false))
     ? dialog.locator("textarea").first()
     : page.locator("textarea").last();
   await message.click({ timeout: T });
   await message.fill(note);
+  step("click Done");
   await page.getByRole("button", { name: /^Done$/i }).click({ timeout: T });
 
   // 5) Save the claim.
   if (DRY_RUN) {
-    console.log(`   [DRY RUN] would Save note on claim ${claim_id}`);
+    console.log(`\n   [DRY RUN] would Save note on claim ${claim_id}`);
     // Leave the claim as-is; close it so the next claim starts clean.
     await page.getByRole("button", { name: /^Close$/i }).first().click({ timeout: T }).catch(() => {});
     return "dry-run";
   }
+  step("click Save");
   await page.getByRole("button", { name: /^Save$/i }).first().click({ timeout: T });
   await page.waitForTimeout(1200); // let the save settle
   // Return to the claim list so the next search is clean.
@@ -223,8 +252,14 @@ async function main() {
         ok++;
       } catch (err) {
         const msg = (err && err.message ? err.message : String(err)).split("\n")[0];
-        record(claim_id, "error", `${facility}: ${msg}`);
-        console.log(`✗ ${msg}`);
+        const at = page.__step ? ` [at step: ${page.__step}]` : "";
+        record(claim_id, "error", `${facility}: ${page.__step || "?"}: ${msg}`);
+        console.log(`\n   ✗ FAILED${at}: ${msg}`);
+        // Save a screenshot of the exact screen where it stopped, so we can
+        // see what CollaborateMD was showing and fix the step.
+        const shot = `error-${claim_id}.png`;
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        console.log(`   📸 Saved a screenshot to ${shot} — send me that image.`);
         fail++;
         // Try to get back to a clean state for the next claim.
         await page.keyboard.press("Escape").catch(() => {});
