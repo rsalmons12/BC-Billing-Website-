@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -123,6 +123,14 @@ export default function QueueClient({
 
   // Which claims to show: today's queue, or just what this collector worked today.
   const [view, setView] = useState<"queue" | "today" | "backlog">("queue");
+  // Which claims are expanded to show the flags / full notes detail row.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   // Email-a-facility-about-this-claim modal.
   const [emailClaim, setEmailClaim] = useState<ClaimRow | null>(null);
@@ -882,41 +890,29 @@ export default function QueueClient({
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">
             <tr>
+              <th className="th w-8"></th>
               <th className="th sticky left-0 bg-surface">Patient</th>
               <th className="th">Facility</th>
-              <th className="th">Member ID</th>
-              <th className="th">DOB</th>
               <th className="th">Age</th>
-              <th className="th">DOS</th>
               <th className="th text-right">Balance</th>
               <th className="th">Status</th>
-              <th className="th">Med Rec</th>
-              <th className="th">Auth</th>
-              <th className="th">Billing</th>
-              <th className="th">Cap Blue</th>
-              <th className="th">Highmark</th>
-              <th className="th">Rebill</th>
-              <th className="th">Mgmt</th>
-              <th className="th min-w-[16rem]">Notes</th>
               <th className="th min-w-[14rem]">
                 CMD Note <span className="text-risk">*</span>
               </th>
-              <th className="th">Init</th>
               <th className="th">Done</th>
-              <th className="th">Market/Exch</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={20} className="td py-10 text-center text-surface-muted">
+                <td colSpan={8} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={20} className="td py-10 text-center text-surface-muted">
+                <td colSpan={8} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
@@ -948,115 +944,67 @@ export default function QueueClient({
                 const done = (r.work?.date_worked || "") === today;
                 const locked = riskLock && !risk && !done;
                 const w = r.work ?? EMPTY_WORK(r.claim_id);
+                const isOpen = expanded.has(r.claim_id);
+                const hasNote = (w.notes ?? "").trim().length > 0;
+                const rowBg = i % 2 ? "bg-surface/40" : "bg-surface-card";
                 return (
-                  <tr
-                    key={r.claim_id}
-                    className={`${i % 2 ? "bg-surface/40" : "bg-surface-card"} ${
-                      risk ? "border-l-2 border-l-risk" : ""
-                    } ${done || locked ? "opacity-50" : ""} hover:bg-gold/5`}
-                  >
-                    <td className="td sticky left-0 bg-inherit font-medium">
-                      {r.patient_name || "—"}
-                    </td>
-                    <td className="td text-xs text-surface-muted">{facName(r.facility_id)}</td>
-                    <td className="td font-mono text-xs text-surface-muted">
-                      {r.member_id || "—"}
-                    </td>
-                    <td className="td text-xs text-surface-muted">{r.dob || "—"}</td>
-                    <td className="td">
-                      <AgeBadge age={r.age_days} />
-                    </td>
-                    <td className="td text-xs text-surface-muted">
-                      {r.dos_from || "—"}
-                      {r.dos_to ? `–${r.dos_to}` : ""}
-                    </td>
-                    <td className="td text-right font-mono font-semibold">{money(r.balance)}</td>
-                    <td className="td">
-                      <StatusCell
-                        value={r.claim_status ?? ""}
-                        onSave={(v) => {
-                          setRows((prev) =>
-                            prev.map((x) =>
-                              x.claim_id === r.claim_id ? { ...x, claim_status: v } : x
-                            )
-                          );
-                          supabase.from("claims").update({ claim_status: v }).eq("id", r.id);
-                        }}
-                      />
-                    </td>
-                    <FlagCell
-                      value={w.med_rec}
-                      onChange={(v) => patchRow(r.claim_id, { med_rec: v })}
-                    />
-                    <td className="td">
-                      <select
-                        value={w.auth_flag}
-                        onChange={(e) => onAuthFlagChange(r, e.target.value)}
-                        className={`cell-input w-14 ${
-                          w.auth_flag === "Y" ? "text-secured font-semibold" : ""
-                        }`}
+                  <Fragment key={r.claim_id}>
+                    {/* Compact row — click the patient to open the claim */}
+                    <tr
+                      className={`${rowBg} ${risk ? "border-l-2 border-l-risk" : ""} ${
+                        done || locked ? "opacity-50" : ""
+                      } hover:bg-gold/5`}
+                    >
+                      <td className="td text-center">
+                        <button
+                          onClick={() => toggleExpand(r.claim_id)}
+                          className="text-surface-muted hover:text-surface-ink"
+                          title={isOpen ? "Collapse" : "Open claim"}
+                        >
+                          {isOpen ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td
+                        className="td sticky left-0 cursor-pointer bg-inherit font-medium"
+                        onClick={() => toggleExpand(r.claim_id)}
+                        title="Open claim"
                       >
-                        {AUTH_FLAG_OPTIONS.map((o) => (
-                          <option key={o} value={o}>
-                            {o || "—"}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <FlagCell
-                      value={w.billing}
-                      onChange={(v) => patchRow(r.claim_id, { billing: v })}
-                    />
-                    <FlagCell
-                      value={w.cap_blue}
-                      onChange={(v) => patchRow(r.claim_id, { cap_blue: v })}
-                    />
-                    <FlagCell
-                      value={w.highmark}
-                      onChange={(v) => patchRow(r.claim_id, { highmark: v })}
-                    />
-                    <FlagCell
-                      value={w.rebill}
-                      onChange={(v) => patchRow(r.claim_id, { rebill: v })}
-                    />
-                    <td className="td text-center">
-                      <input
-                        type="checkbox"
-                        checked={w.mgmt_needed}
-                        onChange={(e) =>
-                          patchRow(r.claim_id, { mgmt_needed: e.target.checked })
-                        }
-                        className="h-4 w-4 accent-gold"
-                        title="Flag for management"
-                      />
-                    </td>
-                    <td className="td">
-                      <NotesCell
-                        value={w.notes}
-                        onSave={(v) => patchRow(r.claim_id, { notes: v })}
-                      />
-                    </td>
-                    <td className="td">
-                      <NotesCell
-                        value={w.collab_note}
-                        placeholder={done ? "" : "Required — pushed to CollaborateMD"}
-                        className={
-                          !done && !(w.collab_note ?? "").trim()
-                            ? "ring-1 ring-risk/40"
-                            : ""
-                        }
-                        onSave={(v) => patchRow(r.claim_id, { collab_note: v })}
-                      />
-                    </td>
-                    <td className="td">
-                      <TextCell
-                        value={w.initials}
-                        className="w-12 uppercase"
-                        onSave={(v) => patchRow(r.claim_id, { initials: v })}
-                      />
-                    </td>
-                    <td className="td">
-                      <div className="flex items-center gap-1.5">
+                        {r.patient_name || "—"}
+                        {hasNote && (
+                          <span className="ml-1 text-[11px]" title="Has notes">
+                            📝
+                          </span>
+                        )}
+                      </td>
+                      <td className="td text-xs text-surface-muted">{facName(r.facility_id)}</td>
+                      <td className="td">
+                        <AgeBadge age={r.age_days} />
+                      </td>
+                      <td className="td text-right font-mono font-semibold">{money(r.balance)}</td>
+                      <td className="td">
+                        <StatusCell
+                          value={r.claim_status ?? ""}
+                          onSave={(v) => {
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.claim_id === r.claim_id ? { ...x, claim_status: v } : x
+                              )
+                            );
+                            supabase.from("claims").update({ claim_status: v }).eq("id", r.id);
+                          }}
+                        />
+                      </td>
+                      <td className="td">
+                        <NotesCell
+                          value={w.collab_note}
+                          placeholder={done ? "" : "Required — pushed to CollaborateMD"}
+                          className={
+                            !done && !(w.collab_note ?? "").trim() ? "ring-1 ring-risk/40" : ""
+                          }
+                          onSave={(v) => patchRow(r.claim_id, { collab_note: v })}
+                        />
+                      </td>
+                      <td className="td">
                         {done ? (
                           <button
                             onClick={() => undoWorked(r)}
@@ -1080,41 +1028,88 @@ export default function QueueClient({
                             ✓ Worked
                           </button>
                         )}
-                        <button
-                          onClick={() => {
-                            setEmailClaim(r);
-                            setEmailSubject(`Patient: ${r.patient_name ?? ""}`);
-                            setEmailReason("");
-                            setEmailMsg("");
-                          }}
-                          className="badge bg-brand-blue/15 px-2 py-1 text-[11px] font-semibold text-brand-blue hover:bg-brand-blue/25"
-                          title="Email the facility about this claim"
-                        >
-                          ✉
-                        </button>
-                        <button
-                          onClick={() => {
-                            setAdjustClaim(r);
-                            setAdjustReason("");
-                            setAdjustMsg("");
-                          }}
-                          className="badge bg-gold/15 px-2 py-1 text-[11px] font-semibold text-gold hover:bg-gold/25"
-                          title="Flag this claim for adjustment"
-                        >
-                          ✎ Adjust
-                        </button>
-                      </div>
-                    </td>
-                    <td className="td text-center">
-                      <button
-                        onClick={() => moveToMarketplace(r)}
-                        className="badge bg-risk/12 px-2 py-1 text-[11px] font-semibold text-risk hover:bg-risk/25"
-                        title="Marketplace / Exchange plan — shift this claim to that tab"
-                      >
-                        ⇄ Shift
-                      </button>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+
+                    {/* Detail row — everything else, revealed on click */}
+                    {isOpen && (
+                      <tr className={rowBg}>
+                        <td></td>
+                        <td colSpan={7} className="td pb-4">
+                          <div className="space-y-3 rounded-lg border border-surface-border bg-surface/40 p-3">
+                            {/* Claim facts */}
+                            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-surface-muted">
+                              <span>Claim ID: <b className="font-mono text-surface-ink">{r.claim_id}</b></span>
+                              <span>Member: <b className="font-mono text-surface-ink">{r.member_id || "—"}</b></span>
+                              <span>DOB: <b className="text-surface-ink">{r.dob || "—"}</b></span>
+                              <span>DOS: <b className="text-surface-ink">{r.dos_from || "—"}{r.dos_to ? `–${r.dos_to}` : ""}</b></span>
+                            </div>
+
+                            {/* Flags */}
+                            <div className="flex flex-wrap items-end gap-3">
+                              <FlagField label="Med Rec" value={w.med_rec} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { med_rec: v })} />
+                              <FlagField label="Auth" value={w.auth_flag} options={AUTH_FLAG_OPTIONS} highlight={w.auth_flag === "Y"} onChange={(v) => onAuthFlagChange(r, v)} />
+                              <FlagField label="Billing" value={w.billing} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { billing: v })} />
+                              <FlagField label="Cap Blue" value={w.cap_blue} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { cap_blue: v })} />
+                              <FlagField label="Highmark" value={w.highmark} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { highmark: v })} />
+                              <FlagField label="Rebill" value={w.rebill} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { rebill: v })} />
+                              <label className="flex flex-col gap-0.5">
+                                <span className="label">Mgmt</span>
+                                <input
+                                  type="checkbox"
+                                  checked={w.mgmt_needed}
+                                  onChange={(e) => patchRow(r.claim_id, { mgmt_needed: e.target.checked })}
+                                  className="h-4 w-4 accent-gold"
+                                  title="Flag for management"
+                                />
+                              </label>
+                              <label className="flex flex-col gap-0.5">
+                                <span className="label">Initials</span>
+                                <TextCell value={w.initials} className="w-16 uppercase" onSave={(v) => patchRow(r.claim_id, { initials: v })} />
+                              </label>
+                            </div>
+
+                            {/* Working notes */}
+                            <div>
+                              <div className="label mb-1">Working notes</div>
+                              <NotesCell value={w.notes} onSave={(v) => patchRow(r.claim_id, { notes: v })} />
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setEmailClaim(r);
+                                  setEmailSubject(`Patient: ${r.patient_name ?? ""}`);
+                                  setEmailReason("");
+                                  setEmailMsg("");
+                                }}
+                                className="badge bg-brand-blue/15 px-2.5 py-1 text-[11px] font-semibold text-brand-blue hover:bg-brand-blue/25"
+                              >
+                                ✉ Email facility
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAdjustClaim(r);
+                                  setAdjustReason("");
+                                  setAdjustMsg("");
+                                }}
+                                className="badge bg-gold/15 px-2.5 py-1 text-[11px] font-semibold text-gold hover:bg-gold/25"
+                              >
+                                ✎ Flag for adjustment
+                              </button>
+                              <button
+                                onClick={() => moveToMarketplace(r)}
+                                className="badge bg-risk/12 px-2.5 py-1 text-[11px] font-semibold text-risk hover:bg-risk/25"
+                              >
+                                ⇄ Shift to Marketplace / Exchange
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
           </tbody>
@@ -1292,29 +1287,41 @@ function Card({
   );
 }
 
-function FlagCell({
+// A labeled flag dropdown for the expanded claim-detail panel.
+function FlagField({
+  label,
   value,
+  options,
   onChange,
+  highlight,
 }: {
+  label: string;
   value: string;
+  options: readonly string[];
   onChange: (v: string) => void;
+  highlight?: boolean;
 }) {
   return (
-    <td className="td">
+    <label className="flex flex-col gap-0.5">
+      <span className="label">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`cell-input w-14 ${
-          value === "Y" ? "font-semibold text-recovered" : value === "N" ? "text-risk" : ""
+        className={`cell-input w-16 ${
+          highlight || value === "Y"
+            ? "font-semibold text-recovered"
+            : value === "N"
+              ? "text-risk"
+              : ""
         }`}
       >
-        {FLAG_OPTIONS.map((o) => (
+        {options.map((o) => (
           <option key={o} value={o}>
             {o || "—"}
           </option>
         ))}
       </select>
-    </td>
+    </label>
   );
 }
 
