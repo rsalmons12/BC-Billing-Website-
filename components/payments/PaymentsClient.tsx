@@ -99,9 +99,10 @@ const config: TrackerConfig = {
   table: "payments",
   searchKeys: ["patient_name", "member_id", "payment_source", "check_number", "cpt_description"],
   parse: (buf) => parsePayments(buf),
-  // Re-importing a facility's payment file refreshes that facility's rows
-  // (replace), so re-uploading never double-counts. Other facilities are
-  // untouched.
+  // Payments accumulate month over month: importing a month adds it and only
+  // refreshes that month's rows. Uploading June then July keeps both; other
+  // months are never wiped. Re-importing a month refreshes just that month.
+  importMode: "replace_period",
   renderSummary,
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", min: "min-w-[11rem]" },

@@ -43,9 +43,12 @@ export interface TrackerConfig {
   // Import behaviour:
   //  - default: replace all rows for the mapped facilities.
   //  - importMode "append": only insert (never delete) — for historical logs.
+  //  - importMode "replace_period": replace only the month(s) in the file for
+  //    the mapped facilities (payments accumulate month over month). Uses
+  //    the `period` column (YYYY-MM).
   //  - importKey: upsert by this column; existing rows keep their non-fact
   //    columns (notes etc.), only importFactKeys are refreshed.
-  importMode?: "replace" | "append";
+  importMode?: "replace" | "append" | "replace_period";
   importKey?: string;
   importFactKeys?: string[];
   // Optional summary/analytics block rendered above the table (uses the
@@ -857,6 +860,68 @@ export function ImportPanel({
         if (upd % 100 === 0) add(`Updated ${upd}/${known.length} (notes kept)…`);
       }
       add(`✓ Import complete — ${known.length} updated with notes preserved.`);
+      setBusy(false);
+      setTimeout(onDone, 800);
+      return;
+    }
+
+    // ----- Mode 1b: replace only the month(s) in the file (accumulate) -----
+    // For payments: importing June replaces June's rows for the touched
+    // facilities and leaves every other month intact; re-importing a month
+    // refreshes just that month. Never touches other months.
+    if (config.importMode === "replace_period") {
+      const periods = Array.from(
+        new Set(prepared.map((r) => String(r.period || "")).filter(Boolean))
+      );
+      if (periods.length === 0) {
+        add("Couldn't read a month (deposit date) from this file — nothing imported.");
+        setBusy(false);
+        return;
+      }
+      const facLabels = touched
+        .map((id) => {
+          const f = facilities.find((x) => x.id === id);
+          return f?.short_name || f?.name || id;
+        })
+        .join(", ");
+      if (
+        !confirm(
+          `Add / refresh month(s): ${periods.join(", ")}\n` +
+            `for: ${facLabels}\n\n` +
+            `Other months stay exactly as they are. Continue?`
+        )
+      ) {
+        add("Import cancelled — nothing was changed.");
+        setBusy(false);
+        return;
+      }
+      // Delete just the touched facilities' rows for these month(s), then insert.
+      // Also sweep any pre-tagged rows (period is null) left from before months
+      // were tracked, so old data doesn't linger as duplicates.
+      for (const fids of chunk(touched, 50)) {
+        const { error } = await supabase
+          .from(config.table)
+          .delete()
+          .in("facility_id", fids)
+          .or(`period.in.(${periods.join(",")}),period.is.null`);
+        if (error) {
+          add(`Error clearing month(s): ${error.message}`);
+          setBusy(false);
+          return;
+        }
+      }
+      let inserted = 0;
+      for (const batch of chunk(prepared, 400)) {
+        const { error } = await supabase.from(config.table).insert(batch);
+        if (error) {
+          add(`Error inserting: ${error.message}`);
+          setBusy(false);
+          return;
+        }
+        inserted += batch.length;
+        add(`Added ${inserted}/${prepared.length}…`);
+      }
+      add(`✓ Import complete — month(s) ${periods.join(", ")} added; other months untouched.`);
       setBusy(false);
       setTimeout(onDone, 800);
       return;

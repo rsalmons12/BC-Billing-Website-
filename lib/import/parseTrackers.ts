@@ -493,6 +493,25 @@ export interface PaymentRow {
   paid_amount: number | null;
   payment_type: string;
   check_number: string;
+  period: string; // YYYY-MM the payment belongs to (from deposit/entered date)
+}
+
+// The month (YYYY-MM) a date string belongs to, so payments accumulate by
+// month: importing a new month adds to the running total; re-importing a month
+// refreshes just that month. Handles MM/DD/YYYY, YYYY-MM-DD, and Date objects.
+export function periodOf(...candidates: string[]): string {
+  for (const raw of candidates) {
+    const s = (raw || "").trim();
+    if (!s) continue;
+    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/]\d{1,2}/); // YYYY-MM-DD
+    if (m) return `${m[1]}-${m[2].padStart(2, "0")}`;
+    m = s.match(/^(\d{1,2})[-/]\d{1,2}[-/](\d{2,4})/); // MM/DD/YYYY
+    if (m) {
+      const yr = m[2].length === 2 ? `20${m[2]}` : m[2];
+      return `${yr}-${m[1].padStart(2, "0")}`;
+    }
+  }
+  return "";
 }
 
 export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow> {
@@ -538,10 +557,12 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
       const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
       if (!patient) continue;
       const office = col.office >= 0 ? toStr(r[col.office]) : "";
+      const deposit = col.deposit >= 0 ? toStr(r[col.deposit]) : "";
+      const entered = col.entered >= 0 ? toStr(r[col.entered]) : "";
       out.push({
         facility_name: office || bannerFacility,
-        payment_entered: col.entered >= 0 ? toStr(r[col.entered]) : "",
-        deposit_date: col.deposit >= 0 ? toStr(r[col.deposit]) : "",
+        payment_entered: entered,
+        deposit_date: deposit,
         patient_name: patient,
         member_id: col.member >= 0 ? toStr(r[col.member]) : "",
         cpt_description: col.cpt >= 0 ? toStr(r[col.cpt]) : "",
@@ -552,6 +573,8 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
         paid_amount: col.paid >= 0 ? toNum(r[col.paid]) : null,
         payment_type: col.type >= 0 ? toStr(r[col.type]) : "",
         check_number: col.check >= 0 ? toStr(r[col.check]) : "",
+        // Which month this payment counts toward (deposit date first).
+        period: periodOf(deposit, entered),
       });
       added++;
     }

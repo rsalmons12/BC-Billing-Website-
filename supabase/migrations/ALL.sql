@@ -343,6 +343,10 @@ create policy attachments_obj_delete on storage.objects for delete to authentica
 -- ---- collab_note: the single note pushed into CollaborateMD (0023) ----
 alter table claim_work add column if not exists collab_note text default '';
 
+-- ---- payments accumulate by month (0024) ----
+alter table payments add column if not exists period text;
+create index if not exists payments_period_idx on payments(facility_id, period);
+
 -- ---- Grants (RLS still governs rows) ----
 grant select, insert, update, delete on
   authorizations, negotiations, medical_records, payments, repricing,
