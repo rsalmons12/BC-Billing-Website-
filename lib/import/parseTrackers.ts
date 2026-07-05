@@ -427,6 +427,7 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
     if (hr < 0) continue;
     const h = rows[hr].map(norm);
     const col = {
+      office: findCol(h, [/office name/, /^office$/, /facility/]),
       claim: findCol(h, [/^claim id$|claim id/]),
       times: findCol(h, [/times billed|cntall/]),
       from: findCol(h, [/from date/]),
@@ -448,8 +449,11 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
       // totals row (which has an aggregate count in the claim column and no
       // patient/payer).
       if (!claim || !patient) continue;
+      // Combined reports carry the facility per row in "Office Name"; single
+      // reports fall back to the "Customer is X" banner.
+      const office = col.office >= 0 ? toStr(r[col.office]) : "";
       out.push({
-        facility_name: bannerFacility,
+        facility_name: office || bannerFacility,
         claim_id: claim,
         times_billed: col.times >= 0 ? toNum(r[col.times]) : null,
         from_date: col.from >= 0 ? toDateStr(r[col.from]) : "",
