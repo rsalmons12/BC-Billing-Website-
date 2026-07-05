@@ -277,6 +277,7 @@ export interface MedicalRecord {
   updated_at: string;
 }
 
+export const WATCH_AGE_THRESHOLD = 45;
 export const RISK_AGE_THRESHOLD = 65;
 // Claims at or past this age are the top priority tier ("100+"), worked ahead
 // of the 65–99 risk band.
