@@ -63,6 +63,7 @@ export default async function FacilityDashboard({
     ? new Date(Number(monthParam.slice(0, 4)), Number(monthParam.slice(5, 7)) - 1, 1)
     : now;
   const monthLabel = viewMonth.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const viewMonthKey = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, "0")}`;
 
   // The exact set of facilities THIS login may see: its primary facility plus
   // any explicitly granted via assignments. Computed in-app so the dashboard
@@ -171,8 +172,11 @@ export default async function FacilityDashboard({
     .sort((a, b) => b[1] - a[1]);
 
   // ---- Billed in the viewed month (from the CollaborateMD billed report) ---
+  // Prefer the report's month tag; fall back to the entered date for old rows.
   const billedThisMonth = billed
-    .filter((b) => isThisMonth(b.entered_date, viewMonth))
+    .filter((b) =>
+      b.period ? b.period === viewMonthKey : isThisMonth(b.entered_date, viewMonth)
+    )
     .reduce((s, b) => s + (b.total_amount ?? 0), 0);
 
   // Months available to look back at (from payment + billed dates), newest
@@ -186,7 +190,10 @@ export default async function FacilityDashboard({
     addMonth(p.deposit_date);
     addMonth(p.payment_entered);
   }
-  for (const b of allBilled) addMonth(b.entered_date);
+  for (const b of allBilled) {
+    if (b.period) monthSet.add(b.period);
+    else addMonth(b.entered_date);
+  }
   monthSet.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const availableMonths = Array.from(monthSet).sort().reverse().slice(0, 12);
   const curMonthKey = monthParam || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;

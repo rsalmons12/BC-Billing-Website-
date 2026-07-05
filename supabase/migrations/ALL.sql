@@ -349,6 +349,10 @@ alter table claim_work add column if not exists collab_note text default '';
 alter table payments add column if not exists period text;
 create index if not exists payments_period_idx on payments(facility_id, period);
 
+-- ---- billed accumulates by month (0026) ----
+alter table billed_claims add column if not exists period text;
+create index if not exists billed_claims_period_idx on billed_claims(facility_id, period);
+
 -- ---- Grants (RLS still governs rows) ----
 grant select, insert, update, delete on
   authorizations, negotiations, medical_records, payments, repricing,

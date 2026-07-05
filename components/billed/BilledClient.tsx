@@ -12,8 +12,11 @@ const config: TrackerConfig = {
   table: "billed_claims",
   searchKeys: ["patient_name", "claim_id", "payer_name"],
   parse: (buf) => parseBilled(buf),
-  // Just a visual report — no claim-id matching, no notes. Each import simply
-  // replaces the billed rows for the facilities in the file (fast bulk load).
+  // Just a visual report — no claim-id matching, no notes. Accumulates by month
+  // like payments: importing a month replaces only that month for the file's
+  // facilities. The Month dropdown lets facilities view any month.
+  importMode: "replace_period",
+  monthFrom: "period",
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", editable: false, min: "min-w-[12rem]" },
     { key: "claim_id", label: "Claim ID", kind: "text", editable: false, min: "min-w-[9rem]" },
