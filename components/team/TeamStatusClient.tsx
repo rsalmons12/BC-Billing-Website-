@@ -88,14 +88,14 @@ export default function TeamStatusClient({ collectors }: { collectors: Profile[]
     setExporting(true);
     setExportMsg("Gathering notes…");
     try {
-      const work = await selectAll<{ claim_id: string; notes: string }>((f, t) =>
+      const work = await selectAll<{ claim_id: string; collab_note: string }>((f, t) =>
         supabase
           .from("claim_work")
-          .select("claim_id, notes")
+          .select("claim_id, collab_note")
           .eq("date_worked", exportDate)
           .range(f, t)
       );
-      const withNotes = work.filter((w) => (w.notes ?? "").trim() && w.claim_id);
+      const withNotes = work.filter((w) => (w.collab_note ?? "").trim() && w.claim_id);
       if (withNotes.length === 0) {
         setExportMsg("No worked-claim notes on that date.");
         setExporting(false);
@@ -126,7 +126,7 @@ export default function TeamStatusClient({ collectors }: { collectors: Profile[]
         sorted
           .map(
             (w) =>
-              `${esc(w.claim_id)},${esc(facOfClaim.get(w.claim_id) ?? "")},${esc(w.notes)}`
+              `${esc(w.claim_id)},${esc(facOfClaim.get(w.claim_id) ?? "")},${esc(w.collab_note)}`
           )
           .join("\n");
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

@@ -340,6 +340,9 @@ drop policy if exists attachments_obj_delete on storage.objects;
 create policy attachments_obj_delete on storage.objects for delete to authenticated
   using (bucket_id = 'attachments' and public.is_management());
 
+-- ---- collab_note: the single note pushed into CollaborateMD (0023) ----
+alter table claim_work add column if not exists collab_note text default '';
+
 -- ---- Grants (RLS still governs rows) ----
 grant select, insert, update, delete on
   authorizations, negotiations, medical_records, payments, repricing,
