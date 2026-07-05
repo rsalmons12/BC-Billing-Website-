@@ -70,19 +70,25 @@ async function openReport(page, name) {
   if (await runTab.isVisible().catch(() => false)) await runTab.click({ timeout: T }).catch(() => {});
 
   step(page, `search for "${name}"`);
-  // Type a distinctive chunk of the name into the report search box so it
-  // surfaces in the tree, then click it. More reliable than scanning the list.
+  // Type the FULL name into the report search box so the whole name matches as
+  // one piece (a partial search leaves the name split across bold/normal spans,
+  // which the click can't land on cleanly).
   const searchBox = page.getByPlaceholder(/Search for reports/i).first();
   if (await searchBox.isVisible().catch(() => false)) {
     await searchBox.click({ timeout: T });
-    await searchBox.fill(name.slice(0, 22));
-    await page.waitForTimeout(800);
+    await searchBox.fill(name);
+    await page.waitForTimeout(900);
   }
 
   step(page, `open report "${name}"`);
-  const link = page.getByText(name, { exact: false }).first();
-  await link.waitFor({ timeout: T });
-  await link.click({ timeout: T });
+  const rx = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  // Prefer the exact tree node; fall back to the "Recently Ran" row.
+  const treeNode = page.getByText(name, { exact: true }).first();
+  if (await treeNode.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await treeNode.click({ timeout: T });
+  } else {
+    await page.getByRole("row", { name: rx }).first().click({ timeout: T });
+  }
   await page.getByRole("button", { name: /Run Report/i }).first().waitFor({ timeout: T });
 }
 
