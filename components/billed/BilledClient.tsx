@@ -13,8 +13,10 @@ const config: TrackerConfig = {
   searchKeys: ["patient_name", "claim_id", "payer_name"],
   parse: (buf) => parseBilled(buf),
   // Upsert by claim id so re-importing refreshes amounts/balance without
-  // creating duplicates.
+  // creating duplicates. Read-only visual report (no notes), so the import log
+  // won't mention notes.
   importKey: "claim_id",
+  preservesNotes: false,
   importFactKeys: [
     "times_billed",
     "from_date",

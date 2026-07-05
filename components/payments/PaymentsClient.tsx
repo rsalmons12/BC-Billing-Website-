@@ -103,6 +103,8 @@ const config: TrackerConfig = {
   // refreshes that month's rows. Uploading June then July keeps both; other
   // months are never wiped. Re-importing a month refreshes just that month.
   importMode: "replace_period",
+  // Month dropdown so prior months (e.g. June) stay viewable, not just current.
+  monthFrom: "deposit_date",
   renderSummary,
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", min: "min-w-[11rem]" },
