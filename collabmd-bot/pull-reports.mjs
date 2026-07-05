@@ -31,15 +31,17 @@ const START_URL = process.env.CMD_URL || "https://app.collaboratemd.com/";
 const OUT_DIR = process.env.REPORTS_DIR || "reports";
 const T = Number(process.env.STEP_TIMEOUT || 30000);
 
-// The reports to pull, in order. `open` is the exact report name as it appears
-// in CollaborateMD's report list / "Recently Ran". `save` is the filename stem
-// used for the downloaded Excel (today's date is appended).
+// The reports to pull, in order.
+//   open      = the report name as it appears in CollaborateMD's report list
+//   save      = filename stem for the downloaded Excel (today's date appended)
+//   datePreset= which entry to pick in the date-range dropdown (General tab)
+//   combine   = answer "No, Combine" (true) to the separate-per-customer prompt
 const REPORTS = [
-  { open: "Claims Billed Report", save: "Billed", combine: true },
-  { open: "FACILITY PAID PER CPT LEVEL OF CARE 1", save: "Payment", combine: true },
+  { open: "Claims Billed Report", save: "Billed", datePreset: "This Week", combine: true },
+  { open: "FACILITY PAID PER CPT LEVEL OF CARE 1", save: "Payment", datePreset: "This Month", combine: true },
   // Add later, once we film them:
-  // { open: "Prefix Data",  save: "DataPrefix", combine: true },
-  // { open: "<AR report name>", save: "AR", combine: true },
+  // { open: "Prefix Data",  save: "DataPrefix", datePreset: "This Week", combine: true },
+  // { open: "<AR report name>", save: "AR", datePreset: "This Week", combine: true },
 ];
 
 function ask(question) {
@@ -54,39 +56,77 @@ function todayStamp() {
   ).padStart(2, "0")}`;
 }
 
+const step = (page, s) => { page.__step = s; process.stdout.write(`\n      · ${s}`); };
+
 async function openReport(page, name) {
-  // Go to Reports -> Viewer.
-  const step = (s) => { page.__step = s; process.stdout.write(`\n      · ${s}`); };
-
-  step("open Reports menu");
-  // The left-nav "Reports" item; then its "Viewer" child.
+  // Get back to the report picker. Reports -> Viewer, then the "Run Report" tab
+  // (a report opens as its own tab, so we must return to the picker each time).
+  step(page, "open Reports -> Viewer");
   const reports = page.getByText("Reports", { exact: true }).first();
-  if (await reports.isVisible().catch(() => false)) {
-    await reports.click({ timeout: T }).catch(() => {});
-  }
+  if (await reports.isVisible().catch(() => false)) await reports.click({ timeout: T }).catch(() => {});
   const viewer = page.getByText("Viewer", { exact: true }).first();
-  if (await viewer.isVisible().catch(() => false)) {
-    await viewer.click({ timeout: T }).catch(() => {});
+  if (await viewer.isVisible().catch(() => false)) await viewer.click({ timeout: T }).catch(() => {});
+  const runTab = page.getByText("Run Report", { exact: true }).first();
+  if (await runTab.isVisible().catch(() => false)) await runTab.click({ timeout: T }).catch(() => {});
+
+  step(page, `search for "${name}"`);
+  // Type a distinctive chunk of the name into the report search box so it
+  // surfaces in the tree, then click it. More reliable than scanning the list.
+  const searchBox = page.getByPlaceholder(/Search for reports/i).first();
+  if (await searchBox.isVisible().catch(() => false)) {
+    await searchBox.click({ timeout: T });
+    await searchBox.fill(name.slice(0, 22));
+    await page.waitForTimeout(800);
   }
 
-  step(`find report "${name}"`);
-  // The report can be opened from the search box or the Recently Ran list.
-  // Clicking its name anywhere in the report list opens its filter tab.
-  const link = page.getByText(name, { exact: true }).first();
+  step(page, `open report "${name}"`);
+  const link = page.getByText(name, { exact: false }).first();
   await link.waitFor({ timeout: T });
   await link.click({ timeout: T });
-  // The report's filter tab opens with a Run Report button.
   await page.getByRole("button", { name: /Run Report/i }).first().waitFor({ timeout: T });
 }
 
-async function runAndExport(page, report) {
-  const step = (s) => { page.__step = s; process.stdout.write(`\n      · ${s}`); };
+// Set the date-range dropdown (General tab) to a preset like "This Week".
+async function setDatePreset(page, preset) {
+  step(page, `set date range = ${preset}`);
+  const general = page.getByText("General", { exact: true }).first();
+  if (await general.isVisible().catch(() => false)) await general.click({ timeout: T }).catch(() => {});
+  await page.waitForTimeout(400);
+  // The date range is a native <select>; find the one that offers this preset.
+  const selects = page.locator("select");
+  const n = await selects.count();
+  for (let i = 0; i < n; i++) {
+    const opts = await selects.nth(i).locator("option").allTextContents().catch(() => []);
+    if (opts.some((o) => o.trim().toLowerCase() === preset.toLowerCase())) {
+      await selects.nth(i).selectOption({ label: preset }).catch(async () => {
+        // Fallback: a custom dropdown — click it open, then click the option.
+        await selects.nth(i).click({ timeout: T }).catch(() => {});
+        await page.getByText(preset, { exact: true }).first().click({ timeout: T }).catch(() => {});
+      });
+      return true;
+    }
+  }
+  console.log(`\n   ⚠ couldn't find a "${preset}" date option — leaving the default. Fix it in the browser if needed.`);
+  return false;
+}
 
-  step("click Run Report");
+// Select every customer (Customer tab -> "Select All").
+async function selectAllCustomers(page) {
+  step(page, "select all customers");
+  const cust = page.getByText("Customer", { exact: true }).first();
+  if (await cust.isVisible().catch(() => false)) await cust.click({ timeout: T }).catch(() => {});
+  await page.waitForTimeout(400);
+  const selectAll = page.getByText("Select All", { exact: true }).first();
+  await selectAll.waitFor({ timeout: T });
+  await selectAll.click({ timeout: T });
+}
+
+async function runAndExport(page, report) {
+  step(page, "click Run Report");
   await page.getByRole("button", { name: /Run Report/i }).first().click({ timeout: T });
 
   // "Would you like to separate this report per customer?" -> No, Combine.
-  step("answer separate/combine");
+  step(page, "answer separate/combine");
   const combineBtn = page.getByRole("button", { name: /No,\s*Combine/i }).first();
   const separateBtn = page.getByRole("button", { name: /Yes,\s*Separate/i }).first();
   if (await combineBtn.isVisible({ timeout: 6000 }).catch(() => false)) {
@@ -94,11 +134,11 @@ async function runAndExport(page, report) {
   }
 
   // Wait for the report to finish rendering (the Print/Export button appears).
-  step("wait for report to render");
+  step(page, "wait for report to render");
   const exportMenu = page.getByRole("button", { name: /Print.*Export/i }).first();
   await exportMenu.waitFor({ timeout: T });
 
-  step("Print/Export -> Export as Excel");
+  step(page, "Print/Export -> Export as Excel");
   await exportMenu.click({ timeout: T });
   const excel = page.getByText(/Export as Excel/i).first();
   await excel.waitFor({ timeout: T });
@@ -134,12 +174,13 @@ async function main() {
     console.log(`  ────────────────────────────────────────────────────────`);
     try {
       await openReport(page, report.open);
+      await setDatePreset(page, report.datePreset);
+      await selectAllCustomers(page);
       console.log(
-        `\n\n  ▶ The report is open. Now, in the browser:` +
-          `\n     1. Set the DATE RANGE (General tab).` +
-          `\n     2. Select the CUSTOMERS you want (Customer tab).`
+        `\n\n  ▶ I set the date to "${report.datePreset}" and selected all customers.` +
+          `\n     Glance at the browser — adjust anything if you need to.`
       );
-      await ask("  Then press Enter here and I'll run + export it... ");
+      await ask("  Then press Enter and I'll run + export it... ");
       const file = await runAndExport(page, report);
       console.log(`\n   ✓ Saved ${file}`);
       results.push({ report: report.save, file, ok: true });
