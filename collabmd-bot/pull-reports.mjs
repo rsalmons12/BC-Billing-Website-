@@ -180,13 +180,16 @@ async function main() {
     console.log(`  ────────────────────────────────────────────────────────`);
     try {
       await openReport(page, report.open);
-      await setDatePreset(page, report.datePreset);
-      await selectAllCustomers(page);
+      // Best-effort auto-fill; if a control isn't standard it just leaves it
+      // for you to set during the pause below (never blocks the run).
+      await setDatePreset(page, report.datePreset).catch(() => {});
+      await selectAllCustomers(page).catch(() => {});
       console.log(
-        `\n\n  ▶ I set the date to "${report.datePreset}" and selected all customers.` +
-          `\n     Glance at the browser — adjust anything if you need to.`
+        `\n\n  ▶ The ${report.open} is open. In the browser, make sure:` +
+          `\n     1. Date range  =  ${report.datePreset}   (General tab)` +
+          `\n     2. Customers   =  Select All             (Customer tab)`
       );
-      await ask("  Then press Enter and I'll run + export it... ");
+      await ask("  Once those two are set, press Enter and I'll run + export it... ");
       const file = await runAndExport(page, report);
       console.log(`\n   ✓ Saved ${file}`);
       results.push({ report: report.save, file, ok: true });
