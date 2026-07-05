@@ -138,23 +138,25 @@ async function pushNote(page, claim_id, note) {
   }
   await page.waitForTimeout(1200); // let results come back
 
-  // 2) Open the matching claim. Results render as a table; the claim id shows
-  //    in its own cell. Try a few ways to land on that row.
-  step("open the claim row");
-  const byRow = page.getByRole("row", { name: new RegExp(claim_id) }).first();
-  const byCell = page.getByRole("cell", { name: claim_id, exact: true }).first();
-  const byText = page.getByText(claim_id, { exact: true }).first();
-  let opened = false;
-  for (const target of [byRow, byCell, byText]) {
-    if (await target.isVisible().catch(() => false)) {
-      await target.click({ timeout: T });
-      opened = true;
-      break;
+  // 2) Land on the open claim. Searching an exact claim ID in CollaborateMD
+  //    usually JUMPS STRAIGHT INTO the claim (no results list). If instead a
+  //    results list shows, click the matching row. We detect "claim is open"
+  //    by the Patient Notes panel, which only exists on an open claim.
+  step("open the claim");
+  const claimOpen = page.getByText("Patient Notes", { exact: false }).first();
+  if (!(await claimOpen.isVisible({ timeout: 4000 }).catch(() => false))) {
+    // A results list is showing — click the row/cell that has this claim id.
+    const byRow = page.getByRole("row", { name: new RegExp(claim_id) }).first();
+    const byCell = page.getByRole("cell", { name: claim_id, exact: true }).first();
+    const byText = page.getByText(claim_id, { exact: true }).first();
+    for (const target of [byRow, byCell, byText]) {
+      if (await target.isVisible().catch(() => false)) {
+        await target.click({ timeout: T }).catch(() => {});
+        break;
+      }
     }
-  }
-  if (!opened) {
-    // Last resort: double-click the text (some grids open on double-click).
-    await byText.dblclick({ timeout: T });
+    // Now wait for the claim to actually open.
+    await claimOpen.waitFor({ timeout: T });
   }
 
   // 3) Expand the Patient Notes panel (right side). It's a collapsible header;
@@ -163,7 +165,7 @@ async function pushNote(page, claim_id, note) {
   step("open Patient Notes panel");
   const addNote = page.getByRole("button", { name: /Add Note/i });
   if (!(await addNote.isVisible().catch(() => false))) {
-    await page.getByText("Patient Notes", { exact: false }).first().click({ timeout: T });
+    await claimOpen.click({ timeout: T });
     await addNote.waitFor({ timeout: T });
   }
 
