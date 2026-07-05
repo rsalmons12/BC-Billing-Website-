@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Pushes BC Billing notes into CollaborateMD, keyed by claim ID.",
+  "description": "Two-way CollaborateMD bot: pushes BC Billing notes in, pulls daily reports out.",
   "scripts": {
     "notes": "node push-notes.mjs",
-    "dry-run": "node push-notes.mjs --dry-run"
+    "dry-run": "node push-notes.mjs --dry-run",
+    "reports": "node pull-reports.mjs"
   },
   "dependencies": {
     "playwright": "^1.47.0"
