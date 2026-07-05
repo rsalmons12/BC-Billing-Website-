@@ -9,7 +9,9 @@ import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
+  WATCH_AGE_THRESHOLD,
   RISK_AGE_THRESHOLD,
+  PRIORITY_AGE_THRESHOLD,
   type Claim,
   type ClaimWork,
   type ClaimRow,
@@ -54,10 +56,26 @@ function isWorked(w: ClaimWork | null): boolean {
 
 function AgeBadge({ age }: { age: number | null }) {
   const a = age ?? 0;
-  let cls = "bg-recovered/12 text-recovered";
-  if (a > RISK_AGE_THRESHOLD) cls = "bg-risk/12 text-risk";
-  else if (a >= 36) cls = "bg-gold/15 text-gold";
-  return <span className={`badge ${cls} font-mono`}>{a}d</span>;
+  // Flashing age tiers: 100+ red (priority), 65–99 orange (risk), 45–64 yellow (watch).
+  if (a >= PRIORITY_AGE_THRESHOLD)
+    return (
+      <span className="badge animate-agepulse bg-risk font-mono font-bold text-white" title="100+ days — PRIORITY">
+        {a}d ★
+      </span>
+    );
+  if (a >= RISK_AGE_THRESHOLD)
+    return (
+      <span className="badge animate-agepulse bg-warn font-mono font-semibold text-white" title="65–99 days — RISK">
+        {a}d
+      </span>
+    );
+  if (a >= WATCH_AGE_THRESHOLD)
+    return (
+      <span className="badge animate-agepulse bg-watch font-mono font-semibold text-surface-ink" title="45–64 days — WATCH">
+        {a}d
+      </span>
+    );
+  return <span className="badge bg-recovered/12 font-mono text-recovered">{a}d</span>;
 }
 
 export default function CollectionsClient({

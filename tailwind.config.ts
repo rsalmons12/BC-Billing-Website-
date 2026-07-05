@@ -40,9 +40,21 @@ const config: Config = {
         recovered: "#1f9d6b",
         risk: "#d6453d",
         secured: "#7c5cff",
+        // age tiers: watch (yellow) / warn (orange) / risk (red = priority)
+        watch: "#eab308",
+        warn: "#f97316",
       },
       boxShadow: {
         card: "0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)",
+      },
+      keyframes: {
+        agepulse: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.35" },
+        },
+      },
+      animation: {
+        agepulse: "agepulse 1.1s ease-in-out infinite",
       },
     },
   },
