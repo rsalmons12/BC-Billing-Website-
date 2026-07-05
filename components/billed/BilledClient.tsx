@@ -12,23 +12,8 @@ const config: TrackerConfig = {
   table: "billed_claims",
   searchKeys: ["patient_name", "claim_id", "payer_name"],
   parse: (buf) => parseBilled(buf),
-  // Upsert by claim id so re-importing refreshes amounts/balance without
-  // creating duplicates. Read-only visual report (no notes), so the import log
-  // won't mention notes.
-  importKey: "claim_id",
-  preservesNotes: false,
-  importFactKeys: [
-    "times_billed",
-    "from_date",
-    "to_date",
-    "entered_date",
-    "total_amount",
-    "balance",
-    "patient_id",
-    "patient_name",
-    "payer_name",
-    "payer_type",
-  ],
+  // Just a visual report — no claim-id matching, no notes. Each import simply
+  // replaces the billed rows for the facilities in the file (fast bulk load).
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", editable: false, min: "min-w-[12rem]" },
     { key: "claim_id", label: "Claim ID", kind: "text", editable: false, min: "min-w-[9rem]" },

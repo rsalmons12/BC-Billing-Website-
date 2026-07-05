@@ -284,7 +284,9 @@ create table if not exists billed_claims (
 );
 create index if not exists billed_claims_facility_idx on billed_claims(facility_id);
 create index if not exists billed_claims_payer_idx on billed_claims(payer_name);
-create unique index if not exists billed_claims_claim_id_key on billed_claims(claim_id);
+-- Billed is a visual report (no claim-id matching) — plain, non-unique index.
+drop index if exists billed_claims_claim_id_key;
+create index if not exists billed_claims_claim_id_idx on billed_claims(claim_id);
 alter table billed_claims enable row level security;
 drop policy if exists billed_select on billed_claims;
 create policy billed_select on billed_claims for select
