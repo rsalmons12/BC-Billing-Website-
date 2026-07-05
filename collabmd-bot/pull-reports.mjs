@@ -178,7 +178,11 @@ async function main() {
   if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 
   console.log(`\n  Will pull ${REPORTS.length} report(s): ${REPORTS.map((r) => r.save).join(", ")}`);
-  console.log(`  Saving Excel files into the  ${OUT_DIR}\\  folder.\n`);
+  console.log(`  Saving Excel files into the  ${OUT_DIR}\\  folder.`);
+  console.log(`\n  ONE-TIME SETUP (do this once in CollaborateMD, in any browser):`);
+  console.log(`    For each report — open it, set Customer -> Select All and the`);
+  console.log(`    date range, then click "Save Filters". After that the bot runs`);
+  console.log(`    hands-free using those saved filters.\n`);
 
   const browser = await chromium.launch({ headless: false, slowMo: 300 });
   const page = await browser.newPage({ viewport: null, acceptDownloads: true });
@@ -194,14 +198,10 @@ async function main() {
     console.log(`  ────────────────────────────────────────────────────────`);
     try {
       await openReport(page, report.open);
-      // The bot does NOT touch the date or customer controls — it waits quietly
-      // so nothing interferes with you setting them.
-      console.log(
-        `\n\n  ▶ The ${report.open} is open. In the browser, set:` +
-          `\n     1. Customer tab  ->  Select All` +
-          `\n     2. General tab   ->  Date range = ${report.datePreset}`
-      );
-      await ask("  Once BOTH are set, press Enter and I'll run + export it... ");
+      // Filters (Select All customers + date range) come from the report's
+      // SAVED filters — set once in CollaborateMD via "Save Filters". The bot
+      // just opens, runs and exports; it never touches those controls.
+      console.log(`\n   Running with the report's saved filters…`);
       const file = await runAndExport(page, report);
       console.log(`\n   ✓ Saved ${file}`);
       results.push({ report: report.save, file, ok: true });
