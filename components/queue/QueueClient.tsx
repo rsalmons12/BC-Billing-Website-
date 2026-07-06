@@ -996,8 +996,9 @@ export default function QueueClient({
                         />
                       </td>
                       <td className="td">
-                        <NotesCell
+                        <CmdNoteCell
                           value={w.collab_note}
+                          initials={collector.initials || ""}
                           placeholder={done ? "" : "Required — pushed to CollaborateMD"}
                           className={
                             !done && !(w.collab_note ?? "").trim() ? "ring-1 ring-risk/40" : ""
@@ -1394,6 +1395,42 @@ function NotesCell({
       onBlur={() => v !== value && onSave(v)}
       className={`min-w-[14rem] max-w-[28rem] ${className}`}
       placeholder={placeholder}
+    />
+  );
+}
+
+// The CollaborateMD note — auto-stamped with today's date + the collector's
+// initials on save (never a past date), so the note pushed to CollaborateMD is
+// always dated and attributed. Doesn't re-stamp an already-stamped note.
+function CmdNoteCell({
+  value,
+  initials,
+  onSave,
+  placeholder = "",
+  className = "",
+}: {
+  value: string;
+  initials: string;
+  onSave: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const stamp = (v: string) => {
+    const t = v.trim();
+    if (!t) return "";
+    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}\s*\(/.test(t)) return t; // already stamped
+    const d = new Date();
+    const date = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(
+      d.getDate()
+    ).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
+    return `${date} (${(initials || "").trim().toUpperCase()}): ${t}`;
+  };
+  return (
+    <NotesCell
+      value={value}
+      placeholder={placeholder}
+      className={className}
+      onSave={(v) => onSave(stamp(v))}
     />
   );
 }

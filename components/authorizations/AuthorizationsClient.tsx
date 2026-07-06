@@ -232,13 +232,17 @@ export default function AuthorizationsClient({
 
   const summary = useMemo(() => {
     const curr = filtered.map((g) => g.current);
-    // Total days + patient count per level of care, across every auth.
+    // Total days + patient count per level of care. Only ACTIVE patients
+    // (not discharged) and only auths where a level of care was actually
+    // entered (blank LOCs are ignored — nothing shows if it's not on screen).
     const locDays = new Map<string, number>();
     const locPatients = new Map<string, Set<string>>();
     let totalDays = 0;
     for (const g of filtered) {
+      if (g.current?.discharged) continue; // active patients only
       for (const a of g.auths) {
-        const loc = a.level_of_care || "—";
+        const loc = (a.level_of_care ?? "").trim();
+        if (!loc) continue; // only levels of care that were created/entered
         const d = authDays(a);
         if (d != null) {
           locDays.set(loc, (locDays.get(loc) ?? 0) + d);
