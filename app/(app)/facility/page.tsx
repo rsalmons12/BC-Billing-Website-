@@ -205,7 +205,7 @@ export default async function FacilityDashboard({
     const p = new URLSearchParams();
     if (searchParams.facility) p.set("facility", searchParams.facility);
     p.set("month", m);
-    return `?${p.toString()}`;
+    return `/facility?${p.toString()}`;
   };
 
   // ---- Negotiations: expected revenue, paid ~14 days after approval --------
