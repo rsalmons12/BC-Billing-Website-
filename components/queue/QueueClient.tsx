@@ -280,6 +280,23 @@ export default function QueueClient({
     // rest are the free shared pool anyone with capacity can pull. This keeps
     // two collectors off the same claim without relying on the hash split
     // (which staff can't compute, since they can't see co-collector assignments).
+    // Ownership is by PATIENT, not by individual claim: if any of a patient's
+    // claims is reserved by a collector today, that whole patient is theirs.
+    // This keeps one patient's claims from splitting across collectors (which
+    // was making three people work the same patient/DOS).
+    const pkeyOf = (c: Claim) =>
+      `${c.facility_id ?? ""}|${(c.member_id || c.patient_name || c.claim_id)
+        .trim()
+        .toLowerCase()}`;
+    const ownerByPatient = new Map<string, string>();
+    for (const c of claims) {
+      const w = workMap[c.claim_id];
+      if (w?.claimed_at === today && w?.claimed_by) {
+        const k = pkeyOf(c);
+        if (!ownerByPatient.has(k)) ownerByPatient.set(k, w.claimed_by);
+      }
+    }
+
     const mine = claims
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
@@ -295,13 +312,18 @@ export default function QueueClient({
       })
       .map((c) => {
         const w = workMap[c.claim_id] ?? null;
-        const reservedToday = w?.claimed_at === today;
-        const reservedByMe = reservedToday && w?.claimed_by === collectorId;
-        const takenByOther =
-          reservedToday && !!w?.claimed_by && w?.claimed_by !== collectorId;
-        return { ...c, work: w, _mine: reservedByMe, _takenByOther: takenByOther };
+        const owner = ownerByPatient.get(pkeyOf(c));
+        const reservedByMe = owner === collectorId;
+        const takenByOther = !!owner && owner !== collectorId;
+        return {
+          ...c,
+          work: w,
+          _mine: reservedByMe,
+          _takenByOther: takenByOther,
+          _pkey: pkeyOf(c),
+        };
       })
-      // A claim reserved by another collector today is out of this pool.
+      // A patient owned by another collector today is out of this pool.
       .filter((r) => !r._takenByOther);
 
     // Priority tiers: 100+ first, then 65–99, then younger; oldest-first within.
@@ -362,22 +384,46 @@ export default function QueueClient({
   const baseAllot = Math.max(0, effectiveTarget - doneToday);
   const herSet = herUnworked.slice(0, baseAllot);
   const fillNeed = baseAllot - herSet.length + Math.max(0, bonus);
-  const sharedSet = fillNeed > 0 ? sharedUnworked.slice(0, fillNeed) : [];
+  // Fill from the shared pool a WHOLE PATIENT at a time, so a patient's claims
+  // never split across collectors. Take patients (in priority order) until the
+  // fill need is met — may slightly overshoot to keep a patient together.
+  const sharedSet = (() => {
+    if (fillNeed <= 0) return [] as typeof sharedUnworked;
+    const byPatient = new Map<string, typeof sharedUnworked>();
+    for (const r of sharedUnworked) {
+      const k = (r as unknown as { _pkey: string })._pkey;
+      if (!byPatient.has(k)) byPatient.set(k, []);
+      byPatient.get(k)!.push(r);
+    }
+    const out: typeof sharedUnworked = [];
+    for (const group of byPatient.values()) {
+      if (out.length >= fillNeed) break;
+      out.push(...group);
+    }
+    return out;
+  })();
   const todaySet = [...herSet, ...sharedSet];
 
-  // Reserve the shared-pool claims this collector is shown, so no one else
-  // gets them. Keyed on the id list so it only writes when the set changes.
+  // Reserve the shared-pool claims this collector is shown — ATOMICALLY, so two
+  // collectors loading at the same time can't both grab the same claim (the RPC
+  // won't steal a claim already reserved by someone else today). After a change
+  // we reload so anything another collector took drops off this queue.
   const sharedShownIds = sharedSet.map((r) => r.claim_id).join(",");
   useEffect(() => {
     if (!sharedShownIds) return;
-    void supabase.from("claim_work").upsert(
-      sharedShownIds.split(",").map((id) => ({
-        claim_id: id,
-        claimed_by: collectorId,
-        claimed_at: today,
-      })),
-      { onConflict: "claim_id" }
-    );
+    let cancelled = false;
+    (async () => {
+      await supabase.rpc("reserve_claims", {
+        p_ids: sharedShownIds.split(","),
+        p_collector: collectorId,
+        p_today: today,
+      });
+      if (!cancelled) load();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sharedShownIds, collectorId, today, supabase]);
 
   // Show today's allotment AND anything already worked today (so a collector

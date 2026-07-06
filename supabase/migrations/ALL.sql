@@ -345,6 +345,31 @@ create policy attachments_obj_delete on storage.objects for delete to authentica
 -- ---- collab_note: the single note pushed into CollaborateMD (0023) ----
 alter table claim_work add column if not exists collab_note text default '';
 
+-- ---- atomic claim reservation (0027): no two collectors on one claim ----
+create or replace function reserve_claims(p_ids text[], p_collector uuid, p_today date)
+returns setof text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare cid text;
+begin
+  foreach cid in array coalesce(p_ids, array[]::text[]) loop
+    insert into claim_work (claim_id, claimed_by, claimed_at)
+    values (cid, p_collector, p_today)
+    on conflict (claim_id) do update
+      set claimed_by = p_collector, claimed_at = p_today
+      where claim_work.claimed_at is distinct from p_today
+         or claim_work.claimed_by is null
+         or claim_work.claimed_by = p_collector;
+    if exists (select 1 from claim_work where claim_id = cid and claimed_by = p_collector and claimed_at = p_today) then
+      return next cid;
+    end if;
+  end loop;
+end;
+$$;
+grant execute on function reserve_claims(text[], uuid, date) to authenticated;
+
 -- ---- payments accumulate by month (0024) ----
 alter table payments add column if not exists period text;
 create index if not exists payments_period_idx on payments(facility_id, period);
