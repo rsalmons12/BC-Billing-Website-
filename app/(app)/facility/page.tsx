@@ -79,19 +79,21 @@ export default async function FacilityDashboard({
     ].filter(Boolean) as string[]
   );
 
+  // Resilient fetch: one table erroring (RLS/permission/missing) must NOT crash
+  // the whole dashboard — that section just shows nothing.
+  const safeAll = <T,>(
+    build: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>
+  ) => selectAll<T>(build as never).catch(() => [] as T[]);
+
   const [{ data: facList }, allClaimsRaw, allPaymentsRaw, allNegRaw, allBilledRaw] =
     await Promise.all([
       supabase.from("facilities").select("*").order("name", { ascending: true }),
-      selectAll<Claim>((f, t) =>
+      safeAll<Claim>((f, t) =>
         supabase.from("claims").select("*").eq("present", true).range(f, t)
       ),
-      selectAll<Payment>((f, t) => supabase.from("payments").select("*").range(f, t)),
-      selectAll<Negotiation>((f, t) =>
-        supabase.from("negotiations").select("*").range(f, t)
-      ),
-      selectAll<BilledClaim>((f, t) =>
-        supabase.from("billed_claims").select("*").range(f, t)
-      ),
+      safeAll<Payment>((f, t) => supabase.from("payments").select("*").range(f, t)),
+      safeAll<Negotiation>((f, t) => supabase.from("negotiations").select("*").range(f, t)),
+      safeAll<BilledClaim>((f, t) => supabase.from("billed_claims").select("*").range(f, t)),
     ]);
 
   // Hard scope everything to this login's facilities.
