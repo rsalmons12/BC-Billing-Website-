@@ -6,6 +6,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
+import AddNote from "@/components/AddNote";
 import {
   WATCH_AGE_THRESHOLD,
   RISK_AGE_THRESHOLD,
@@ -1069,10 +1070,14 @@ export default function QueueClient({
                               </label>
                             </div>
 
-                            {/* Working notes */}
+                            {/* Working notes — required initials, auto-dated */}
                             <div>
                               <div className="label mb-1">Working notes</div>
-                              <NotesCell value={w.notes} onSave={(v) => patchRow(r.claim_id, { notes: v })} />
+                              <AddNote
+                                value={w.notes}
+                                defaultInitials={collector.initials || ""}
+                                onSave={(v) => patchRow(r.claim_id, { notes: v })}
+                              />
                             </div>
 
                             {/* Actions */}

@@ -302,6 +302,9 @@ export const LEVEL_OF_CARE_OPTIONS = [
   "PHP",
   "IOP",
   "OP",
+  "MH PHP",
+  "MH IOP",
+  "MH OP",
 ];
 export const NEGOTIATION_STATUS_OPTIONS = [
   "",

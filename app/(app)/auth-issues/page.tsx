@@ -16,7 +16,7 @@ export default async function AuthIssuesPage() {
     <>
       <Header profile={profile} email={email} subtitle="Auth Issues" />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <AuthIssuesClient facilities={facilities} />
+        <AuthIssuesClient facilities={facilities} myInitials={profile.initials ?? ""} />
       </main>
     </>
   );
