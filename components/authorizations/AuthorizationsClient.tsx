@@ -232,11 +232,38 @@ export default function AuthorizationsClient({
 
   const summary = useMemo(() => {
     const curr = filtered.map((g) => g.current);
+    // Total days + patient count per level of care, across every auth.
+    const locDays = new Map<string, number>();
+    const locPatients = new Map<string, Set<string>>();
+    let totalDays = 0;
+    for (const g of filtered) {
+      for (const a of g.auths) {
+        const loc = a.level_of_care || "—";
+        const d = authDays(a);
+        if (d != null) {
+          locDays.set(loc, (locDays.get(loc) ?? 0) + d);
+          totalDays += d;
+        }
+        if (!locPatients.has(loc)) locPatients.set(loc, new Set());
+        locPatients.get(loc)!.add(g.name);
+      }
+    }
+    const locRows = Array.from(
+      new Set([...locDays.keys(), ...locPatients.keys()])
+    )
+      .map((loc) => ({
+        loc,
+        days: locDays.get(loc) ?? 0,
+        patients: locPatients.get(loc)?.size ?? 0,
+      }))
+      .sort((a, b) => b.days - a.days);
     return {
       patients: filtered.length,
       due: curr.filter(isDueForReview).length,
       approved: curr.filter((c) => /approv/.test(norm(c.status))).length,
       pending: curr.filter((c) => /pending/.test(norm(c.status))).length,
+      totalDays,
+      locRows,
     };
   }, [filtered]);
 
@@ -375,6 +402,25 @@ export default function AuthorizationsClient({
             <SumCard label="Next Review" value={String(summary.due)} accent="risk" />
             <SumCard label="Approved" value={String(summary.approved)} accent="recovered" />
             <SumCard label="Pending" value={String(summary.pending)} accent="gold" />
+          </div>
+          {/* Totals by level of care: patients + days (OP, IOP, PHP, MH …) */}
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              Totals by level of care
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {summary.locRows.map((l) => (
+                <span key={l.loc} className="badge bg-command/10 text-command">
+                  {l.loc}:{" "}
+                  <b className="ml-1">{l.patients} pt</b>
+                  <span className="mx-1 opacity-50">·</span>
+                  <b>{l.days} days</b>
+                </span>
+              ))}
+              <span className="badge bg-surface text-surface-ink">
+                Total: <b className="ml-1">{summary.totalDays} days</b>
+              </span>
+            </div>
           </div>
         </div>
       )}

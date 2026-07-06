@@ -6,14 +6,17 @@ import { createClient } from "@/lib/supabase/client";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { AUTH_ISSUE_STATUSES } from "@/lib/constants";
+import AddNote from "@/components/AddNote";
 import type { AuthIssue, Facility } from "@/lib/types";
 
 type View = "active" | "completed";
 
 export default function AuthIssuesClient({
   facilities,
+  myInitials = "",
 }: {
   facilities: Facility[];
+  myInitials?: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const facMap = useMemo(() => {
@@ -282,10 +285,12 @@ export default function AuthIssuesClient({
                       className="h-4 w-4 accent-gold"
                     />
                   </td>
-                  <td className="td">
-                    <NotesCell
+                  <td className="td min-w-[22rem]">
+                    <AddNote
                       value={i.notes ?? ""}
+                      defaultInitials={myInitials}
                       onSave={(v) => patch(i, { notes: v })}
+                      placeholder="Auth team notes…"
                     />
                   </td>
                 </tr>
@@ -297,23 +302,3 @@ export default function AuthIssuesClient({
   );
 }
 
-function NotesCell({
-  value,
-  onSave,
-}: {
-  value: string;
-  onSave: (v: string) => void;
-}) {
-  const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
-  return (
-    <textarea
-      rows={1}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => v !== value && onSave(v)}
-      className="cell-input min-h-[2rem] min-w-[20rem] resize-y leading-snug"
-      placeholder="Auth team notes…"
-    />
-  );
-}
