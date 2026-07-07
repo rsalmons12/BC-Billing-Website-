@@ -37,26 +37,23 @@ export default function ImportClient({ facilities }: { facilities: Facility[] })
 
   const addLog = (m: string) => setLog((l) => [...l, m]);
 
-  // Auto-match a parsed facility name against known facilities.
+  // Auto-match a parsed facility name against known facilities. Only auto-maps
+  // when it's UNambiguous — two similarly-named facilities leave it unmapped so
+  // the operator picks (prevents merging e.g. Pathways Treatment + Behavioral).
   const autoMatch = (name: string): string => {
     const n = normFacility(name);
     if (!n) return "";
-    // exact short_name / name
-    for (const f of facilities) {
-      if (
-        normFacility(f.name) === n ||
-        (f.short_name && normFacility(f.short_name) === n)
-      )
-        return f.id;
-    }
-    // contains either direction
-    for (const f of facilities) {
+    const exact = facilities.filter(
+      (f) => normFacility(f.name) === n || (f.short_name && normFacility(f.short_name) === n)
+    );
+    if (exact.length === 1) return exact[0].id;
+    if (exact.length > 1) return "";
+    const fuzzy = facilities.filter((f) => {
       const fn = normFacility(f.name);
       const sn = f.short_name ? normFacility(f.short_name) : "";
-      if (fn.includes(n) || n.includes(fn) || (sn && (sn.includes(n) || n.includes(sn))))
-        return f.id;
-    }
-    return "";
+      return fn.includes(n) || n.includes(fn) || (!!sn && (sn.includes(n) || n.includes(sn)));
+    });
+    return fuzzy.length === 1 ? fuzzy[0].id : "";
   };
 
   const distinctFacilities = useMemo(() => {

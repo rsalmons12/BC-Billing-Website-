@@ -307,10 +307,14 @@ export function parseWorkbook(data: ArrayBuffer): ParseResult {
 
 // Normalize a facility name for fuzzy matching (drop legal suffixes/punctuation).
 export function normFacility(s: string): string {
+  // Strip only legal suffixes/articles — NOT distinguishing words like
+  // "treatment", "behavioral", "recovery", "center". Stripping those collapses
+  // "Pathways Treatment Center" and "Pathways Behavioral Health" to the same
+  // stem and silently merges two different facilities on import.
   return s
     .toLowerCase()
     .replace(/[.,]/g, " ")
-    .replace(/\b(llc|inc|ltd|the|recovery|center|services|care|treatment|solutions)\b/g, " ")
+    .replace(/\b(llc|inc|ltd|corp|co|pllc|pc|lp|the)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

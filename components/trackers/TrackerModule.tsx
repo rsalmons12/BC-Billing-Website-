@@ -783,16 +783,21 @@ export function ImportPanel({
   const autoMatch = (name: string): string => {
     const n = normFacility(name);
     if (!n) return "";
-    for (const f of facilities)
-      if (normFacility(f.name) === n || (f.short_name && normFacility(f.short_name) === n))
-        return f.id;
-    for (const f of facilities) {
+    // Exact (normalized) match wins.
+    const exact = facilities.filter(
+      (f) => normFacility(f.name) === n || (f.short_name && normFacility(f.short_name) === n)
+    );
+    if (exact.length === 1) return exact[0].id;
+    if (exact.length > 1) return ""; // ambiguous — make the user pick
+    // Fuzzy containment, but ONLY if exactly one facility matches. If two
+    // similarly-named facilities match, leave it unmapped rather than guess
+    // (this is what merged Pathways Treatment and Pathways Behavioral).
+    const fuzzy = facilities.filter((f) => {
       const fn = normFacility(f.name);
       const sn = f.short_name ? normFacility(f.short_name) : "";
-      if (fn.includes(n) || n.includes(fn) || (sn && (sn.includes(n) || n.includes(sn))))
-        return f.id;
-    }
-    return "";
+      return fn.includes(n) || n.includes(fn) || (!!sn && (sn.includes(n) || n.includes(sn)));
+    });
+    return fuzzy.length === 1 ? fuzzy[0].id : "";
   };
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
