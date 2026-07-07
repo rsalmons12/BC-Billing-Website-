@@ -1,8 +1,18 @@
 import * as XLSX from "xlsx";
-import type { Payment, BilledClaim } from "@/lib/types";
+import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
 import type { RepricingRow } from "@/lib/import/parseTrackers";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
+
+// Payer from a claim status like "Claim at BCBS" / "Denied at Aetna".
+function payerFromStatus(status: unknown): string {
+  const t = String(status ?? "").trim();
+  if (!t) return "Unassigned";
+  const m = t.match(/\bat\s+(.+)$/i);
+  if (!m) return "Other";
+  const p = m[1].split(/\s{2,}|[|,;]/)[0].trim();
+  return p ? p.toUpperCase() : "Other";
+}
 
 // Build the monthly reporting bundle (matches the NJRS bundle layout):
 //   SUMMARY · Check Numbers · PATIENT DEPOSITS · BILLED REPORT
@@ -13,12 +23,16 @@ export function buildMonthlyBundle({
   payments,
   billed,
   repricing,
+  claims = [],
+  negotiations = [],
 }: {
   facilityName: string;
   monthLabel: string; // e.g. "April 2026"
   payments: Payment[];
   billed: BilledClaim[];
   repricing: RepricingRow[];
+  claims?: Claim[];
+  negotiations?: Negotiation[];
 }): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
   const MONTH = monthLabel.toUpperCase();
@@ -97,6 +111,63 @@ export function buildMonthlyBundle({
     }
   }
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "SUMMARY");
+
+  // ---- COLLECTION SUMMARY (aggregates only — no patients/notes) ----------
+  // Outstanding AR by payer (from live claim balances).
+  const arMap = new Map<string, { bal: number; n: number }>();
+  for (const c of claims) {
+    const bal = num(c.balance);
+    if (bal <= 0) continue;
+    const k = payerFromStatus(c.claim_status);
+    const cur = arMap.get(k) ?? { bal: 0, n: 0 };
+    cur.bal += bal;
+    cur.n += 1;
+    arMap.set(k, cur);
+  }
+  const totalAR = Array.from(arMap.values()).reduce((s, v) => s + v.bal, 0);
+
+  // Negotiations by carrier + by status (aggregate only).
+  const negByCarrier = new Map<
+    string,
+    { charged: number; proposed: number; negotiated: number; n: number }
+  >();
+  const negByStatus = new Map<string, { negotiated: number; n: number }>();
+  for (const g of negotiations) {
+    const carrier = (g.carrier || "—").toUpperCase();
+    const c = negByCarrier.get(carrier) ?? { charged: 0, proposed: 0, negotiated: 0, n: 0 };
+    c.charged += num(g.charged_amount);
+    c.proposed += num(g.proposed_amount);
+    c.negotiated += num(g.negotiated_amount ?? g.approved_rate);
+    c.n += 1;
+    negByCarrier.set(carrier, c);
+    const st = (g.status || "—").trim() || "—";
+    const s = negByStatus.get(st) ?? { negotiated: 0, n: 0 };
+    s.negotiated += num(g.negotiated_amount ?? g.approved_rate);
+    s.n += 1;
+    negByStatus.set(st, s);
+  }
+
+  const coll: Row[] = [
+    [`${facilityName} — Collection Summary`],
+    [],
+    ["Outstanding AR by Payer"],
+    ["Payer", "Outstanding AR", "Claims"],
+  ];
+  for (const [payer, v] of Array.from(arMap.entries()).sort((a, b) => b[1].bal - a[1].bal)) {
+    coll.push([payer, round(v.bal), v.n]);
+  }
+  coll.push(["TOTAL AR", round(totalAR), claims.filter((c) => num(c.balance) > 0).length]);
+  coll.push([], ["Negotiations by Carrier"], ["Carrier", "Charged", "Proposed", "Negotiated", "Deals"]);
+  for (const [carrier, v] of Array.from(negByCarrier.entries()).sort(
+    (a, b) => b[1].negotiated - a[1].negotiated
+  )) {
+    coll.push([carrier, round(v.charged), round(v.proposed), round(v.negotiated), v.n]);
+  }
+  coll.push([], ["Negotiations by Status"], ["Status", "Deals", "Negotiated Total"]);
+  for (const [st, v] of Array.from(negByStatus.entries()).sort((a, b) => b[1].negotiated - a[1].negotiated)) {
+    coll.push([st, v.n, round(v.negotiated)]);
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(coll), "COLLECTION SUMMARY");
 
   // ---- Check Numbers ----------------------------------------------------
   const checkMap = new Map<string, number>();
