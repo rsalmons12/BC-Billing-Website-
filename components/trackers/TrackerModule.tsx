@@ -894,10 +894,13 @@ export function ImportPanel({
       }
       add(`${fresh.length} new added.`);
 
-      // Existing claims: refresh only the imported facts; notes are preserved.
+      // Existing claims: refresh the imported facts AND the facility. Notes are
+      // preserved, but facility_id must follow the file — a corrected re-import
+      // (after a facility-name fix) has to be able to move a claim to the right
+      // facility, otherwise a patient stays filed under the wrong one forever.
       let upd = 0;
       for (const r of known) {
-        const factPayload: Record<string, unknown> = {};
+        const factPayload: Record<string, unknown> = { facility_id: r.facility_id };
         for (const fk of factKeys) factPayload[fk] = r[fk];
         const { error } = await supabase
           .from(config.table)
