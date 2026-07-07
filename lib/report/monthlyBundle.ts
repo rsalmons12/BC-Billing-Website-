@@ -1,6 +1,5 @@
 import ExcelJS from "exceljs";
 import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
-import type { RepricingRow } from "@/lib/import/parseTrackers";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 const MONEY = '$#,##0.00';
@@ -32,7 +31,6 @@ export async function buildMonthlyBundle({
   monthLabel,
   payments,
   billed,
-  repricing,
   claims = [],
   negotiations = [],
 }: {
@@ -40,7 +38,6 @@ export async function buildMonthlyBundle({
   monthLabel: string;
   payments: Payment[];
   billed: BilledClaim[];
-  repricing: RepricingRow[];
   claims?: Claim[];
   negotiations?: Negotiation[];
 }): Promise<ArrayBuffer> {
@@ -179,33 +176,6 @@ export async function buildMonthlyBundle({
       .map(([payer, amt]) => ({ payer, amt: round(amt) })),
     { payer: "TOTAL", amt: round(totalCollected) }
   );
-
-  if (repricing.length) {
-    section(sum, "Repriced Patients", 8);
-    table(
-      sum,
-      [
-        { header: "Patient", key: "pt", width: 22 },
-        { header: "Member ID", key: "mid", width: 16 },
-        { header: "DOS", key: "dos", width: 12 },
-        { header: "Billed", key: "billed", width: 14, money: true },
-        { header: "Paid", key: "paid", width: 14, money: true },
-        { header: "Payer", key: "payer", width: 18 },
-        { header: "Remark", key: "remark", width: 16 },
-        { header: "Status", key: "status", width: 14 },
-      ],
-      repricing.map((r) => ({
-        pt: r.patient_name,
-        mid: r.member_id,
-        dos: r.claim_date,
-        billed: round(num(r.charge_amount)),
-        paid: round(num(r.additional_payment ?? r.amt_allowed)),
-        payer: r.payer,
-        remark: r.remark_codes,
-        status: r.claim_status,
-      }))
-    );
-  }
 
   // ===== COLLECTION SUMMARY (aggregates only) =====
   const coll = wb.addWorksheet("COLLECTION SUMMARY");

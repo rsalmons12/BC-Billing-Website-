@@ -7,7 +7,6 @@ import { periodOf } from "@/lib/import/parseTrackers";
 import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
 import { money } from "@/lib/format";
 import type { Payment, BilledClaim, Claim, Negotiation, Facility } from "@/lib/types";
-import type { RepricingRow } from "@/lib/import/parseTrackers";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function monthLabel(ym: string): string {
@@ -21,7 +20,6 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const [facilityId, setFacilityId] = useState(facilities[0]?.id ?? "");
   const [payments, setPayments] = useState<Payment[]>([]);
   const [billed, setBilled] = useState<BilledClaim[]>([]);
-  const [repricing, setRepricing] = useState<(RepricingRow & { facility_id?: string })[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +29,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     if (!facilityId) return;
     setLoading(true);
     const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
-    const [pay, bil, rep, clm, neg] = await Promise.all([
+    const [pay, bil, clm, neg] = await Promise.all([
       safe(
         selectAll<Payment>((f, t) =>
           supabase.from("payments").select("*").eq("facility_id", facilityId).range(f, t)
@@ -40,11 +38,6 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       safe(
         selectAll<BilledClaim>((f, t) =>
           supabase.from("billed_claims").select("*").eq("facility_id", facilityId).range(f, t)
-        )
-      ),
-      safe(
-        selectAll<RepricingRow & { facility_id?: string }>((f, t) =>
-          supabase.from("repricing").select("*").eq("facility_id", facilityId).range(f, t)
         )
       ),
       safe(
@@ -65,7 +58,6 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     ]);
     setPayments(pay);
     setBilled(bil);
-    setRepricing(rep);
     setClaims(clm);
     setNegotiations(neg);
     setLoading(false);
@@ -108,7 +100,6 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         monthLabel: monthLabel(month),
         payments: monthPayments,
         billed: monthBilled,
-        repricing: repricing,
         claims, // live AR snapshot
         negotiations,
       });
