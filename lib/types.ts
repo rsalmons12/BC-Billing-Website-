@@ -219,6 +219,7 @@ export interface Payment {
   paid_amount: number | null;
   payment_type: string | null;
   check_number: string | null;
+  period: string | null;
   notes: string;
   updated_by: string | null;
   created_at: string;
