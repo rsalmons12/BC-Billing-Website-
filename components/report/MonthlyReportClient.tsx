@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
@@ -100,18 +99,31 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const monthPayments = payments.filter((p) => payMonth(p) === month);
   const monthBilled = billed.filter((b) => bilMonth(b) === month);
 
-  const download = () => {
-    const wb = buildMonthlyBundle({
-      facilityName,
-      monthLabel: monthLabel(month),
-      payments: monthPayments,
-      billed: monthBilled,
-      repricing: repricing,
-      claims, // live AR snapshot
-      negotiations,
-    });
-    const safe = `${facilityName}_${month}`.replace(/[^\w-]+/g, "_");
-    XLSX.writeFile(wb, `${safe}_Monthly_Report.xlsx`);
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const buf = await buildMonthlyBundle({
+        facilityName,
+        monthLabel: monthLabel(month),
+        payments: monthPayments,
+        billed: monthBilled,
+        repricing: repricing,
+        claims, // live AR snapshot
+        negotiations,
+      });
+      const blob = new Blob([buf], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${`${facilityName}_${month}`.replace(/[^\w-]+/g, "_")}_Monthly_Report.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const totalCollected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
@@ -178,10 +190,15 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
 
         <button
           onClick={download}
-          disabled={loading || !month || (monthPayments.length === 0 && monthBilled.length === 0)}
+          disabled={
+            loading ||
+            downloading ||
+            !month ||
+            (monthPayments.length === 0 && monthBilled.length === 0)
+          }
           className="btn-primary mt-4 disabled:opacity-50"
         >
-          ↓ Download {month ? monthLabel(month) : ""} bundle
+          {downloading ? "Building…" : `↓ Download ${month ? monthLabel(month) : ""} bundle`}
         </button>
         {loading && <span className="ml-3 text-xs text-surface-muted">Loading data…</span>}
       </div>
