@@ -89,7 +89,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
   const totalBalance = collections.reduce((s, e) => s + (e.balance ?? 0), 0);
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-6">
+    <div className="h-full overflow-auto p-6">
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <span className="text-surface-muted">
