@@ -685,6 +685,7 @@ export default function QueueClient({
         dos_to: row.dos_to,
         charge_amount: row.balance ?? row.charge_amount,
         status: "Not Worked",
+        collector_notes: row.work?.notes ?? "",
         from_collection: true,
         submitted_by: collector.id,
         submitted_by_name: collector.full_name || collector.initials || "",
