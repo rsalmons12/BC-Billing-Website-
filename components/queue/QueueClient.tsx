@@ -336,7 +336,14 @@ export default function QueueClient({
     mine.sort((a, b) => {
       const t = tier(b.age_days) - tier(a.age_days);
       if (t !== 0) return t;
-      return (b.age_days ?? 0) - (a.age_days ?? 0);
+      const ageDiff = (b.age_days ?? 0) - (a.age_days ?? 0);
+      if (ageDiff !== 0) return ageDiff;
+      // Same priority + age: alphabetical by patient so the list reads A–Z.
+      return String(a.patient_name ?? "").localeCompare(
+        String(b.patient_name ?? ""),
+        undefined,
+        { sensitivity: "base" }
+      );
     });
 
     // Yesterday's production, so today's target can absorb any shortfall.

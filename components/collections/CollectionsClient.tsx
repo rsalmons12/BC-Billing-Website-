@@ -120,6 +120,7 @@ export default function CollectionsClient({
         .eq("facility_id", facilityId)
         .eq("present", true)
         .order("age_days", { ascending: false })
+        .order("patient_name", { ascending: true })
         .range(f, t)
     );
     // Excluded plans (e.g. VMAH member ids) are hidden from Collections entirely.
