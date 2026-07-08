@@ -123,6 +123,7 @@ export default function AuthIssuesClient({
       Source: i.from_collection ? "Collections" : "Manual",
       Status: i.status,
       Mgmt: i.mgmt_needed ? "Y" : "",
+      "Collector Notes": i.collector_notes ?? "",
       Notes: i.notes ?? "",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
@@ -206,20 +207,21 @@ export default function AuthIssuesClient({
               <th className="th">Source</th>
               <th className="th">Status</th>
               <th className="th">Mgmt</th>
+              <th className="th min-w-[16rem]">Collector notes</th>
               <th className="th min-w-[20rem]">Notes</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={10} className="td py-10 text-center text-surface-muted">
+                <td colSpan={11} className="td py-10 text-center text-surface-muted">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && shown.length === 0 && (
               <tr>
-                <td colSpan={10} className="td py-10 text-center text-surface-muted">
+                <td colSpan={11} className="td py-10 text-center text-surface-muted">
                   No {view} auth issues.
                 </td>
               </tr>
@@ -284,6 +286,9 @@ export default function AuthIssuesClient({
                       }
                       className="h-4 w-4 accent-gold"
                     />
+                  </td>
+                  <td className="td min-w-[16rem] whitespace-pre-wrap break-words align-top text-xs text-surface-muted">
+                    {i.collector_notes?.trim() ? i.collector_notes : "—"}
                   </td>
                   <td className="td min-w-[22rem]">
                     <AddNote

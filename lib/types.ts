@@ -150,6 +150,7 @@ export interface AuthIssue {
   status: string; // Not Worked / Working / Completed
   mgmt_needed: boolean;
   notes: string;
+  collector_notes?: string; // collector's notes carried over at routing time
   from_collection: boolean;
   submitted_by: string | null;
   submitted_by_name: string | null;

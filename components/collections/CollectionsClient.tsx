@@ -197,6 +197,7 @@ export default function CollectionsClient({
         dos_to: row.dos_to,
         charge_amount: row.balance ?? row.charge_amount,
         status: "Not Worked",
+        collector_notes: row.work?.notes ?? "",
         from_collection: true,
         submitted_by: userId,
         submitted_by_name: userName,

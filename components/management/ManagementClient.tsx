@@ -184,7 +184,19 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
                     <td className="td text-right font-mono">{money(e.charge_amount)}</td>
                     <td className="td text-xs">{e.status}</td>
                     <td className="td whitespace-pre-wrap break-words text-xs">
-                      {e.notes || "—"}
+                      {e.collector_notes?.trim() && (
+                        <div className="mb-1">
+                          <span className="font-semibold text-surface-muted">Collector: </span>
+                          {e.collector_notes}
+                        </div>
+                      )}
+                      {e.notes?.trim() && (
+                        <div>
+                          <span className="font-semibold text-surface-muted">Auth: </span>
+                          {e.notes}
+                        </div>
+                      )}
+                      {!e.collector_notes?.trim() && !e.notes?.trim() && "—"}
                     </td>
                     <td className="td">
                       <button
