@@ -6,6 +6,7 @@ import { NEGOTIATION_STATUS_OPTIONS, type Facility } from "@/lib/types";
 
 const config: TrackerConfig = {
   table: "negotiations",
+  defaultSortKey: "patient_name",
   statusKey: "status",
   statusOptions: NEGOTIATION_STATUS_OPTIONS,
   searchKeys: ["patient_name", "carrier", "vendor", "negotiator", "status"],

@@ -6,6 +6,7 @@ import { RECORD_STATUS_OPTIONS, type Facility } from "@/lib/types";
 
 const config: TrackerConfig = {
   table: "medical_records",
+  defaultSortKey: "patient_name",
   statusKey: "record_status",
   statusOptions: RECORD_STATUS_OPTIONS,
   searchKeys: ["patient_name", "payer", "dcn", "record_status", "claim_status"],

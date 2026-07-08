@@ -87,6 +87,9 @@ export interface TrackerConfig {
   archiveLabels?: { active: string; archived: string; action: string; unaction: string };
   // Label for the add-row button (default "Add patient").
   addLabel?: string;
+  // When set, rows are displayed sorted A–Z (case-insensitive) by this column,
+  // e.g. "patient_name". Purely a display order; import/export are unaffected.
+  defaultSortKey?: string;
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -213,7 +216,7 @@ export default function TrackerModule({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    const kept = rows.filter((r) => {
       if (config.archiveKey) {
         const archived = Boolean(r[config.archiveKey]);
         if (archiveView === "active" && archived) return false;
@@ -242,6 +245,16 @@ export default function TrackerModule({
       }
       return true;
     });
+    const sk = config.defaultSortKey;
+    if (sk) {
+      kept.sort((a, b) =>
+        String(a[sk] ?? "").localeCompare(String(b[sk] ?? ""), undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      );
+    }
+    return kept;
   }, [rows, statusFilter, extraFilter, monthFilter, search, config, archiveView]);
 
   // Distinct months present in the data (newest first) for the Month dropdown.

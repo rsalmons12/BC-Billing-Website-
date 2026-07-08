@@ -8,6 +8,7 @@ const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
 const config: TrackerConfig = {
   table: "repricing",
+  defaultSortKey: "patient_name",
   statusKey: "payment_status",
   statusOptions: ["Pending", "Approved", "Denied", "Not Worked"],
   searchKeys: ["claim_id", "patient_name", "member_id", "payer", "remark_codes", "claim_status"],

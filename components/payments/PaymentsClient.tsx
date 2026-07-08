@@ -97,6 +97,7 @@ function SumCard({
 
 const config: TrackerConfig = {
   table: "payments",
+  defaultSortKey: "patient_name",
   searchKeys: ["patient_name", "member_id", "payment_source", "check_number", "cpt_description"],
   parse: (buf) => parsePayments(buf),
   // Payments accumulate month over month: importing a month adds it and only
