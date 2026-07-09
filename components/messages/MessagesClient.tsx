@@ -159,6 +159,9 @@ export default function MessagesClient({
               </div>
               <div className="text-[10px] text-surface-muted">
                 {new Date(m.created_at).toLocaleString()}
+                {m.direction === "outbound" && m.sender_name?.trim()
+                  ? ` · by ${m.sender_name}`
+                  : ""}
               </div>
             </button>
           ))}
@@ -289,7 +292,9 @@ export default function MessagesClient({
                 >
                   <div className="mb-1 flex items-center justify-between text-[11px] text-surface-muted">
                     <span className="font-semibold">
-                      {m.direction === "inbound" ? "↩ Facility reply" : "→ Sent to facility"}
+                      {m.direction === "inbound"
+                        ? "↩ Facility reply"
+                        : `→ Sent by ${m.sender_name?.trim() || "—"}`}
                       {m.claim_id ? ` · claim ${m.claim_id}` : ""}
                       {m.patient_name ? ` · ${m.patient_name}` : ""}
                     </span>

@@ -61,6 +61,7 @@ export interface FacilityMessage {
   from_email: string;
   to_email: string;
   sender_id: string | null;
+  sender_name?: string;
   created_at: string;
 }
 
