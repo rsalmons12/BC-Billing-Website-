@@ -61,6 +61,18 @@ export async function POST(request: Request) {
     );
   }
 
+  // Who is sending — captured on the message so the thread shows the employee.
+  const { data: senderProfile } = await supabase
+    .from("profiles")
+    .select("full_name, initials")
+    .eq("id", user.id)
+    .maybeSingle();
+  const senderName =
+    senderProfile?.full_name?.trim() ||
+    senderProfile?.initials?.trim() ||
+    user.email ||
+    "";
+
   // Facility email + name (RLS ensures the caller may access this facility).
   const { data: fac } = await supabase
     .from("facilities")
@@ -131,6 +143,7 @@ export async function POST(request: Request) {
     from_email: FROM,
     to_email: fac.email,
     sender_id: user.id,
+    sender_name: senderName,
   });
 
   return NextResponse.json({ ok: true });
