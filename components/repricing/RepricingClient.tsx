@@ -1,10 +1,59 @@
 "use client";
 
-import TrackerModule, { type TrackerConfig } from "@/components/trackers/TrackerModule";
+import TrackerModule, { SumCard, type TrackerConfig } from "@/components/trackers/TrackerModule";
 import { parseRepricing } from "@/lib/import/parseTrackers";
+import { money } from "@/lib/format";
 import type { Facility } from "@/lib/types";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
+
+// One count tile per payment status, plus a "No status" tile for unworked rows.
+const STATUS_TILES: { key: string; label: string; accent?: "recovered" | "gold" | "risk" | "secured" }[] = [
+  { key: "pending", label: "Pending", accent: "gold" },
+  { key: "approved", label: "Approved", accent: "recovered" },
+  { key: "denied", label: "Denied", accent: "risk" },
+  { key: "not worked", label: "Not Worked", accent: "secured" },
+  { key: "__blank__", label: "No status", accent: "risk" },
+];
+
+// Visual summary: a count per payment status plus collection totals. Uses the
+// currently filtered rows (respects the facility + search filters).
+function renderSummary(rows: Array<Record<string, unknown>>) {
+  const counts: Record<string, number> = {};
+  let charge = 0;
+  let allowed = 0;
+  let addl = 0;
+  for (const r of rows) {
+    charge += num(r.charge_amount);
+    allowed += num(r.amt_allowed);
+    addl += num(r.additional_payment);
+    const s = String(r.payment_status ?? "").trim().toLowerCase();
+    const key = s || "__blank__";
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  const collected = allowed + addl;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        {STATUS_TILES.map((t) => (
+          <SumCard key={t.key} label={t.label} value={String(counts[t.key] ?? 0)} accent={t.accent} />
+        ))}
+        <SumCard label="Claims" value={String(rows.length)} />
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SumCard label="Total Charged" value={money(charge)} />
+        <SumCard label="Total Collected" value={money(collected)} accent="recovered" />
+        <SumCard label="Add'l Payments" value={money(addl)} accent="secured" />
+        <SumCard
+          label="Collected %"
+          value={charge > 0 ? `${Math.round((collected / charge) * 100)}%` : "—"}
+          accent="gold"
+        />
+      </div>
+    </div>
+  );
+}
 
 const config: TrackerConfig = {
   table: "repricing",
@@ -13,6 +62,7 @@ const config: TrackerConfig = {
   statusOptions: ["Pending", "Approved", "Denied", "Not Worked"],
   searchKeys: ["claim_id", "patient_name", "member_id", "payer", "remark_codes", "claim_status"],
   parse: (buf) => parseRepricing(buf),
+  renderSummary,
   // Re-imports match by Claim ID and refresh only the imported facts, so the
   // collector's note/action, follow-up, additional payment and payment status
   // are never overwritten.
