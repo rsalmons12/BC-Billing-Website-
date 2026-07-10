@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
@@ -20,6 +20,25 @@ import {
 
 type Bucket = "all" | "0-35" | "36+" | "risk";
 type Worked = "all" | "unworked" | "worked";
+
+// Today as MM/DD/YY — bulk notes are always stamped with the current date.
+function todayStamp(): string {
+  const d = new Date();
+  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(
+    2,
+    "0"
+  )}/${String(d.getFullYear()).slice(2)}`;
+}
+
+// Best-guess initials from a full name (e.g. "Amanda Ruiz" -> "AR").
+function deriveInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 3);
+}
 
 const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
@@ -99,6 +118,18 @@ export default function CollectionsClient({
   const [saveState, setSaveState] = useState<string>("");
   const [groupByPatient, setGroupByPatient] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Bulk note: attach ONE dated/initialed note to several of a patient's DOS.
+  const [noteGroupKey, setNoteGroupKey] = useState<string | null>(null);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkInit, setBulkInit] = useState(deriveInitials(userName));
+  const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
+  const toggleBulkSel = (cid: string) =>
+    setBulkSel((prev) => {
+      const next = new Set(prev);
+      next.has(cid) ? next.delete(cid) : next.add(cid);
+      return next;
+    });
 
   const toggleGroup = (key: string) =>
     setExpanded((prev) => {
@@ -182,6 +213,36 @@ export default function CollectionsClient({
     },
     [saveWork]
   );
+
+  // Open the bulk-note panel for a patient group with every DOS pre-selected.
+  const openBulkNote = (key: string, claimIds: string[]) => {
+    setExpanded((prev) => new Set(prev).add(key));
+    setNoteGroupKey(key);
+    setBulkSel(new Set(claimIds));
+    setBulkText("");
+    setBulkInit((cur) => cur || deriveInitials(userName));
+  };
+
+  // Attach one stamped note to every selected DOS (prepended to each note).
+  const applyBulkNote = (claimIds: string[]) => {
+    const init = bulkInit.trim().toUpperCase();
+    if (!bulkText.trim() || !init) {
+      alert("A note needs your initials and text — it can't be saved without both.");
+      return;
+    }
+    const entry = `${todayStamp()} (${init}): ${bulkText.trim()}`;
+    for (const cid of claimIds) {
+      const existing = rows.find((x) => x.claim_id === cid)?.work?.notes ?? "";
+      patchRow(cid, {
+        notes: existing.trim() ? `${entry}\n${existing}` : entry,
+        initials: init,
+      });
+    }
+    setSaveState(`Note attached to ${claimIds.length} DOS`);
+    setTimeout(() => setSaveState(""), 1800);
+    setNoteGroupKey(null);
+    setBulkText("");
+  };
 
   // Auth flag = "Y" routes the claim to the auth team and parks it off the board.
   const raiseAuthIssue = useCallback(
@@ -516,26 +577,138 @@ export default function CollectionsClient({
                 if (item.kind === "group") {
                   const g = item;
                   const isOpen = expanded.has(g.key);
+                  const panelOpen = noteGroupKey === g.key;
                   return (
-                    <tr key={`g-${g.key}`} className="bg-command/[0.04]">
-                      <td colSpan={17} className="td">
-                        <button
-                          onClick={() => toggleGroup(g.key)}
-                          className="flex w-full items-center gap-3 text-left"
-                        >
-                          <span className="w-3 text-gold">{isOpen ? "▾" : "▸"}</span>
-                          <span className="font-semibold">{g.key}</span>
-                          <span className="badge bg-surface text-surface-muted">
-                            {g.rows.length} claims
-                          </span>
-                          <AgeBadge age={g.maxAge} />
-                          <span className="ml-auto font-mono text-xs text-surface-muted">
-                            charge {money(g.charge)} · bal{" "}
-                            <b className="text-surface-ink">{money(g.balance)}</b>
-                          </span>
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={`g-${g.key}`}>
+                      <tr className="bg-command/[0.04]">
+                        <td colSpan={17} className="td">
+                          <div className="flex w-full items-center gap-3">
+                            <button
+                              onClick={() => toggleGroup(g.key)}
+                              className="flex flex-1 items-center gap-3 text-left"
+                            >
+                              <span className="w-3 text-gold">{isOpen ? "▾" : "▸"}</span>
+                              <span className="font-semibold">{g.key}</span>
+                              <span className="badge bg-surface text-surface-muted">
+                                {g.rows.length} claims
+                              </span>
+                              <AgeBadge age={g.maxAge} />
+                              <span className="ml-auto font-mono text-xs text-surface-muted">
+                                charge {money(g.charge)} · bal{" "}
+                                <b className="text-surface-ink">{money(g.balance)}</b>
+                              </span>
+                            </button>
+                            <button
+                              onClick={() =>
+                                panelOpen
+                                  ? setNoteGroupKey(null)
+                                  : openBulkNote(g.key, g.rows.map((r) => r.claim_id))
+                              }
+                              className="badge whitespace-nowrap bg-command px-2.5 py-1 text-[11px] font-semibold text-command-text"
+                              title="Attach one note to several dates of service"
+                            >
+                              📝 Note to DOS
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {panelOpen && (
+                        <tr className="bg-command/[0.06]">
+                          <td colSpan={17} className="td">
+                            <div className="space-y-2 p-1">
+                              <div className="text-xs font-semibold">
+                                Attach one note to the selected dates of service — {g.key}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {g.rows.map((r) => {
+                                  const sel = bulkSel.has(r.claim_id);
+                                  return (
+                                    <label
+                                      key={r.claim_id}
+                                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+                                        sel
+                                          ? "border-command bg-command/10"
+                                          : "border-surface-border"
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={sel}
+                                        onChange={() => toggleBulkSel(r.claim_id)}
+                                        className="h-3.5 w-3.5 accent-command"
+                                      />
+                                      <span className="font-medium">
+                                        {r.dos_from || "—"}
+                                        {r.dos_to ? `–${r.dos_to}` : ""}
+                                      </span>
+                                      <span className="font-mono text-surface-muted">
+                                        {money(r.balance)}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-3 text-[11px]">
+                                <button
+                                  onClick={() =>
+                                    setBulkSel(new Set(g.rows.map((r) => r.claim_id)))
+                                  }
+                                  className="underline"
+                                >
+                                  Select all
+                                </button>
+                                <button
+                                  onClick={() => setBulkSel(new Set())}
+                                  className="underline"
+                                >
+                                  Clear
+                                </button>
+                                <span className="text-surface-muted">
+                                  {bulkSel.size} of {g.rows.length} selected
+                                </span>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <textarea
+                                  rows={2}
+                                  value={bulkText}
+                                  onChange={(e) => setBulkText(e.target.value)}
+                                  placeholder="Write one note to attach to the selected DOS…"
+                                  className="cell-input min-h-[2.5rem] flex-1 resize-y leading-snug"
+                                />
+                                <input
+                                  value={bulkInit}
+                                  onChange={(e) => setBulkInit(e.target.value)}
+                                  placeholder="INIT *"
+                                  title="Your initials (required)"
+                                  className={`cell-input w-16 uppercase ${
+                                    !bulkInit.trim() ? "ring-1 ring-risk/40" : ""
+                                  }`}
+                                />
+                                <button
+                                  onClick={() => applyBulkNote(Array.from(bulkSel))}
+                                  disabled={
+                                    !bulkText.trim() || !bulkInit.trim() || bulkSel.size === 0
+                                  }
+                                  className="btn-primary whitespace-nowrap px-3 py-1.5 text-xs disabled:opacity-50"
+                                >
+                                  Apply to {bulkSel.size} DOS
+                                </button>
+                                <button
+                                  onClick={() => setNoteGroupKey(null)}
+                                  className="btn-ghost whitespace-nowrap px-2 py-1.5 text-xs"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              <p className="text-[10px] text-surface-muted">
+                                Stamped with today&apos;s date ({todayStamp()}) and your
+                                initials, and prepended to each selected claim&apos;s notes.
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 }
                 const r = item.r;
