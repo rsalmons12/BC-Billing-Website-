@@ -225,7 +225,7 @@ export default function TrackerModule({
       if (
         config.statusKey &&
         statusFilter !== "all" &&
-        String(r[config.statusKey] ?? "") !== statusFilter
+        String(r[config.statusKey] ?? "").trim() !== statusFilter
       )
         return false;
       if (config.extraFilters && extraFilter !== "all") {
@@ -377,6 +377,7 @@ export default function TrackerModule({
                   {s}
                 </option>
               ))}
+            <option value="">— No status —</option>
           </select>
         )}
 
