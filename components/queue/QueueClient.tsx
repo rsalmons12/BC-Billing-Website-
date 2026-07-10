@@ -133,6 +133,19 @@ export default function QueueClient({
       return n;
     });
 
+  // Bulk note: attach ONE dated/initialed note to several of a patient's DOS,
+  // opened from inside an expanded claim. Keyed by the claim whose panel is open.
+  const [bulkFor, setBulkFor] = useState<string | null>(null);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkInit, setBulkInit] = useState("");
+  const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
+  const toggleBulkSel = (cid: string) =>
+    setBulkSel((prev) => {
+      const next = new Set(prev);
+      next.has(cid) ? next.delete(cid) : next.add(cid);
+      return next;
+    });
+
   // Email-a-facility-about-this-claim modal.
   const [emailClaim, setEmailClaim] = useState<ClaimRow | null>(null);
   const [emailSubject, setEmailSubject] = useState("");
@@ -547,6 +560,50 @@ export default function QueueClient({
     },
     [rows, supabase, self.id, today, logProduction, unlogProduction]
   );
+
+  // All of a patient's claims in the current data (same patient key).
+  const siblingsOf = useCallback(
+    (claimId: string) => {
+      const me = rows.find((r) => r.claim_id === claimId) as
+        | (ClaimRow & { _pkey?: string })
+        | undefined;
+      const key = me?._pkey;
+      if (!key) return me ? [me] : [];
+      return rows.filter((r) => (r as ClaimRow & { _pkey?: string })._pkey === key);
+    },
+    [rows]
+  );
+
+  // Open the bulk-note panel for this patient with every DOS pre-selected.
+  const openBulkNote = (claimId: string) => {
+    setBulkFor(claimId);
+    setBulkSel(new Set(siblingsOf(claimId).map((r) => r.claim_id)));
+    setBulkText("");
+    setBulkInit((cur) => cur || collector.initials || "");
+  };
+
+  // Attach one stamped note to every selected DOS (prepended to each note).
+  const applyBulkNote = (claimIds: string[]) => {
+    const init = bulkInit.trim().toUpperCase();
+    if (!bulkText.trim() || !init) {
+      alert("A note needs your initials and text — it can't be saved without both.");
+      return;
+    }
+    const d = new Date();
+    const stamp = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(
+      d.getDate()
+    ).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
+    const entry = `${stamp} (${init}): ${bulkText.trim()}`;
+    for (const cid of claimIds) {
+      const existing = rows.find((x) => x.claim_id === cid)?.work?.notes ?? "";
+      patchRow(cid, {
+        notes: existing.trim() ? `${entry}\n${existing}` : entry,
+        initials: init,
+      });
+    }
+    setBulkFor(null);
+    setBulkText("");
+  };
 
   // The "✓ Worked" quick action: stamp today + the collector's initials.
   // A CollaborateMD note is REQUIRED — a claim can't be marked worked without
@@ -1133,6 +1190,112 @@ export default function QueueClient({
                                 defaultInitials={collector.initials || ""}
                                 onSave={(v) => patchRow(r.claim_id, { notes: v })}
                               />
+                              {(() => {
+                                const sibs = siblingsOf(r.claim_id);
+                                if (sibs.length < 2) return null;
+                                const panelOpen = bulkFor === r.claim_id;
+                                return (
+                                  <div className="mt-2">
+                                    <button
+                                      onClick={() =>
+                                        panelOpen ? setBulkFor(null) : openBulkNote(r.claim_id)
+                                      }
+                                      className="badge bg-command px-2.5 py-1 text-[11px] font-semibold text-command-text"
+                                      title="Attach one note to several of this patient's dates of service"
+                                    >
+                                      📝 Note to other DOS ({sibs.length})
+                                    </button>
+                                    {panelOpen && (
+                                      <div className="mt-2 space-y-2 rounded-lg border border-command/30 bg-command/[0.06] p-3">
+                                        <div className="text-xs font-semibold">
+                                          Attach one note to the selected DOS — {r.patient_name || "patient"}
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                          {sibs.map((s) => {
+                                            const sel = bulkSel.has(s.claim_id);
+                                            return (
+                                              <label
+                                                key={s.claim_id}
+                                                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+                                                  sel
+                                                    ? "border-command bg-command/10"
+                                                    : "border-surface-border"
+                                                }`}
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={sel}
+                                                  onChange={() => toggleBulkSel(s.claim_id)}
+                                                  className="h-3.5 w-3.5 accent-command"
+                                                />
+                                                <span className="font-medium">
+                                                  {s.dos_from || "—"}
+                                                  {s.dos_to ? `–${s.dos_to}` : ""}
+                                                </span>
+                                                <span className="font-mono text-surface-muted">
+                                                  {money(s.balance)}
+                                                </span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                        <div className="flex items-center gap-3 text-[11px]">
+                                          <button
+                                            onClick={() =>
+                                              setBulkSel(new Set(sibs.map((s) => s.claim_id)))
+                                            }
+                                            className="underline"
+                                          >
+                                            Select all
+                                          </button>
+                                          <button
+                                            onClick={() => setBulkSel(new Set())}
+                                            className="underline"
+                                          >
+                                            Clear
+                                          </button>
+                                          <span className="text-surface-muted">
+                                            {bulkSel.size} of {sibs.length} selected
+                                          </span>
+                                        </div>
+                                        <div className="flex items-start gap-2">
+                                          <textarea
+                                            rows={2}
+                                            value={bulkText}
+                                            onChange={(e) => setBulkText(e.target.value)}
+                                            placeholder="Write one note to attach to the selected DOS…"
+                                            className="cell-input min-h-[2.5rem] flex-1 resize-y leading-snug"
+                                          />
+                                          <input
+                                            value={bulkInit}
+                                            onChange={(e) => setBulkInit(e.target.value)}
+                                            placeholder="INIT *"
+                                            title="Your initials (required)"
+                                            className={`cell-input w-16 uppercase ${
+                                              !bulkInit.trim() ? "ring-1 ring-risk/40" : ""
+                                            }`}
+                                          />
+                                          <button
+                                            onClick={() => applyBulkNote(Array.from(bulkSel))}
+                                            disabled={
+                                              !bulkText.trim() ||
+                                              !bulkInit.trim() ||
+                                              bulkSel.size === 0
+                                            }
+                                            className="btn-primary whitespace-nowrap px-3 py-1.5 text-xs disabled:opacity-50"
+                                          >
+                                            Apply to {bulkSel.size} DOS
+                                          </button>
+                                        </div>
+                                        <p className="text-[10px] text-surface-muted">
+                                          Stamped with today&apos;s date and your initials, and
+                                          prepended to each selected claim&apos;s notes.
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             {/* Actions */}
