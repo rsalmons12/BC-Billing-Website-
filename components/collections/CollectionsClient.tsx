@@ -231,11 +231,16 @@ export default function CollectionsClient({
       return;
     }
     const entry = `${todayStamp()} (${init}): ${bulkText.trim()}`;
+    const d = new Date();
+    const todayISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
     for (const cid of claimIds) {
       const existing = rows.find((x) => x.claim_id === cid)?.work?.notes ?? "";
       patchRow(cid, {
         notes: existing.trim() ? `${entry}\n${existing}` : entry,
         initials: init,
+        date_worked: todayISO, // adding a note counts the claim as worked
       });
     }
     setSaveState(`Note attached to ${claimIds.length} DOS`);
