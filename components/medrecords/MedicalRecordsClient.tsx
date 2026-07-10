@@ -7,37 +7,40 @@ import { RECORD_STATUS_OPTIONS, type Facility } from "@/lib/types";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
-// Status buckets to surface at the top, in workflow order. "Received" folds in
-// the ways records arrive (Faxed / Electronically / Mailed) so the count
-// reflects everything actually in hand.
-const RECEIVED_STATES = new Set(["received", "faxed", "electronically", "mailed"]);
+// Every record status gets its own count tile, plus a "No status" tile for
+// rows that haven't been marked yet.
+const STATUS_TILES: { key: string; label: string; accent?: "recovered" | "gold" | "risk" | "secured" }[] = [
+  { key: "requested", label: "Requested" },
+  { key: "received", label: "Received", accent: "secured" },
+  { key: "faxed", label: "Faxed", accent: "secured" },
+  { key: "electronically", label: "Electronically", accent: "secured" },
+  { key: "mailed", label: "Mailed", accent: "secured" },
+  { key: "appeal", label: "Appeal", accent: "gold" },
+  { key: "denied", label: "Denied", accent: "risk" },
+  { key: "approved", label: "Approved", accent: "recovered" },
+  { key: "__blank__", label: "No status", accent: "risk" },
+];
 
 // Visual summary: a count per record status plus charge/paid totals. Uses the
 // currently filtered rows (respects the facility + month filters).
 function renderSummary(rows: Array<Record<string, unknown>>) {
-  const counts = { requested: 0, received: 0, appeal: 0, denied: 0, approved: 0, blank: 0 };
+  const counts: Record<string, number> = {};
   let totalCharge = 0;
   let totalPaid = 0;
   for (const r of rows) {
     totalCharge += num(r.charge_amount);
     totalPaid += num(r.paid_amount);
     const s = String(r.record_status ?? "").trim().toLowerCase();
-    if (!s) counts.blank += 1;
-    else if (s === "requested") counts.requested += 1;
-    else if (RECEIVED_STATES.has(s)) counts.received += 1;
-    else if (s === "appeal") counts.appeal += 1;
-    else if (s === "denied") counts.denied += 1;
-    else if (s === "approved") counts.approved += 1;
+    const key = s || "__blank__";
+    counts[key] = (counts[key] ?? 0) + 1;
   }
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <SumCard label="Requested" value={String(counts.requested)} />
-        <SumCard label="Received" value={String(counts.received)} accent="secured" />
-        <SumCard label="Appeal" value={String(counts.appeal)} accent="gold" />
-        <SumCard label="Denied" value={String(counts.denied)} accent="risk" />
-        <SumCard label="Approved" value={String(counts.approved)} accent="recovered" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        {STATUS_TILES.map((t) => (
+          <SumCard key={t.key} label={t.label} value={String(counts[t.key] ?? 0)} accent={t.accent} />
+        ))}
         <SumCard label="Records" value={String(rows.length)} />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
