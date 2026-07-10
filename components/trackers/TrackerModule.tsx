@@ -603,15 +603,18 @@ function Cell({
   }
 
   if (col.kind === "select") {
+    const isEmpty = !String(value ?? "").trim();
     return (
       <select
         value={String(value ?? "")}
         onChange={(e) => onSave(e.target.value)}
-        className={`cell-input ${col.min ?? "min-w-[8rem]"}`}
+        className={`cell-input ${col.min ?? "min-w-[8rem]"} ${
+          isEmpty ? "font-semibold text-risk ring-1 ring-risk/40" : ""
+        }`}
       >
         {(col.options ?? []).map((o) => (
           <option key={o} value={o}>
-            {o || "—"}
+            {o || "— No status —"}
           </option>
         ))}
       </select>
