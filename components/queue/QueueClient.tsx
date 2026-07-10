@@ -599,6 +599,7 @@ export default function QueueClient({
       patchRow(cid, {
         notes: existing.trim() ? `${entry}\n${existing}` : entry,
         initials: init,
+        date_worked: today, // adding a note counts the claim as worked
       });
     }
     setBulkFor(null);
@@ -606,17 +607,9 @@ export default function QueueClient({
   };
 
   // The "✓ Worked" quick action: stamp today + the collector's initials.
-  // A CollaborateMD note is REQUIRED — a claim can't be marked worked without
-  // one, because that note is what the bot pushes into CollaborateMD.
+  // Mark a claim worked — just stamps today + the collector's initials. Adding
+  // a note also marks it worked, so this is the manual shortcut.
   const markWorked = (r: ClaimRow) => {
-    const cmd = (r.work?.collab_note ?? "").trim();
-    if (!cmd) {
-      alert(
-        "Add a CollaborateMD note before marking this claim worked.\n\n" +
-          'Type the update in the "CMD Note" column — that\'s the note pushed into CollaborateMD.'
-      );
-      return;
-    }
     patchRow(r.claim_id, {
       date_worked: today,
       initials: collector.initials || r.work?.initials || "",
@@ -1008,23 +1001,20 @@ export default function QueueClient({
               <th className="th">Age</th>
               <th className="th text-right">Balance</th>
               <th className="th">Status</th>
-              <th className="th min-w-[14rem]">
-                CMD Note <span className="text-risk">*</span>
-              </th>
               <th className="th">Done</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={8} className="td py-10 text-center text-surface-muted">
+                <td colSpan={7} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={8} className="td py-10 text-center text-surface-muted">
+                <td colSpan={7} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
@@ -1107,17 +1097,6 @@ export default function QueueClient({
                         />
                       </td>
                       <td className="td">
-                        <CmdNoteCell
-                          value={w.collab_note}
-                          initials={collector.initials || ""}
-                          placeholder={done ? "" : "Required — pushed to CollaborateMD"}
-                          className={
-                            !done && !(w.collab_note ?? "").trim() ? "ring-1 ring-risk/40" : ""
-                          }
-                          onSave={(v) => patchRow(r.claim_id, { collab_note: v })}
-                        />
-                      </td>
-                      <td className="td">
                         {done ? (
                           <button
                             onClick={() => undoWorked(r)}
@@ -1188,7 +1167,13 @@ export default function QueueClient({
                               <AddNote
                                 value={w.notes}
                                 defaultInitials={collector.initials || ""}
-                                onSave={(v) => patchRow(r.claim_id, { notes: v })}
+                                onSave={(v) =>
+                                  patchRow(r.claim_id, {
+                                    notes: v,
+                                    date_worked: today,
+                                    initials: collector.initials || r.work?.initials || "",
+                                  })
+                                }
                               />
                               {(() => {
                                 const sibs = siblingsOf(r.claim_id);
@@ -1588,66 +1573,6 @@ function StatusCell({
       onBlur={() => v !== value && onSave(v)}
       className="min-w-[12rem] max-w-[16rem] text-xs"
       placeholder="Status…"
-    />
-  );
-}
-
-function NotesCell({
-  value,
-  onSave,
-  placeholder = "Add a note…",
-  className = "",
-}: {
-  value: string;
-  onSave: (v: string) => void;
-  placeholder?: string;
-  className?: string;
-}) {
-  const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
-  return (
-    <AutoTextarea
-      value={v}
-      onChange={setV}
-      onBlur={() => v !== value && onSave(v)}
-      className={`min-w-[14rem] max-w-[28rem] ${className}`}
-      placeholder={placeholder}
-    />
-  );
-}
-
-// The CollaborateMD note — auto-stamped with today's date + the collector's
-// initials on save (never a past date), so the note pushed to CollaborateMD is
-// always dated and attributed. Doesn't re-stamp an already-stamped note.
-function CmdNoteCell({
-  value,
-  initials,
-  onSave,
-  placeholder = "",
-  className = "",
-}: {
-  value: string;
-  initials: string;
-  onSave: (v: string) => void;
-  placeholder?: string;
-  className?: string;
-}) {
-  const stamp = (v: string) => {
-    const t = v.trim();
-    if (!t) return "";
-    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}\s*\(/.test(t)) return t; // already stamped
-    const d = new Date();
-    const date = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(
-      d.getDate()
-    ).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
-    return `${date} (${(initials || "").trim().toUpperCase()}): ${t}`;
-  };
-  return (
-    <NotesCell
-      value={value}
-      placeholder={placeholder}
-      className={className}
-      onSave={(v) => onSave(stamp(v))}
     />
   );
 }
