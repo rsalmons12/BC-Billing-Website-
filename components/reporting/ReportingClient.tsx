@@ -16,7 +16,13 @@ type ProdRow = {
 };
 type AnyRow = Record<string, unknown>;
 
-type Dept = "collectors" | "repricing" | "negotiations" | "payments";
+type Dept =
+  | "collectors"
+  | "repricing"
+  | "negotiations"
+  | "payments"
+  | "authorizations"
+  | "auth_issues";
 
 function toNum(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -58,6 +64,8 @@ const DEPTS: { key: Dept; label: string }[] = [
   { key: "repricing", label: "Repricing" },
   { key: "negotiations", label: "Negotiations" },
   { key: "payments", label: "Payments" },
+  { key: "authorizations", label: "Authorizations" },
+  { key: "auth_issues", label: "Auth Issues" },
 ];
 
 export default function ReportingClient({
@@ -187,6 +195,17 @@ export default function ReportingClient({
           loading={loading}
           facName={facName}
           colName={colName}
+        />
+      ) : dept === "authorizations" || dept === "auth_issues" ? (
+        <AuthReport
+          dept={dept}
+          today={today}
+          rows={deptRows}
+          loading={loading}
+          facilities={facilities}
+          facilityFilter={facilityFilter}
+          setFacilityFilter={setFacilityFilter}
+          facName={facName}
         />
       ) : (
         <DeptReport
@@ -738,7 +757,7 @@ function DeptReport({
 }) {
   // The money column + label per department.
   const cfg: Record<
-    Exclude<Dept, "collectors">,
+    "repricing" | "negotiations" | "payments",
     { amountKey: string; label: string; secondKey?: string; secondLabel?: string }
   > = {
     repricing: {
@@ -755,7 +774,7 @@ function DeptReport({
       secondLabel: "Negotiated",
     },
   };
-  const c = cfg[dept as Exclude<Dept, "collectors">];
+  const c = cfg[dept as "repricing" | "negotiations" | "payments"];
 
   const filtered = useMemo(
     () =>
@@ -897,6 +916,324 @@ function DeptReport({
             touched in each 7-day window — a quick read on movement. Totals reflect
             everything currently imported for the selected facility.
           </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ===================== Authorizations / Auth Issues ===================== */
+
+const AUTH_ISSUE_STATUS_LIST = ["Not Worked", "Working", "Completed"];
+
+function AuthReport({
+  dept,
+  today,
+  rows,
+  loading,
+  facilities,
+  facilityFilter,
+  setFacilityFilter,
+  facName,
+}: {
+  dept: "authorizations" | "auth_issues";
+  today: string;
+  rows: AnyRow[];
+  loading: boolean;
+  facilities: Facility[];
+  facilityFilter: string;
+  setFacilityFilter: (v: string) => void;
+  facName: (id: string | null) => string;
+}) {
+  const filtered = useMemo(
+    () =>
+      rows.filter(
+        (r) => facilityFilter === "all" || (r.facility_id as string) === facilityFilter
+      ),
+    [rows, facilityFilter]
+  );
+
+  // ----- Authorizations -----
+  const authStats = useMemo(() => {
+    let active = 0;
+    let discharged = 0;
+    let activeDays = 0;
+    let reviewsDue = 0; // active auths with a review date in the next 7 days
+    const soon = addDays(today, 7);
+    const byLoc = new Map<string, { patients: number; days: number }>();
+    const byFac = new Map<string, { total: number; active: number; days: number }>();
+    for (const r of filtered) {
+      const isDischarged = Boolean(r.discharged);
+      const days = toNum(r.total_days);
+      const fid = (r.facility_id as string) ?? "—";
+      if (!byFac.has(fid)) byFac.set(fid, { total: 0, active: 0, days: 0 });
+      const fe = byFac.get(fid)!;
+      fe.total += 1;
+      if (isDischarged) {
+        discharged += 1;
+      } else {
+        active += 1;
+        activeDays += days;
+        fe.active += 1;
+        fe.days += days;
+        const loc = String(r.level_of_care ?? "").trim();
+        if (loc) {
+          if (!byLoc.has(loc)) byLoc.set(loc, { patients: 0, days: 0 });
+          const le = byLoc.get(loc)!;
+          le.patients += 1;
+          le.days += days;
+        }
+        const nr = String(r.next_review_date ?? "").slice(0, 10);
+        if (nr && nr >= today && nr <= soon) reviewsDue += 1;
+      }
+    }
+    return {
+      total: filtered.length,
+      active,
+      discharged,
+      activeDays,
+      reviewsDue,
+      locRows: Array.from(byLoc.entries())
+        .map(([loc, e]) => ({ loc, ...e }))
+        .sort((a, b) => b.patients - a.patients),
+      facRows: Array.from(byFac.entries())
+        .map(([id, e]) => ({ id, name: facName(id), ...e }))
+        .sort((a, b) => b.active - a.active),
+    };
+  }, [filtered, today, facName]);
+
+  // ----- Auth Issues -----
+  const issueStats = useMemo(() => {
+    const byStatus: Record<string, number> = {};
+    let mgmt = 0;
+    let atStake = 0;
+    let fromCollections = 0;
+    let completed = 0;
+    const byFac = new Map<
+      string,
+      { total: number; open: number; completed: number; atStake: number }
+    >();
+    for (const r of filtered) {
+      const status = String(r.status ?? "").trim() || "Not Worked";
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
+      const isDone = status === "Completed";
+      if (isDone) completed += 1;
+      if (r.mgmt_needed) mgmt += 1;
+      if (r.from_collection) fromCollections += 1;
+      const amt = toNum(r.charge_amount);
+      if (!isDone) atStake += amt;
+      const fid = (r.facility_id as string) ?? "—";
+      if (!byFac.has(fid)) byFac.set(fid, { total: 0, open: 0, completed: 0, atStake: 0 });
+      const fe = byFac.get(fid)!;
+      fe.total += 1;
+      if (isDone) fe.completed += 1;
+      else {
+        fe.open += 1;
+        fe.atStake += amt;
+      }
+    }
+    return {
+      total: filtered.length,
+      byStatus,
+      mgmt,
+      atStake,
+      fromCollections,
+      completed,
+      facRows: Array.from(byFac.entries())
+        .map(([id, e]) => ({ id, name: facName(id), ...e }))
+        .sort((a, b) => b.open - a.open),
+    };
+  }, [filtered, facName]);
+
+  const exportRows: ExportRow[] = useMemo(() => {
+    if (dept === "authorizations") {
+      return authStats.facRows.map((f) => ({
+        Facility: f.name,
+        Active: f.active,
+        Discharged: f.total - f.active,
+        "Auth Days (active)": f.days,
+        Total: f.total,
+      }));
+    }
+    return issueStats.facRows.map((f) => ({
+      Facility: f.name,
+      Open: f.open,
+      Completed: f.completed,
+      "$ At Stake": Math.round(f.atStake),
+      Total: f.total,
+    }));
+  }, [dept, authStats.facRows, issueStats.facRows]);
+
+  return (
+    <div className="space-y-5">
+      <div className="card flex flex-wrap items-end gap-3 p-4">
+        <div>
+          <span className="label">Facility</span>
+          <select
+            value={facilityFilter}
+            onChange={(e) => setFacilityFilter(e.target.value)}
+            className="input min-w-[14rem]"
+          >
+            <option value="all">All facilities</option>
+            {facilities.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.short_name || f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="ml-auto">
+          <ExportButton
+            rows={exportRows}
+            filename={`${dept}-summary.xlsx`}
+            sheet="Summary"
+            label="Export"
+          />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="card p-10 text-center text-surface-muted">
+          Loading {dept === "authorizations" ? "authorizations" : "auth issues"}…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="card p-10 text-center text-surface-muted">
+          No {dept === "authorizations" ? "authorizations" : "auth issues"} yet for the
+          selected facility.
+        </div>
+      ) : dept === "authorizations" ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Stat label="Active auths" value={num(authStats.active)} accent="recovered" />
+            <Stat label="Discharged" value={num(authStats.discharged)} />
+            <Stat label="Auth days (active)" value={num(authStats.activeDays)} accent="gold" />
+            <Stat label="Reviews due ≤7d" value={num(authStats.reviewsDue)} accent="risk" />
+            <Stat label="Total auths" value={num(authStats.total)} />
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              Active by level of care
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-surface">
+                <tr>
+                  <th className="th">Level of Care</th>
+                  <th className="th text-right">Patients</th>
+                  <th className="th text-right">Total Days</th>
+                </tr>
+              </thead>
+              <tbody>
+                {authStats.locRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="td py-4 text-center text-surface-muted">
+                      No level of care entered on active auths.
+                    </td>
+                  </tr>
+                ) : (
+                  authStats.locRows.map((l, i) => (
+                    <tr key={l.loc} className={i % 2 ? "bg-surface/40" : ""}>
+                      <td className="td font-medium">{l.loc}</td>
+                      <td className="td text-right font-mono">{l.patients}</td>
+                      <td className="td text-right font-mono">{l.days}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              By facility
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-surface">
+                <tr>
+                  <th className="th">Facility</th>
+                  <th className="th text-right">Active</th>
+                  <th className="th text-right">Discharged</th>
+                  <th className="th text-right">Auth Days</th>
+                  <th className="th text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {authStats.facRows.map((f, i) => (
+                  <tr key={f.id} className={i % 2 ? "bg-surface/40" : ""}>
+                    <td className="td font-medium">{f.name}</td>
+                    <td className="td text-right font-mono">{f.active}</td>
+                    <td className="td text-right font-mono">{f.total - f.active}</td>
+                    <td className="td text-right font-mono">{f.days}</td>
+                    <td className="td text-right font-mono">{f.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Stat
+              label="Open"
+              value={num(issueStats.total - issueStats.completed)}
+              accent="risk"
+            />
+            <Stat label="Completed" value={num(issueStats.completed)} accent="recovered" />
+            <Stat label="Needs mgmt" value={num(issueStats.mgmt)} accent="gold" />
+            <Stat label="$ at stake" value={money(issueStats.atStake)} />
+            <Stat label="From Collections" value={num(issueStats.fromCollections)} />
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              By status
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-surface">
+                <tr>
+                  <th className="th">Status</th>
+                  <th className="th text-right">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {AUTH_ISSUE_STATUS_LIST.map((s, i) => (
+                  <tr key={s} className={i % 2 ? "bg-surface/40" : ""}>
+                    <td className="td font-medium">{s}</td>
+                    <td className="td text-right font-mono">{issueStats.byStatus[s] ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              By facility
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-surface">
+                <tr>
+                  <th className="th">Facility</th>
+                  <th className="th text-right">Open</th>
+                  <th className="th text-right">Completed</th>
+                  <th className="th text-right">$ At Stake</th>
+                  <th className="th text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issueStats.facRows.map((f, i) => (
+                  <tr key={f.id} className={i % 2 ? "bg-surface/40" : ""}>
+                    <td className="td font-medium">{f.name}</td>
+                    <td className="td text-right font-mono">{f.open}</td>
+                    <td className="td text-right font-mono">{f.completed}</td>
+                    <td className="td text-right font-mono">{money(f.atStake)}</td>
+                    <td className="td text-right font-mono">{f.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>
