@@ -13,6 +13,38 @@ const chunk = <T,>(arr: T[], n: number): T[][] => {
   return out;
 };
 
+// A cell input that saves on blur only when the value actually changed. Keyed
+// by its incoming value so an external refresh (import/reload) reflows it.
+function EditText({
+  value,
+  onSave,
+  className = "",
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  className?: string;
+}) {
+  return (
+    <input
+      key={value}
+      defaultValue={value}
+      onBlur={(e) => {
+        if (e.target.value !== value) onSave(e.target.value);
+      }}
+      className={`cell-input ${className}`}
+    />
+  );
+}
+
+function addDaysIso(iso: string, n: number): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
 function weekLabelFrom(iso: string): string {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return iso;
@@ -87,12 +119,15 @@ export default function CensusClient({
     [rows, week]
   );
 
-  // Day columns for the selected week (union of day keys across its rows).
+  // Day columns for the selected week (union of day keys across its rows). A
+  // fresh, hand-keyed week with no codes yet still shows 7 day columns derived
+  // from the week start, so there's a grid to type into.
   const dayCols = useMemo(() => {
     const s = new Set<string>();
     for (const r of weekRows) for (const k of Object.keys(r.days ?? {})) s.add(k);
+    if (s.size === 0 && week) for (let i = 0; i < 7; i++) s.add(addDaysIso(week, i));
     return Array.from(s).sort();
-  }, [weekRows]);
+  }, [weekRows, week]);
 
   const tally = useMemo(
     () => tallySessions(weekRows.map((r) => ({ days: r.days ?? {} }))),
@@ -114,10 +149,58 @@ export default function CensusClient({
   );
 
   const setDay = (r: Census, iso: string, code: string) => {
-    const days = { ...(r.days ?? {}) };
-    if (code.trim()) days[iso] = code.trim();
-    else delete days[iso];
+    // Keep the key even when blank so a hand-keyed week never loses its columns.
+    const days = { ...(r.days ?? {}), [iso]: code.trim() };
     save(r.id, { days });
+  };
+
+  // Insert a blank patient row into a week, seeded with that week's 7 day
+  // columns (empty) so there's a full grid to type into.
+  const addPatientRow = useCallback(
+    async (weekStart: string) => {
+      if (!facilityId || !weekStart) return;
+      const days: Record<string, string> = {};
+      for (let i = 0; i < 7; i++) days[addDaysIso(weekStart, i)] = "";
+      setMsg("Adding patient…");
+      const { data, error } = await supabase
+        .from("census")
+        .insert({
+          facility_id: facilityId,
+          week_start: weekStart,
+          week_label: weekLabelFrom(weekStart),
+          days,
+          billing_status: "",
+          updated_by: userId,
+        })
+        .select()
+        .single();
+      if (error) {
+        setMsg(`Error: ${error.message}`);
+        return;
+      }
+      setRows((prev) => [...prev, data as Census]);
+      setMsg("Patient added");
+      setTimeout(() => setMsg(""), 900);
+    },
+    [supabase, facilityId, userId]
+  );
+
+  // Start a brand-new week (from its Monday) and drop in the first blank row.
+  const [newWeek, setNewWeek] = useState("");
+  const addWeek = async () => {
+    if (!newWeek) {
+      setMsg("Pick a week-start date first.");
+      return;
+    }
+    await addPatientRow(newWeek);
+    setWeek(newWeek);
+    setNewWeek("");
+  };
+
+  const deleteRow = async (id: string) => {
+    if (!confirm("Remove this client from the census?")) return;
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    await supabase.from("census").delete().eq("id", id);
   };
 
   const doImport = async (file: File) => {
@@ -230,6 +313,35 @@ export default function CensusClient({
           ↥ Import weekly census
         </button>
 
+        {week && (
+          <button
+            onClick={() => addPatientRow(week)}
+            className="btn-ghost"
+            disabled={!facilityId}
+            title="Add a blank client row to this week"
+          >
+            + Add patient
+          </button>
+        )}
+
+        <div className="flex items-center gap-1 rounded-lg border border-surface-border px-2 py-1">
+          <span className="text-[11px] text-surface-muted">New week</span>
+          <input
+            type="date"
+            value={newWeek}
+            onChange={(e) => setNewWeek(e.target.value)}
+            className="input py-1 text-xs"
+            title="Week start (Monday)"
+          />
+          <button
+            onClick={addWeek}
+            className="badge bg-command px-2 py-1 text-[11px] font-semibold text-command-text"
+            disabled={!facilityId || !newWeek}
+          >
+            + Start
+          </button>
+        </div>
+
         <div className="ml-auto flex items-center gap-3 text-xs">
           {msg && <span className="font-medium text-secured">{msg}</span>}
           <span className="text-surface-muted">
@@ -254,7 +366,8 @@ export default function CensusClient({
           <p className="p-8 text-center text-sm text-surface-muted">Loading census…</p>
         ) : weeks.length === 0 ? (
           <p className="p-8 text-center text-sm text-surface-muted">
-            No census yet for {facName}. Click “↥ Import weekly census” to add this week’s grid.
+            No census yet for {facName}. Import a workbook with “↥ Import weekly census”, or pick a
+            “New week” date above and hit “+ Start” to key it in by hand.
           </p>
         ) : (
           <table className="w-full border-separate border-spacing-0 text-sm">
@@ -273,33 +386,73 @@ export default function CensusClient({
                 ))}
                 <th className="th min-w-[11rem]">Billing Status</th>
                 <th className="th min-w-[12rem]">Comments</th>
+                <th className="th"></th>
               </tr>
             </thead>
             <tbody>
               {weekRows.length === 0 && (
                 <tr>
-                  <td colSpan={8 + dayCols.length} className="td py-8 text-center text-surface-muted">
-                    No clients for this week.
+                  <td colSpan={9 + dayCols.length} className="td py-8 text-center text-surface-muted">
+                    No clients yet for this week.{" "}
+                    <button
+                      onClick={() => addPatientRow(week)}
+                      className="font-semibold text-command hover:underline"
+                    >
+                      + Add the first patient
+                    </button>
                   </td>
                 </tr>
               )}
               {weekRows.map((r, i) => (
                 <tr key={r.id} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>
-                  <td className="td whitespace-nowrap text-xs">{r.level_of_care || "—"}</td>
-                  <td className="td sticky left-0 bg-inherit font-medium">{r.patient_name || "—"}</td>
-                  <td className="td text-xs text-surface-muted">{r.admit_date || "—"}</td>
-                  <td className="td text-xs">{r.insurance || "—"}</td>
-                  <td className="td font-mono text-xs">{r.member_id || "—"}</td>
-                  <td className="td text-xs">{r.auth || "—"}</td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.level_of_care ?? ""}
+                      onSave={(v) => save(r.id, { level_of_care: v })}
+                      className="w-20 text-xs"
+                    />
+                  </td>
+                  <td className="td sticky left-0 bg-inherit p-0.5">
+                    <EditText
+                      value={r.patient_name ?? ""}
+                      onSave={(v) => save(r.id, { patient_name: v })}
+                      className="min-w-[9rem] font-medium"
+                    />
+                  </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.admit_date ?? ""}
+                      onSave={(v) => save(r.id, { admit_date: v })}
+                      className="w-24 text-xs"
+                    />
+                  </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.insurance ?? ""}
+                      onSave={(v) => save(r.id, { insurance: v })}
+                      className="w-28 text-xs"
+                    />
+                  </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.member_id ?? ""}
+                      onSave={(v) => save(r.id, { member_id: v })}
+                      className="w-28 font-mono text-xs"
+                    />
+                  </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.auth ?? ""}
+                      onSave={(v) => save(r.id, { auth: v })}
+                      className="w-24 text-xs"
+                    />
+                  </td>
                   {dayCols.map((d) => (
                     <td key={d} className="td p-0.5">
-                      <input
-                        defaultValue={r.days?.[d] ?? ""}
-                        onBlur={(e) => {
-                          if ((e.target.value ?? "") !== (r.days?.[d] ?? ""))
-                            setDay(r, d, e.target.value);
-                        }}
-                        className="cell-input w-20 text-center text-xs"
+                      <EditText
+                        value={r.days?.[d] ?? ""}
+                        onSave={(v) => setDay(r, d, v)}
+                        className="w-20 text-center text-xs"
                       />
                     </td>
                   ))}
@@ -322,14 +475,20 @@ export default function CensusClient({
                     </select>
                   </td>
                   <td className="td p-0.5">
-                    <input
-                      defaultValue={r.comments ?? ""}
-                      onBlur={(e) => {
-                        if ((e.target.value ?? "") !== (r.comments ?? ""))
-                          save(r.id, { comments: e.target.value });
-                      }}
-                      className="cell-input min-w-[11rem] text-xs"
+                    <EditText
+                      value={r.comments ?? ""}
+                      onSave={(v) => save(r.id, { comments: v })}
+                      className="min-w-[11rem] text-xs"
                     />
+                  </td>
+                  <td className="td text-center">
+                    <button
+                      onClick={() => deleteRow(r.id)}
+                      className="text-surface-muted hover:text-risk"
+                      title="Remove client"
+                    >
+                      ✕
+                    </button>
                   </td>
                 </tr>
               ))}
