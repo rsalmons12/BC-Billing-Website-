@@ -332,6 +332,7 @@ export interface Census {
   step_up: string | null;
   repriced: string | null;
   days: Record<string, string> | null;
+  day_status: Record<string, string> | null; // { "YYYY-MM-DD": "billed"|"pending"|"scholarship" }
   billing_status: string;
   notes: string;
   updated_by: string | null;

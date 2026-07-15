@@ -42,6 +42,19 @@ function EditText({
   );
 }
 
+// Per-day billing color: click a day box to cycle through these.
+const DAY_STATUS_CYCLE = ["", "billed", "pending", "scholarship"];
+const DAY_STATUS_BG: Record<string, string> = {
+  billed: "bg-recovered/25",
+  pending: "bg-gold/25",
+  scholarship: "bg-risk/25",
+};
+const DAY_STATUS_LABEL: Record<string, string> = {
+  billed: "Billed",
+  pending: "Pending",
+  scholarship: "Scholarship",
+};
+
 // Weekly rules from the census Summary sheet (per client, per week).
 const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
 const REQ_CODES = ["GN", "CM", "PF", "ID"] as const;
@@ -190,6 +203,18 @@ export default function CensusClient({
     // Keep the key even when blank so a hand-keyed week never loses its columns.
     const days = { ...(r.days ?? {}), [iso]: code.trim() };
     save(r.id, { days });
+  };
+
+  // Click a day box to cycle its billing color: none → billed (green) →
+  // pending (orange) → scholarship (red) → none.
+  const cycleDayStatus = (r: Census, iso: string) => {
+    const cur = (r.day_status ?? {})[iso] ?? "";
+    const idx = DAY_STATUS_CYCLE.indexOf(cur);
+    const next = DAY_STATUS_CYCLE[(idx + 1) % DAY_STATUS_CYCLE.length];
+    const day_status = { ...(r.day_status ?? {}) };
+    if (next) day_status[iso] = next;
+    else delete day_status[iso];
+    save(r.id, { day_status });
   };
 
   // Insert a blank patient row into a week, seeded with that week's 7 day
@@ -442,6 +467,17 @@ export default function CensusClient({
 
         <div className="ml-auto flex items-center gap-3 text-xs">
           {msg && <span className="font-medium text-secured">{msg}</span>}
+          <div className="flex items-center gap-2 text-[11px] text-surface-muted">
+            <span className="flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-recovered" /> Billed
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-gold" /> Pending
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-risk" /> Scholarship
+            </span>
+          </div>
           <span className="text-surface-muted">
             <b className="text-surface-ink">{weekRows.length}</b> clients
           </span>
@@ -583,15 +619,37 @@ export default function CensusClient({
                       className="w-20 text-xs"
                     />
                   </td>
-                  {dayCols.map((d) => (
-                    <td key={d} className="td p-0.5">
-                      <EditText
-                        value={r.days?.[d] ?? ""}
-                        onSave={(v) => setDay(r, d, v)}
-                        className="w-20 text-center text-xs"
-                      />
-                    </td>
-                  ))}
+                  {dayCols.map((d) => {
+                    const st = (r.day_status ?? {})[d] ?? "";
+                    return (
+                      <td key={d} className={`td p-0.5 ${DAY_STATUS_BG[st] ?? ""}`}>
+                        <div className="flex items-center gap-0.5">
+                          <EditText
+                            value={r.days?.[d] ?? ""}
+                            onSave={(v) => setDay(r, d, v)}
+                            className="w-16 text-center text-xs"
+                          />
+                          <button
+                            onClick={() => cycleDayStatus(r, d)}
+                            title={
+                              st
+                                ? `${DAY_STATUS_LABEL[st]} — click to change`
+                                : "Mark billing color"
+                            }
+                            className={`h-4 w-4 shrink-0 rounded-full border ${
+                              st === "billed"
+                                ? "border-recovered bg-recovered"
+                                : st === "pending"
+                                  ? "border-gold bg-gold"
+                                  : st === "scholarship"
+                                    ? "border-risk bg-risk"
+                                    : "border-surface-border bg-surface"
+                            }`}
+                          />
+                        </div>
+                      </td>
+                    );
+                  })}
                   <td className="td whitespace-nowrap text-center text-[11px] text-surface-muted">
                     {REQ_CODES.filter((c) => req[c] > 0)
                       .map((c) => `${c}${req[c]}`)
