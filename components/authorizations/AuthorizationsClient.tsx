@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
+import { logAuthActivity } from "@/lib/activity";
 import {
   ImportPanel,
   SumCard,
@@ -101,6 +102,11 @@ export default function AuthorizationsClient({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Authorization[]>([]);
+  // Mirror of rows for stable lookups inside callbacks (e.g. activity logging).
+  const rowsRef = useRef<Authorization[]>([]);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
   const [loading, setLoading] = useState(true);
   const [facilityFilter, setFacilityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -150,7 +156,17 @@ export default function AuthorizationsClient({
         .update({ [key]: value, updated_by: userId, updated_at: new Date().toISOString() })
         .eq("id", id);
       setSaveState(error ? `Error: ${error.message}` : "Saved");
-      if (!error) setTimeout(() => setSaveState(""), 900);
+      if (!error) {
+        setTimeout(() => setSaveState(""), 900);
+        const fac = rowsRef.current.find((r) => r.id === id)?.facility_id ?? null;
+        logAuthActivity(supabase, {
+          record_type: "authorization",
+          record_id: id,
+          facility_id: fac,
+          action: "update",
+          field: String(key),
+        });
+      }
     },
     [supabase, userId]
   );
@@ -182,6 +198,12 @@ export default function AuthorizationsClient({
       setRows((prev) => [data as Authorization, ...prev]);
       setSaveState("Review added");
       setTimeout(() => setSaveState(""), 900);
+      logAuthActivity(supabase, {
+        record_type: "authorization",
+        record_id: (data as Authorization).id,
+        facility_id,
+        action: "create",
+      });
     },
     [supabase, userId]
   );

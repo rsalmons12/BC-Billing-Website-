@@ -954,17 +954,46 @@ function AuthReport({
   const [prodFrom, setProdFrom] = useState(addDays(today, -6));
   const [prodTo, setProdTo] = useState(today);
 
-  // People who have actually worked these records (for the "Worked by" filter).
+  // Daily production comes from the per-action activity log (auth_activity):
+  // every edit is credited to whoever made it on the day it happened.
+  const supabase = useMemo(() => createClient(), []);
+  const recordType = dept === "authorizations" ? "authorization" : "auth_issue";
+  const [activity, setActivity] = useState<AnyRow[]>([]);
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const rowsA = await selectAll<AnyRow>((f, t) =>
+        supabase
+          .from("auth_activity")
+          .select("*")
+          .eq("record_type", recordType)
+          .gte("worked_on", prodFrom)
+          .lte("worked_on", prodTo)
+          .range(f, t)
+      ).catch(() => [] as AnyRow[]);
+      if (!cancel) setActivity(rowsA);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [supabase, recordType, prodFrom, prodTo]);
+
+  // People who have worked these records (for the "Worked by" filter) — from
+  // the records' last editor and from the activity log.
   const people = useMemo(() => {
     const seen = new Set<string>();
     for (const r of rows) {
       const id = (r.updated_by as string) ?? "";
       if (id) seen.add(id);
     }
+    for (const a of activity) {
+      const id = (a.actor_id as string) ?? "";
+      if (id) seen.add(id);
+    }
     return Array.from(seen)
       .map((id) => ({ id, name: colName(id) }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows, colName]);
+  }, [rows, activity, colName]);
 
   const filtered = useMemo(
     () =>
@@ -976,28 +1005,32 @@ function AuthReport({
     [rows, facilityFilter, person]
   );
 
-  // Daily production: who worked how many records each day (by updated_by /
-  // updated_at). A record counts on the day it was last touched.
   const production = useMemo(() => {
     const days = dateRange(prodFrom, prodTo);
+    // Count each record once per person per day (many edits = one credit/day).
+    const seen = new Set<string>();
     const byPerson = new Map<string, { total: number; perDay: Record<string, number> }>();
-    for (const r of filtered) {
-      const d = String(r.updated_at ?? "").slice(0, 10);
+    for (const a of activity) {
+      if (facilityFilter !== "all" && (a.facility_id as string) !== facilityFilter) continue;
+      if (person !== "all" && (a.actor_id as string) !== person) continue;
+      const d = String(a.worked_on ?? "").slice(0, 10);
       if (!d || d < prodFrom || d > prodTo) continue;
-      const id = (r.updated_by as string) ?? "—";
-      if (!byPerson.has(id)) byPerson.set(id, { total: 0, perDay: {} });
-      const e = byPerson.get(id)!;
+      const actor = (a.actor_id as string) ?? "—";
+      const rid = (a.record_id as string) ?? (a.id as string);
+      const key = `${actor}|${d}|${rid}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!byPerson.has(actor)) byPerson.set(actor, { total: 0, perDay: {} });
+      const e = byPerson.get(actor)!;
       e.total += 1;
       e.perDay[d] = (e.perDay[d] ?? 0) + 1;
     }
     const rowsOut = Array.from(byPerson.entries())
       .map(([id, e]) => ({ id, name: colName(id), ...e }))
       .sort((a, b) => b.total - a.total);
-    const dayTotals = days.map((d) =>
-      rowsOut.reduce((s, p) => s + (p.perDay[d] ?? 0), 0)
-    );
+    const dayTotals = days.map((d) => rowsOut.reduce((s, p) => s + (p.perDay[d] ?? 0), 0));
     return { days, rows: rowsOut, dayTotals, grand: rowsOut.reduce((s, p) => s + p.total, 0) };
-  }, [filtered, prodFrom, prodTo, colName]);
+  }, [activity, facilityFilter, person, prodFrom, prodTo, colName]);
 
   // ----- Authorizations -----
   const authStats = useMemo(() => {
