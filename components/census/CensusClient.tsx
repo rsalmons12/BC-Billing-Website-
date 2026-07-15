@@ -83,6 +83,10 @@ function EditMoney({
   );
 }
 
+// Expected reimbursement is a fixed 30% of billed (GN × rate). Change here if
+// the expected percentage differs.
+const EXPECTED_PCT = 0.3;
+
 // Weekly rules from the census Summary sheet (per client, per week).
 const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
 const REQ_CODES = ["GN", "CM", "PF", "ID"] as const;
@@ -219,7 +223,7 @@ export default function CensusClient({
     let paid = 0;
     for (const r of weekRows) {
       const gn = actualsFor(r.days).GN ?? 0;
-      exp += gn * (r.gn_rate ?? 0);
+      exp += gn * (r.gn_rate ?? 0) * EXPECTED_PCT;
       paid += r.paid_amount ?? 0;
     }
     return { exp, paid };
@@ -571,8 +575,8 @@ export default function CensusClient({
                 <th className="th text-right" title="Dollars per GN session">
                   Rate/GN
                 </th>
-                <th className="th text-right" title="GN sessions × rate">
-                  Expected $
+                <th className="th text-right" title="GN sessions × rate × 30%">
+                  Expected $ (30%)
                 </th>
                 <th className="th text-right">Paid $</th>
                 <th className="th min-w-[11rem]">Billing Status</th>
@@ -723,9 +727,9 @@ export default function CensusClient({
                   </td>
                   <td
                     className="td text-right font-mono text-xs"
-                    title={`${act.GN ?? 0} GN × ${money(r.gn_rate ?? 0)}`}
+                    title={`${act.GN ?? 0} GN × ${money(r.gn_rate ?? 0)} × 30%`}
                   >
-                    {money((act.GN ?? 0) * (r.gn_rate ?? 0))}
+                    {money((act.GN ?? 0) * (r.gn_rate ?? 0) * EXPECTED_PCT)}
                   </td>
                   <td className="td p-0.5">
                     <EditMoney
