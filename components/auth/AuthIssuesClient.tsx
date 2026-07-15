@@ -7,6 +7,7 @@ import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { AUTH_ISSUE_STATUSES } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
+import { logAuthActivity } from "@/lib/activity";
 import type { AuthIssue, Facility } from "@/lib/types";
 
 type View = "active" | "completed";
@@ -55,7 +56,16 @@ export default function AuthIssuesClient({
         .update(partial)
         .eq("id", issue.id);
       setSaveState(error ? `Error: ${error.message}` : "Saved");
-      if (!error) setTimeout(() => setSaveState(""), 1000);
+      if (!error) {
+        setTimeout(() => setSaveState(""), 1000);
+        logAuthActivity(supabase, {
+          record_type: "auth_issue",
+          record_id: issue.id,
+          facility_id: issue.facility_id,
+          action: partial.status === "Completed" ? "complete" : "update",
+          field: Object.keys(partial).join(","),
+        });
+      }
     },
     [supabase]
   );
