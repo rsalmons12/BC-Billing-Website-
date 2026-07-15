@@ -5,7 +5,13 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
-import { CENSUS_BILLING_STATUS, type Census, type Facility } from "@/lib/types";
+import {
+  CENSUS_BILLING_STATUS,
+  CENSUS_LOC_OPTIONS,
+  CENSUS_LOC_GN,
+  type Census,
+  type Facility,
+} from "@/lib/types";
 
 const chunk = <T,>(arr: T[], n: number): T[][] => {
   const out: T[][] = [];
@@ -40,10 +46,15 @@ function EditText({
 const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
 const REQ_CODES = ["GN", "CM", "PF", "ID"] as const;
 
-// Program days per week from the level of care (IOP 3 -> 3, IOP CO 5 -> 5 …).
-// GN (group note) is expected once per program day.
+// GN (group note) sessions expected per week for a level of care. Uses the
+// mapped value first (PHP, Detox, Residential … have no number), then falls
+// back to any number in the name (IOP CO 5 -> 5) for imported/legacy values.
 function locProgramDays(loc: string | null): number {
-  const m = String(loc ?? "").match(/(\d+)/);
+  const key = String(loc ?? "").trim().replace(/\s+/g, " ");
+  for (const [name, gn] of Object.entries(CENSUS_LOC_GN)) {
+    if (name.toUpperCase() === key.toUpperCase()) return gn;
+  }
+  const m = key.match(/(\d+)/);
   return m ? Number(m[1]) : 0;
 }
 
@@ -508,11 +519,20 @@ export default function CensusClient({
                 return (
                 <tr key={r.id} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>
                   <td className="td p-0.5">
-                    <EditText
+                    <select
                       value={r.level_of_care ?? ""}
-                      onSave={(v) => save(r.id, { level_of_care: v })}
-                      className="w-20 text-xs"
-                    />
+                      onChange={(e) => save(r.id, { level_of_care: e.target.value })}
+                      className="cell-input min-w-[6.5rem] text-xs"
+                    >
+                      {(CENSUS_LOC_OPTIONS.includes(r.level_of_care ?? "")
+                        ? CENSUS_LOC_OPTIONS
+                        : [r.level_of_care ?? "", ...CENSUS_LOC_OPTIONS]
+                      ).map((loc) => (
+                        <option key={loc} value={loc}>
+                          {loc || "— LOC —"}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="td sticky left-0 bg-inherit p-0.5">
                     <EditText

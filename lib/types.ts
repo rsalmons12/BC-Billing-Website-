@@ -339,6 +339,23 @@ export interface Census {
   updated_at: string;
 }
 
+// Levels of care for the weekly census, each mapped to the GN (group note)
+// sessions expected per week — this is how "Missed GN" is calculated
+// (e.g. IOP 5 → 5 GN/week). Adjust the numbers here if a level differs.
+export const CENSUS_LOC_GN: Record<string, number> = {
+  Detox: 7,
+  Residential: 7,
+  PHP: 5,
+  "PHP MH": 5,
+  "IOP 5": 5,
+  "IOP MH 5": 5,
+  "IOP 4": 4,
+  "IOP 3": 3,
+  "OP 2": 2,
+  "OP 1": 1,
+};
+export const CENSUS_LOC_OPTIONS = ["", ...Object.keys(CENSUS_LOC_GN)];
+
 export const CENSUS_BILLING_STATUS = [
   "",
   "Not Billed",
