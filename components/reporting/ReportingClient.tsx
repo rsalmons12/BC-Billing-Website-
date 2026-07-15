@@ -206,6 +206,7 @@ export default function ReportingClient({
           facilityFilter={facilityFilter}
           setFacilityFilter={setFacilityFilter}
           facName={facName}
+          colName={colName}
         />
       ) : (
         <DeptReport
@@ -935,6 +936,7 @@ function AuthReport({
   facilityFilter,
   setFacilityFilter,
   facName,
+  colName,
 }: {
   dept: "authorizations" | "auth_issues";
   today: string;
@@ -944,20 +946,65 @@ function AuthReport({
   facilityFilter: string;
   setFacilityFilter: (v: string) => void;
   facName: (id: string | null) => string;
+  colName: (id: string | null) => string;
 }) {
+  // Filter by the utilization person who last worked the record (updated_by).
+  const [person, setPerson] = useState("all");
+  // Daily production window.
+  const [prodFrom, setProdFrom] = useState(addDays(today, -6));
+  const [prodTo, setProdTo] = useState(today);
+
+  // People who have actually worked these records (for the "Worked by" filter).
+  const people = useMemo(() => {
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const id = (r.updated_by as string) ?? "";
+      if (id) seen.add(id);
+    }
+    return Array.from(seen)
+      .map((id) => ({ id, name: colName(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, colName]);
+
   const filtered = useMemo(
     () =>
       rows.filter(
-        (r) => facilityFilter === "all" || (r.facility_id as string) === facilityFilter
+        (r) =>
+          (facilityFilter === "all" || (r.facility_id as string) === facilityFilter) &&
+          (person === "all" || (r.updated_by as string) === person)
       ),
-    [rows, facilityFilter]
+    [rows, facilityFilter, person]
   );
+
+  // Daily production: who worked how many records each day (by updated_by /
+  // updated_at). A record counts on the day it was last touched.
+  const production = useMemo(() => {
+    const days = dateRange(prodFrom, prodTo);
+    const byPerson = new Map<string, { total: number; perDay: Record<string, number> }>();
+    for (const r of filtered) {
+      const d = String(r.updated_at ?? "").slice(0, 10);
+      if (!d || d < prodFrom || d > prodTo) continue;
+      const id = (r.updated_by as string) ?? "—";
+      if (!byPerson.has(id)) byPerson.set(id, { total: 0, perDay: {} });
+      const e = byPerson.get(id)!;
+      e.total += 1;
+      e.perDay[d] = (e.perDay[d] ?? 0) + 1;
+    }
+    const rowsOut = Array.from(byPerson.entries())
+      .map(([id, e]) => ({ id, name: colName(id), ...e }))
+      .sort((a, b) => b.total - a.total);
+    const dayTotals = days.map((d) =>
+      rowsOut.reduce((s, p) => s + (p.perDay[d] ?? 0), 0)
+    );
+    return { days, rows: rowsOut, dayTotals, grand: rowsOut.reduce((s, p) => s + p.total, 0) };
+  }, [filtered, prodFrom, prodTo, colName]);
 
   // ----- Authorizations -----
   const authStats = useMemo(() => {
     let active = 0;
     let discharged = 0;
     let activeDays = 0;
+    let pending = 0; // active auths still in "Pending" status
     let reviewsDue = 0; // active auths with a review date in the next 7 days
     const soon = addDays(today, 7);
     const byLoc = new Map<string, { patients: number; days: number }>();
@@ -976,6 +1023,7 @@ function AuthReport({
         activeDays += days;
         fe.active += 1;
         fe.days += days;
+        if (String(r.status ?? "").trim().toLowerCase() === "pending") pending += 1;
         const loc = String(r.level_of_care ?? "").trim();
         if (loc) {
           if (!byLoc.has(loc)) byLoc.set(loc, { patients: 0, days: 0 });
@@ -992,6 +1040,7 @@ function AuthReport({
       active,
       discharged,
       activeDays,
+      pending,
       reviewsDue,
       locRows: Array.from(byLoc.entries())
         .map(([loc, e]) => ({ loc, ...e }))
@@ -1082,6 +1131,21 @@ function AuthReport({
             ))}
           </select>
         </div>
+        <div>
+          <span className="label">Worked by</span>
+          <select
+            value={person}
+            onChange={(e) => setPerson(e.target.value)}
+            className="input min-w-[12rem]"
+          >
+            <option value="all">Everyone</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="ml-auto">
           <ExportButton
             rows={exportRows}
@@ -1103,13 +1167,24 @@ function AuthReport({
         </div>
       ) : dept === "authorizations" ? (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
             <Stat label="Active auths" value={num(authStats.active)} accent="recovered" />
+            <Stat label="Pending" value={num(authStats.pending)} accent="gold" />
             <Stat label="Discharged" value={num(authStats.discharged)} />
             <Stat label="Auth days (active)" value={num(authStats.activeDays)} accent="gold" />
             <Stat label="Reviews due ≤7d" value={num(authStats.reviewsDue)} accent="risk" />
             <Stat label="Total auths" value={num(authStats.total)} />
           </div>
+
+          <DailyProduction
+            title="Daily production — auths worked"
+            production={production}
+            prodFrom={prodFrom}
+            prodTo={prodTo}
+            setProdFrom={setProdFrom}
+            setProdTo={setProdTo}
+            today={today}
+          />
 
           <div className="card overflow-hidden">
             <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
@@ -1185,6 +1260,16 @@ function AuthReport({
             <Stat label="From Collections" value={num(issueStats.fromCollections)} />
           </div>
 
+          <DailyProduction
+            title="Daily production — auth issues worked"
+            production={production}
+            prodFrom={prodFrom}
+            prodTo={prodTo}
+            setProdFrom={setProdFrom}
+            setProdTo={setProdTo}
+            today={today}
+          />
+
           <div className="card overflow-hidden">
             <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
               By status
@@ -1235,6 +1320,122 @@ function AuthReport({
             </table>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function DailyProduction({
+  title,
+  production,
+  prodFrom,
+  prodTo,
+  setProdFrom,
+  setProdTo,
+  today,
+}: {
+  title: string;
+  production: {
+    days: string[];
+    rows: { id: string; name: string; total: number; perDay: Record<string, number> }[];
+    dayTotals: number[];
+    grand: number;
+  };
+  prodFrom: string;
+  prodTo: string;
+  setProdFrom: (v: string) => void;
+  setProdTo: (v: string) => void;
+  today: string;
+}) {
+  const exportRows: ExportRow[] = production.rows.map((p) => {
+    const row: ExportRow = { Person: p.name };
+    for (const d of production.days) row[weekdayLabel(d)] = p.perDay[d] ?? 0;
+    row.Total = p.total;
+    return row;
+  });
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 border-b border-surface-border px-4 py-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-surface-muted">
+          {title}
+        </span>
+        <label className="flex items-center gap-1 text-xs">
+          <span className="text-surface-muted">From</span>
+          <input
+            type="date"
+            value={prodFrom}
+            max={prodTo}
+            onChange={(e) => setProdFrom(e.target.value)}
+            className="input py-1"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-xs">
+          <span className="text-surface-muted">To</span>
+          <input
+            type="date"
+            value={prodTo}
+            max={today}
+            onChange={(e) => setProdTo(e.target.value)}
+            className="input py-1"
+          />
+        </label>
+        <span className="text-xs text-surface-muted">
+          {production.grand} worked in range
+        </span>
+        <div className="ml-auto">
+          <ExportButton
+            rows={exportRows}
+            filename="auth-daily-production.xlsx"
+            sheet="Production"
+            label="Export"
+          />
+        </div>
+      </div>
+      {production.rows.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-surface-muted">
+          No records worked in this date range.
+        </p>
+      ) : (
+        <div className="scroll-x overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-surface">
+              <tr>
+                <th className="th sticky left-0 bg-surface">Person</th>
+                {production.days.map((d) => (
+                  <th key={d} className="th text-right">
+                    {weekdayLabel(d)}
+                  </th>
+                ))}
+                <th className="th text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {production.rows.map((p, i) => (
+                <tr key={p.id} className={i % 2 ? "bg-surface/40" : ""}>
+                  <td className="td sticky left-0 bg-inherit font-medium">{p.name}</td>
+                  {production.days.map((d) => (
+                    <td key={d} className="td text-right font-mono">
+                      {p.perDay[d] ?? 0}
+                    </td>
+                  ))}
+                  <td className="td text-right font-mono font-semibold">{p.total}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-surface-border font-semibold">
+                <td className="td sticky left-0 bg-surface-card">Total</td>
+                {production.dayTotals.map((t, idx) => (
+                  <td key={idx} className="td text-right font-mono">
+                    {t}
+                  </td>
+                ))}
+                <td className="td text-right font-mono">{production.grand}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       )}
     </div>
   );
