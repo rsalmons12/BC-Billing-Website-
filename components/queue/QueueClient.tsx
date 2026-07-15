@@ -20,6 +20,9 @@ import {
 } from "@/lib/types";
 
 const DEFAULT_TARGET = 100;
+// A worked claim rests, then returns to the queue for follow-up after this many
+// days. Keeps aged claims cycling instead of disappearing once worked.
+const REWORK_DAYS = 14;
 
 const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
@@ -381,10 +384,29 @@ export default function QueueClient({
   // oldest-first). Anything past the allotment simply rolls to tomorrow,
   // when "done today" resets and the next slice surfaces.
   const doneToday = rows.filter((r) => (r.work?.date_worked || "") === today).length;
-  // A collector's real backlog: unworked AND not routed to the auth team (an
+  // A claim rests after it's worked, then comes back for follow-up once it
+  // hasn't been touched in REWORK_DAYS. Without this, any claim ever worked
+  // (a note now marks it worked) would leave the queue forever and collectors
+  // would run dry even though aged claims still need reworking.
+  const cutoffMs = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - REWORK_DAYS);
+    return d.getTime();
+  })();
+  const needsWork = (r: ClaimRow) => {
+    const dw = (r.work?.date_worked || "").trim();
+    if (!dw) return true; // never worked
+    const t = Date.parse(dw);
+    if (isNaN(t)) return true; // unreadable date — surface it to be safe
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() < cutoffMs; // worked long enough ago → rework
+  };
+  // A collector's real backlog: needs work AND not routed to the auth team (an
   // open auth issue is out of their hands, so it must not inflate the count).
   const unworked = rows.filter(
-    (r) => !r.work?.date_worked && r.work?.auth_issue_status !== "open"
+    (r) => needsWork(r) && r.work?.auth_issue_status !== "open"
   );
   // Split the backlog into the collector's own share and the shared facility
   // pool (co-collectors' under-100 claims they can help with once done).
