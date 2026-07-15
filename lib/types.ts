@@ -317,6 +317,40 @@ export const NEGOTIATION_STATUS_OPTIONS = [
   "Rejected",
   "Signed",
 ];
+export interface Census {
+  id: string;
+  facility_id: string | null;
+  week_start: string | null;
+  week_label: string | null;
+  level_of_care: string | null;
+  patient_name: string | null;
+  admit_date: string | null;
+  insurance: string | null;
+  member_id: string | null;
+  auth: string | null;
+  comments: string | null;
+  step_up: string | null;
+  repriced: string | null;
+  days: Record<string, string> | null;
+  billing_status: string;
+  notes: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const CENSUS_BILLING_STATUS = [
+  "",
+  "Not Billed",
+  "Ready to Bill",
+  "Biller Awaiting Something",
+  "Billed",
+  "Self Pay",
+  "Paid",
+  "Partial Paid",
+  "Write Off",
+];
+
 export const RECORD_STATUS_OPTIONS = [
   "",
   "Requested",
