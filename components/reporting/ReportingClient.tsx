@@ -1039,7 +1039,18 @@ function AuthReport({
     let activeDays = 0;
     let pending = 0; // active auths still in "Pending" status
     let reviewsDue = 0; // active auths with a review date in the next 7 days
-    const soon = addDays(today, 7);
+    let pastDue = 0; // active auths whose review date is before today
+    // Review dates are entered free-form (e.g. "7/14/2025"), so parse to a
+    // day timestamp instead of comparing strings.
+    const parseDay = (s: unknown): number | null => {
+      const t = Date.parse(String(s ?? "").trim());
+      if (isNaN(t)) return null;
+      const d = new Date(t);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    };
+    const todayMs = parseDay(today)!;
+    const soonMs = parseDay(addDays(today, 7))!;
     const byLoc = new Map<string, { patients: number; days: number }>();
     const byFac = new Map<string, { total: number; active: number; days: number }>();
     for (const r of filtered) {
@@ -1064,8 +1075,11 @@ function AuthReport({
           le.patients += 1;
           le.days += days;
         }
-        const nr = String(r.next_review_date ?? "").slice(0, 10);
-        if (nr && nr >= today && nr <= soon) reviewsDue += 1;
+        const nrMs = parseDay(r.next_review_date);
+        if (nrMs != null) {
+          if (nrMs >= todayMs && nrMs <= soonMs) reviewsDue += 1;
+          else if (nrMs < todayMs) pastDue += 1;
+        }
       }
     }
     return {
@@ -1074,6 +1088,7 @@ function AuthReport({
       discharged,
       activeDays,
       pending,
+      pastDue,
       reviewsDue,
       locRows: Array.from(byLoc.entries())
         .map(([loc, e]) => ({ loc, ...e }))
@@ -1200,12 +1215,13 @@ function AuthReport({
         </div>
       ) : dept === "authorizations" ? (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             <Stat label="Active auths" value={num(authStats.active)} accent="recovered" />
+            <Stat label="Past due" value={num(authStats.pastDue)} accent="risk" />
             <Stat label="Pending" value={num(authStats.pending)} accent="gold" />
             <Stat label="Discharged" value={num(authStats.discharged)} />
             <Stat label="Auth days (active)" value={num(authStats.activeDays)} accent="gold" />
-            <Stat label="Reviews due ≤7d" value={num(authStats.reviewsDue)} accent="risk" />
+            <Stat label="Reviews due ≤7d" value={num(authStats.reviewsDue)} accent="gold" />
             <Stat label="Total auths" value={num(authStats.total)} />
           </div>
 
