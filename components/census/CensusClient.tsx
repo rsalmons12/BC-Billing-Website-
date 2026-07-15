@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
+import { money } from "@/lib/format";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
 import {
   CENSUS_BILLING_STATUS,
@@ -54,6 +55,33 @@ const DAY_STATUS_LABEL: Record<string, string> = {
   pending: "Pending",
   scholarship: "Scholarship",
 };
+
+// A money cell that saves a number (or null) on blur.
+function EditMoney({
+  value,
+  onSave,
+  className = "",
+}: {
+  value: number | null;
+  onSave: (v: number | null) => void;
+  className?: string;
+}) {
+  return (
+    <input
+      key={value ?? ""}
+      defaultValue={value != null ? String(value) : ""}
+      inputMode="decimal"
+      placeholder="$"
+      onBlur={(e) => {
+        const raw = e.target.value.replace(/[$,\s]/g, "").trim();
+        const n = raw === "" ? null : parseFloat(raw);
+        const next = n == null || isNaN(n) ? null : n;
+        if (next !== value) onSave(next);
+      }}
+      className={`cell-input text-right ${className}`}
+    />
+  );
+}
 
 // Weekly rules from the census Summary sheet (per client, per week).
 const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
@@ -184,6 +212,18 @@ export default function CensusClient({
     () => tallySessions(weekRows.map((r) => ({ days: r.days ?? {} }))),
     [weekRows]
   );
+
+  // Expected $ = GN sessions × the patient's GN rate; Paid $ = entered.
+  const amounts = useMemo(() => {
+    let exp = 0;
+    let paid = 0;
+    for (const r of weekRows) {
+      const gn = actualsFor(r.days).GN ?? 0;
+      exp += gn * (r.gn_rate ?? 0);
+      paid += r.paid_amount ?? 0;
+    }
+    return { exp, paid };
+  }, [weekRows]);
 
   const save = useCallback(
     async (id: string, partial: Partial<Census>) => {
@@ -491,6 +531,8 @@ export default function CensusClient({
           {CENSUS_SESSION_CODES.map((c) => (
             <SumCard key={c} label={`${c} Sessions`} value={String(tally[c] ?? 0)} />
           ))}
+          <SumCard label="Expected $" value={money(amounts.exp)} accent="gold" />
+          <SumCard label="Paid $" value={money(amounts.paid)} accent="recovered" />
         </div>
       )}
 
@@ -526,6 +568,13 @@ export default function CensusClient({
                 <th className="th text-center" title="Required sessions still missing this week">
                   Missed
                 </th>
+                <th className="th text-right" title="Dollars per GN session">
+                  Rate/GN
+                </th>
+                <th className="th text-right" title="GN sessions × rate">
+                  Expected $
+                </th>
+                <th className="th text-right">Paid $</th>
                 <th className="th min-w-[11rem]">Billing Status</th>
                 <th className="th min-w-[12rem]">Comments</th>
                 <th className="th"></th>
@@ -534,7 +583,7 @@ export default function CensusClient({
             <tbody>
               {weekRows.length === 0 && (
                 <tr>
-                  <td colSpan={13 + dayCols.length} className="td py-8 text-center text-surface-muted">
+                  <td colSpan={16 + dayCols.length} className="td py-8 text-center text-surface-muted">
                     No clients yet for this week.{" "}
                     <button
                       onClick={() => addPatientRow(week)}
@@ -664,6 +713,26 @@ export default function CensusClient({
                     {missed.length
                       ? missed.map((m) => `${m.c} −${m.short}`).join(", ")
                       : "✓"}
+                  </td>
+                  <td className="td p-0.5">
+                    <EditMoney
+                      value={r.gn_rate ?? null}
+                      onSave={(v) => save(r.id, { gn_rate: v })}
+                      className="w-20 text-xs"
+                    />
+                  </td>
+                  <td
+                    className="td text-right font-mono text-xs"
+                    title={`${act.GN ?? 0} GN × ${money(r.gn_rate ?? 0)}`}
+                  >
+                    {money((act.GN ?? 0) * (r.gn_rate ?? 0))}
+                  </td>
+                  <td className="td p-0.5">
+                    <EditMoney
+                      value={r.paid_amount ?? null}
+                      onSave={(v) => save(r.id, { paid_amount: v })}
+                      className="w-24 text-xs"
+                    />
                   </td>
                   <td className="td">
                     <select
