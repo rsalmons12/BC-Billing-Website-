@@ -36,6 +36,33 @@ function EditText({
   );
 }
 
+// Weekly rules from the census Summary sheet (per client, per week).
+const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
+const REQ_CODES = ["GN", "CM", "PF", "ID"] as const;
+
+// Program days per week from the level of care (IOP 3 -> 3, IOP CO 5 -> 5 …).
+// GN (group note) is expected once per program day.
+function locProgramDays(loc: string | null): number {
+  const m = String(loc ?? "").match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function requirementsFor(loc: string | null): Record<string, number> {
+  return { GN: locProgramDays(loc), CM: WEEKLY_RULES.CM, PF: WEEKLY_RULES.PF, ID: WEEKLY_RULES.ID };
+}
+
+// Count each service code across a patient's day cells.
+function actualsFor(days: Record<string, string> | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const code of Object.values(days ?? {})) {
+    for (const part of String(code).split(/[/,]/)) {
+      const k = part.trim().toUpperCase();
+      if (k) out[k] = (out[k] ?? 0) + 1;
+    }
+  }
+  return out;
+}
+
 function addDaysIso(iso: string, n: number): string {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return iso;
@@ -198,9 +225,59 @@ export default function CensusClient({
   };
 
   const deleteRow = async (id: string) => {
-    if (!confirm("Remove this client from the census?")) return;
+    if (!confirm("Remove this client from the census? (Use this when a patient is discharged.)"))
+      return;
     setRows((prev) => prev.filter((r) => r.id !== id));
     await supabase.from("census").delete().eq("id", id);
+  };
+
+  // Carry this week's roster into the following week — same clients + details,
+  // blank daily codes to fill in. Discharged patients are just removed (✕).
+  const copyToNextWeek = async () => {
+    if (!week || weekRows.length === 0) return;
+    const next = addDaysIso(week, 7);
+    const existing = rows.some((r) => r.week_start === next);
+    if (
+      !confirm(
+        `Copy ${weekRows.length} clients into the week of ${weekLabelFrom(next)}?` +
+          (existing ? "\n\nThat week already has clients — these will be added to it." : "") +
+          "\n\nPatient details carry over; daily codes start blank."
+      )
+    )
+      return;
+    setMsg("Copying to next week…");
+    const seed = () => {
+      const d: Record<string, string> = {};
+      for (let i = 0; i < 7; i++) d[addDaysIso(next, i)] = "";
+      return d;
+    };
+    const payload = weekRows.map((r) => ({
+      facility_id: facilityId,
+      week_start: next,
+      week_label: weekLabelFrom(next),
+      level_of_care: r.level_of_care,
+      patient_name: r.patient_name,
+      admit_date: r.admit_date,
+      insurance: r.insurance,
+      member_id: r.member_id,
+      auth: r.auth,
+      step_up: r.step_up,
+      repriced: r.repriced,
+      comments: "",
+      billing_status: "",
+      days: seed(),
+      updated_by: userId,
+    }));
+    for (const batch of chunk(payload, 300)) {
+      const { error } = await supabase.from("census").insert(batch);
+      if (error) {
+        setMsg(`Error copying: ${error.message}`);
+        return;
+      }
+    }
+    setMsg(`✓ Copied to week of ${weekLabelFrom(next)}.`);
+    await load();
+    setWeek(next);
   };
 
   const doImport = async (file: File) => {
@@ -324,6 +401,16 @@ export default function CensusClient({
           </button>
         )}
 
+        {week && weekRows.length > 0 && (
+          <button
+            onClick={copyToNextWeek}
+            className="btn-ghost"
+            title="Copy this week's clients into next week (blank daily codes)"
+          >
+            ⧉ Copy to next week
+          </button>
+        )}
+
         <div className="flex items-center gap-1 rounded-lg border border-surface-border px-2 py-1">
           <span className="text-[11px] text-surface-muted">New week</span>
           <input
@@ -379,11 +466,19 @@ export default function CensusClient({
                 <th className="th">Insurance</th>
                 <th className="th">Member ID</th>
                 <th className="th">Auth</th>
+                <th className="th">Step-Up</th>
+                <th className="th">Repriced</th>
                 {dayCols.map((d) => (
                   <th key={d} className="th whitespace-nowrap text-center">
                     {dayHeader(d)}
                   </th>
                 ))}
+                <th className="th text-center" title="Required sessions from level of care">
+                  Expected
+                </th>
+                <th className="th text-center" title="Required sessions still missing this week">
+                  Missed
+                </th>
                 <th className="th min-w-[11rem]">Billing Status</th>
                 <th className="th min-w-[12rem]">Comments</th>
                 <th className="th"></th>
@@ -392,7 +487,7 @@ export default function CensusClient({
             <tbody>
               {weekRows.length === 0 && (
                 <tr>
-                  <td colSpan={9 + dayCols.length} className="td py-8 text-center text-surface-muted">
+                  <td colSpan={13 + dayCols.length} className="td py-8 text-center text-surface-muted">
                     No clients yet for this week.{" "}
                     <button
                       onClick={() => addPatientRow(week)}
@@ -403,7 +498,14 @@ export default function CensusClient({
                   </td>
                 </tr>
               )}
-              {weekRows.map((r, i) => (
+              {weekRows.map((r, i) => {
+                const req = requirementsFor(r.level_of_care);
+                const act = actualsFor(r.days);
+                const missed = REQ_CODES.map((c) => ({
+                  c,
+                  short: Math.max(0, req[c] - (act[c] ?? 0)),
+                })).filter((m) => m.short > 0);
+                return (
                 <tr key={r.id} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>
                   <td className="td p-0.5">
                     <EditText
@@ -447,6 +549,20 @@ export default function CensusClient({
                       className="w-24 text-xs"
                     />
                   </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.step_up ?? ""}
+                      onSave={(v) => save(r.id, { step_up: v })}
+                      className="w-20 text-xs"
+                    />
+                  </td>
+                  <td className="td p-0.5">
+                    <EditText
+                      value={r.repriced ?? ""}
+                      onSave={(v) => save(r.id, { repriced: v })}
+                      className="w-20 text-xs"
+                    />
+                  </td>
                   {dayCols.map((d) => (
                     <td key={d} className="td p-0.5">
                       <EditText
@@ -456,6 +572,21 @@ export default function CensusClient({
                       />
                     </td>
                   ))}
+                  <td className="td whitespace-nowrap text-center text-[11px] text-surface-muted">
+                    {REQ_CODES.filter((c) => req[c] > 0)
+                      .map((c) => `${c}${req[c]}`)
+                      .join(" ") || "—"}
+                  </td>
+                  <td
+                    className={`td whitespace-nowrap text-center text-[11px] font-semibold ${
+                      missed.length ? "text-risk" : "text-recovered"
+                    }`}
+                    title="Required sessions still short this week"
+                  >
+                    {missed.length
+                      ? missed.map((m) => `${m.c} −${m.short}`).join(", ")
+                      : "✓"}
+                  </td>
                   <td className="td">
                     <select
                       value={r.billing_status ?? ""}
@@ -485,13 +616,14 @@ export default function CensusClient({
                     <button
                       onClick={() => deleteRow(r.id)}
                       className="text-surface-muted hover:text-risk"
-                      title="Remove client"
+                      title="Remove client (discharged)"
                     >
                       ✕
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
