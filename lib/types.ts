@@ -345,8 +345,10 @@ export interface Census {
 export const CENSUS_LOC_GN: Record<string, number> = {
   Detox: 7,
   Residential: 7,
-  PHP: 5,
-  "PHP MH": 5,
+  "PHP 6": 6,
+  "PHP MH 6": 6,
+  "PHP 5": 5,
+  "PHP MH 5": 5,
   "IOP 5": 5,
   "IOP MH 5": 5,
   "IOP 4": 4,
