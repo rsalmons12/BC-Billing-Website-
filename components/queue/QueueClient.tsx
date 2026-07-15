@@ -429,12 +429,26 @@ export default function QueueClient({
   // won't steal a claim already reserved by someone else today). After a change
   // we reload so anything another collector took drops off this queue.
   const sharedShownIds = sharedSet.map((r) => r.claim_id).join(",");
+  // Only reserve/reload when NEW shared ids appear. Reloading whenever the set
+  // merely shrinks (e.g. the worked count changed because a collector just added
+  // a note) refetches the whole board and races that same note's save, wiping
+  // it from the screen. Guarding on "new ids only" keeps the reservation sync
+  // without clobbering in-flight edits.
+  const reservedRef = useRef<string>("");
   useEffect(() => {
-    if (!sharedShownIds) return;
+    if (!sharedShownIds) {
+      reservedRef.current = "";
+      return;
+    }
+    const prevIds = new Set(reservedRef.current.split(",").filter(Boolean));
+    const currIds = sharedShownIds.split(",");
+    const hasNew = currIds.some((id) => !prevIds.has(id));
+    reservedRef.current = sharedShownIds;
+    if (!hasNew) return; // set only shrank — nothing new to reserve, no reload
     let cancelled = false;
     (async () => {
       await supabase.rpc("reserve_claims", {
-        p_ids: sharedShownIds.split(","),
+        p_ids: currIds,
         p_collector: collectorId,
         p_today: today,
       });

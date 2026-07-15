@@ -56,6 +56,17 @@ function isDueForReview(a: Authorization): boolean {
   return d.getTime() <= today.getTime();
 }
 
+// Past due = the Next Review date is strictly BEFORE today and nothing has been
+// updated (e.g. review 7/14, today 7/15). Discharged patients are never past due.
+function isPastDue(a: Authorization): boolean {
+  if (a.discharged) return false;
+  const d = parseDate(a.next_review_date);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
+}
+
 // Recency of an auth — how recently it BEGAN. The "current" auth for a patient
 // is the one that started most recently (latest Start, else Admit). We do NOT
 // rank by Next Review/End, since a stray future review date on an older auth
@@ -110,7 +121,7 @@ export default function AuthorizationsClient({
   const [loading, setLoading] = useState(true);
   const [facilityFilter, setFacilityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [reviewFilter, setReviewFilter] = useState<"all" | "due">("all");
+  const [reviewFilter, setReviewFilter] = useState<"all" | "due" | "past_due">("all");
   const [view, setView] = useState<"active" | "discharged">("active");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
@@ -241,6 +252,7 @@ export default function AuthorizationsClient({
       if (statusFilter !== "all" && String(cur.status ?? "") !== statusFilter)
         return false;
       if (reviewFilter === "due" && !isDueForReview(cur)) return false;
+      if (reviewFilter === "past_due" && !isPastDue(cur)) return false;
       if (q) {
         const hay = [g.name, cur.auth_number, cur.level_of_care, cur.status]
           .map((x) => String(x ?? ""))
@@ -283,15 +295,20 @@ export default function AuthorizationsClient({
         patients: locPatients.get(loc)?.size ?? 0,
       }))
       .sort((a, b) => b.days - a.days);
+    // Past due counts across ALL statuses (independent of the status filter),
+    // so it's a reliable "these slipped" number no matter how the board is
+    // filtered. Based on each patient's current auth.
+    const pastDue = groups.filter((g) => isPastDue(g.current)).length;
     return {
       patients: filtered.length,
       due: curr.filter(isDueForReview).length,
+      pastDue,
       approved: curr.filter((c) => /approv/.test(norm(c.status))).length,
       pending: curr.filter((c) => /pending/.test(norm(c.status))).length,
       totalDays,
       locRows,
     };
-  }, [filtered]);
+  }, [filtered, groups]);
 
   const exportXlsx = () => {
     // Every auth line (not just current), with days + facility.
@@ -374,11 +391,12 @@ export default function AuthorizationsClient({
 
         <select
           value={reviewFilter}
-          onChange={(e) => setReviewFilter(e.target.value as "all" | "due")}
+          onChange={(e) => setReviewFilter(e.target.value as "all" | "due" | "past_due")}
           className="input max-w-[11rem]"
         >
           <option value="all">All reviews</option>
           <option value="due">Next Review due</option>
+          <option value="past_due">Past due</option>
         </select>
 
         <input
@@ -423,9 +441,10 @@ export default function AuthorizationsClient({
 
       {!loading && (
         <div className="border-b border-surface-border bg-surface px-6 py-3">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <SumCard label="Patients" value={String(summary.patients)} />
-            <SumCard label="Next Review" value={String(summary.due)} accent="risk" />
+            <SumCard label="Past Due" value={String(summary.pastDue)} accent="risk" />
+            <SumCard label="Next Review" value={String(summary.due)} accent="gold" />
             <SumCard label="Approved" value={String(summary.approved)} accent="recovered" />
             <SumCard label="Pending" value={String(summary.pending)} accent="gold" />
           </div>
@@ -487,6 +506,7 @@ export default function AuthorizationsClient({
               filtered.map((g, i) => {
                 const c = g.current;
                 const due = isDueForReview(c);
+                const pastDue = isPastDue(c);
                 return (
                   <tr
                     key={g.key}
@@ -505,7 +525,13 @@ export default function AuthorizationsClient({
                     <td className="td text-right font-mono">{authDays(c) ?? "—"}</td>
                     <td className={`td text-xs ${due ? "font-semibold text-risk" : ""}`}>
                       {c.next_review_date || "—"}
-                      {due && " ●"}
+                      {pastDue ? (
+                        <span className="ml-1 badge bg-risk/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk">
+                          PAST DUE
+                        </span>
+                      ) : (
+                        due && " ●"
+                      )}
                     </td>
                     <td className="td text-right font-mono text-xs">{g.auths.length}</td>
                   </tr>
