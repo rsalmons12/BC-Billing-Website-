@@ -19,11 +19,20 @@ export default async function ReportingPage() {
     .order("full_name");
   const collectors = (data as Profile[]) ?? [];
 
+  // The full internal roster (staff + management) — used for the auth "Worked
+  // by" filter so a specialist shows even before they've worked a record.
+  const { data: rosterData } = await supabase
+    .from("profiles")
+    .select("*")
+    .in("role", ["staff", "management"])
+    .order("full_name");
+  const roster = (rosterData as Profile[]) ?? [];
+
   return (
     <>
       <Header profile={profile} email={email} subtitle="Reporting & Analytics" />
       <main className="min-h-0 flex-1 overflow-auto p-6">
-        <ReportingClient facilities={facilities} collectors={collectors} />
+        <ReportingClient facilities={facilities} collectors={collectors} roster={roster} />
       </main>
     </>
   );

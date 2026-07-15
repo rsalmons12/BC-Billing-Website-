@@ -71,9 +71,11 @@ const DEPTS: { key: Dept; label: string }[] = [
 export default function ReportingClient({
   facilities,
   collectors,
+  roster = [],
 }: {
   facilities: Facility[];
   collectors: Profile[];
+  roster?: Profile[];
 }) {
   const supabase = useMemo(() => createClient(), []);
   const today = todayStr();
@@ -97,10 +99,10 @@ export default function ReportingClient({
   );
   const colName = useCallback(
     (id: string | null) => {
-      const c = collectors.find((c) => c.id === id);
+      const c = collectors.find((c) => c.id === id) || roster.find((p) => p.id === id);
       return c?.full_name || c?.initials || (id ? id.slice(0, 8) : "—");
     },
-    [collectors]
+    [collectors, roster]
   );
 
   // Always pull a window wide enough to cover the selected range AND the last
@@ -207,6 +209,7 @@ export default function ReportingClient({
           setFacilityFilter={setFacilityFilter}
           facName={facName}
           colName={colName}
+          roster={roster}
         />
       ) : (
         <DeptReport
@@ -937,6 +940,7 @@ function AuthReport({
   setFacilityFilter,
   facName,
   colName,
+  roster,
 }: {
   dept: "authorizations" | "auth_issues";
   today: string;
@@ -947,6 +951,7 @@ function AuthReport({
   setFacilityFilter: (v: string) => void;
   facName: (id: string | null) => string;
   colName: (id: string | null) => string;
+  roster: Profile[];
 }) {
   // Filter by the utilization person who last worked the record (updated_by).
   const [person, setPerson] = useState("all");
@@ -978,22 +983,33 @@ function AuthReport({
     };
   }, [supabase, recordType, prodFrom, prodTo]);
 
-  // People who have worked these records (for the "Worked by" filter) — from
-  // the records' last editor and from the activity log.
+  // "Worked by" options: the whole internal roster (so a specialist shows even
+  // before they've worked a record), plus anyone who appears as an editor /
+  // activity actor but isn't on the roster.
   const people = useMemo(() => {
     const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const p of roster) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      out.push({ id: p.id, name: p.full_name || p.initials || colName(p.id) });
+    }
     for (const r of rows) {
       const id = (r.updated_by as string) ?? "";
-      if (id) seen.add(id);
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        out.push({ id, name: colName(id) });
+      }
     }
     for (const a of activity) {
       const id = (a.actor_id as string) ?? "";
-      if (id) seen.add(id);
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        out.push({ id, name: colName(id) });
+      }
     }
-    return Array.from(seen)
-      .map((id) => ({ id, name: colName(id) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows, activity, colName]);
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [roster, rows, activity, colName]);
 
   const filtered = useMemo(
     () =>
