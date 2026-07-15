@@ -333,6 +333,8 @@ export interface Census {
   repriced: string | null;
   days: Record<string, string> | null;
   day_status: Record<string, string> | null; // { "YYYY-MM-DD": "billed"|"pending"|"scholarship" }
+  gn_rate: number | null; // $ per GN session
+  paid_amount: number | null; // $ actually paid
   billing_status: string;
   notes: string;
   updated_by: string | null;
