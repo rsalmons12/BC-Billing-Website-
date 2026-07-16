@@ -218,15 +218,19 @@ export default function CensusClient({
   );
 
   // Expected $ = GN sessions × the patient's GN rate; Paid $ = entered.
+  // Missed = total required sessions still short this week, across all clients.
   const amounts = useMemo(() => {
     let exp = 0;
     let paid = 0;
+    let missed = 0;
     for (const r of weekRows) {
-      const gn = actualsFor(r.days).GN ?? 0;
-      exp += gn * (r.gn_rate ?? 0) * EXPECTED_PCT;
+      const act = actualsFor(r.days);
+      exp += (act.GN ?? 0) * (r.gn_rate ?? 0) * EXPECTED_PCT;
       paid += r.paid_amount ?? 0;
+      const req = requirementsFor(r.level_of_care);
+      for (const c of REQ_CODES) missed += Math.max(0, req[c] - (act[c] ?? 0));
     }
-    return { exp, paid };
+    return { exp, paid, missed };
   }, [weekRows]);
 
   const save = useCallback(
@@ -535,6 +539,11 @@ export default function CensusClient({
           {CENSUS_SESSION_CODES.map((c) => (
             <SumCard key={c} label={`${c} Sessions`} value={String(tally[c] ?? 0)} />
           ))}
+          <SumCard
+            label="Missed"
+            value={String(amounts.missed)}
+            accent={amounts.missed > 0 ? "risk" : "recovered"}
+          />
           <SumCard label="Expected $" value={money(amounts.exp)} accent="gold" />
           <SumCard label="Paid $" value={money(amounts.paid)} accent="recovered" />
         </div>
