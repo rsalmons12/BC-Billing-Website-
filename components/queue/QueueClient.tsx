@@ -177,6 +177,7 @@ export default function QueueClient({
     under100: number;
     workedUnder100: number;
     authOpenUnder100: number;
+    takenByOthers: number;
     over100: number;
     excluded: number;
   } | null>(null);
@@ -226,6 +227,7 @@ export default function QueueClient({
         under100: 0,
         workedUnder100: 0,
         authOpenUnder100: 0,
+        takenByOthers: 0,
         over100: 0,
         excluded: 0,
       });
@@ -275,17 +277,6 @@ export default function QueueClient({
       (c) => !isExcludedMember(c.member_id) && !movedIds.has(c.claim_id)
     );
     const under = live.filter((c) => (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD);
-    setDiag({
-      facilities: myFacilities.length,
-      total: claims.length,
-      under100: under.length,
-      workedUnder100: under.filter((c) => workMap[c.claim_id]?.date_worked).length,
-      authOpenUnder100: under.filter(
-        (c) => workMap[c.claim_id]?.auth_issue_status === "open"
-      ).length,
-      over100: live.filter((c) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD).length,
-      excluded: excludedC,
-    });
 
     // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
     const specialist = (collector.queue_tier ?? "standard") === "priority_100";
@@ -312,6 +303,24 @@ export default function QueueClient({
         if (!ownerByPatient.has(k)) ownerByPatient.set(k, w.claimed_by);
       }
     }
+
+    // Diagnostic breakdown so management can see WHY a queue is empty —
+    // including claims whose patient a co-collector already reserved today.
+    setDiag({
+      facilities: myFacilities.length,
+      total: claims.length,
+      under100: under.length,
+      workedUnder100: under.filter((c) => workMap[c.claim_id]?.date_worked).length,
+      authOpenUnder100: under.filter(
+        (c) => workMap[c.claim_id]?.auth_issue_status === "open"
+      ).length,
+      takenByOthers: under.filter((c) => {
+        const owner = ownerByPatient.get(pkeyOf(c));
+        return !!owner && owner !== collectorId;
+      }).length,
+      over100: live.filter((c) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD).length,
+      excluded: excludedC,
+    });
 
     const mine = claims
       .filter((c) => {
@@ -1013,7 +1022,8 @@ export default function QueueClient({
               Claims in them: <b className="text-surface-ink">{diag.total}</b> ·
               Under 100d: <b className="text-surface-ink">{diag.under100}</b>{" "}
               (worked <b className="text-surface-ink">{diag.workedUnder100}</b>, with auth team{" "}
-              <b className="text-surface-ink">{diag.authOpenUnder100}</b>) ·
+              <b className="text-surface-ink">{diag.authOpenUnder100}</b>, taken by other collectors{" "}
+              <b className="text-surface-ink">{diag.takenByOthers}</b>) ·
               100+ (Admin-only): <b className="text-surface-ink">{diag.over100}</b> ·
               Excluded (VMAH/Marketplace): <b className="text-surface-ink">{diag.excluded}</b>
               {diag.under100 === 0 && (
@@ -1054,7 +1064,13 @@ export default function QueueClient({
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
-                    "No claims assigned. Ask management to assign you facilities."
+                    diag && diag.facilities === 0
+                      ? "No facilities assigned to you — ask management to assign facilities in Admin."
+                      : diag && diag.total === 0
+                        ? "No claims imported for your facilities yet."
+                        : diag && diag.takenByOthers > 0
+                          ? `Every available patient in your facilities is already being worked by another collector today (${diag.takenByOthers} claim${diag.takenByOthers === 1 ? "" : "s"} taken). Ask management to add facilities or reassign.`
+                          : "Nothing left to work in your facilities today — everything's worked, with the auth team, or 100+ (Admin-only)."
                   ) : backlog === 0 ? (
                     "🎉 Backlog clear — nice work."
                   ) : todaySet.length === 0 ? (
