@@ -1098,6 +1098,11 @@ function AuthReport({
         }
       }
     }
+    // New auths created within the production date range.
+    const newAuths = filtered.filter((r) => {
+      const c = String(r.created_at ?? "").slice(0, 10);
+      return c && c >= prodFrom && c <= prodTo;
+    }).length;
     return {
       total: filtered.length,
       active,
@@ -1106,6 +1111,7 @@ function AuthReport({
       pending,
       pastDue,
       reviewsDue,
+      newAuths,
       locRows: Array.from(byLoc.entries())
         .map(([loc, e]) => ({ loc, ...e }))
         .sort((a, b) => b.patients - a.patients),
@@ -1113,7 +1119,22 @@ function AuthReport({
         .map(([id, e]) => ({ id, name: facName(id), ...e }))
         .sort((a, b) => b.active - a.active),
     };
-  }, [filtered, today, facName]);
+  }, [filtered, today, facName, prodFrom, prodTo]);
+
+  // Auth notes drill-down: every auth carrying a note, newest first.
+  const authNotes = useMemo(() => {
+    return filtered
+      .filter((r) => String(r.notes ?? "").trim())
+      .map((r) => ({
+        patient: String(r.patient_name ?? "—"),
+        loc: String(r.level_of_care ?? ""),
+        note: String(r.notes ?? ""),
+        by: colName((r.updated_by as string) ?? null),
+        when: String(r.updated_at ?? "").slice(0, 10),
+        facility: facName((r.facility_id as string) ?? null),
+      }))
+      .sort((a, b) => b.when.localeCompare(a.when));
+  }, [filtered, colName, facName]);
 
   // ----- Auth Issues -----
   const issueStats = useMemo(() => {
@@ -1233,6 +1254,7 @@ function AuthReport({
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             <Stat label="Active auths" value={num(authStats.active)} accent="recovered" />
+            <Stat label="New auths" value={num(authStats.newAuths)} accent="secured" />
             <Stat label="Past due" value={num(authStats.pastDue)} accent="risk" />
             <Stat label="Pending" value={num(authStats.pending)} accent="gold" />
             <Stat label="Discharged" value={num(authStats.discharged)} />
@@ -1309,6 +1331,47 @@ function AuthReport({
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-surface-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              Auth notes{" "}
+              <span className="font-normal normal-case text-surface-muted">
+                ({authNotes.length})
+              </span>
+            </div>
+            {authNotes.length === 0 ? (
+              <p className="px-4 py-4 text-center text-sm text-surface-muted">
+                No auth notes for this selection.
+              </p>
+            ) : (
+              <div className="scroll-x max-h-96 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface">
+                    <tr>
+                      <th className="th">Patient</th>
+                      <th className="th">LOC</th>
+                      <th className="th">Facility</th>
+                      <th className="th min-w-[22rem]">Note</th>
+                      <th className="th">By</th>
+                      <th className="th">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {authNotes.slice(0, 200).map((n, i) => (
+                      <tr key={i} className={i % 2 ? "bg-surface/40" : ""}>
+                        <td className="td font-medium">{n.patient}</td>
+                        <td className="td text-xs">{n.loc || "—"}</td>
+                        <td className="td text-xs text-surface-muted">{n.facility}</td>
+                        <td className="td whitespace-pre-wrap break-words text-xs">{n.note}</td>
+                        <td className="td text-xs">{n.by}</td>
+                        <td className="td text-xs text-surface-muted">{n.when || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -1609,7 +1672,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  accent?: "recovered" | "gold" | "risk";
+  accent?: "recovered" | "gold" | "risk" | "secured";
 }) {
   const color =
     accent === "recovered"
@@ -1618,7 +1681,9 @@ function Stat({
         ? "text-gold"
         : accent === "risk"
           ? "text-risk"
-          : "text-surface-ink";
+          : accent === "secured"
+            ? "text-secured"
+            : "text-surface-ink";
   return (
     <div className="card p-3">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
