@@ -91,7 +91,7 @@ function parseRaw(rows: unknown[][]): ParsedClaim[] | null {
   const col = {
     office: findCol(headers, [/office name/]),
     claim: findCol(headers, [/claim id/]),
-    age: findCol(headers, [/age.*day|age \(days\)|^age$/]),
+    age: findCol(headers, [/age.*day|age \(days\)|entered age|^age$/]),
     patient: findCol(headers, [/patient full name|patient name|patient/]),
     member: findCol(headers, [/member id/]),
     from: findCol(headers, [/from/]),
@@ -150,7 +150,7 @@ function parseGroupedSheet(
     to: findCol(headers, [/to date|claim to/]),
     charge: findCol(headers, [/charge amount|charge entered|charge/]),
     balance: findCol(headers, [/balance/]),
-    age: findCol(headers, [/age.*day|^age$|^days$/]),
+    age: findCol(headers, [/age.*day|entered age|^age$|^days$/]),
     bucket: findCol(headers, [/age bucket|bucket/]),
     status: findCol(headers, [/status/]),
     notes: findCol(headers, [/notes/]),
