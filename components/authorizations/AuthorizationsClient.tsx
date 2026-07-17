@@ -260,7 +260,7 @@ export default function AuthorizationsClient({
     const q = search.trim().toLowerCase();
     return groups.filter((g) => {
       const cur = g.current;
-      const dischargedNow = Boolean(cur.discharged);
+      const dischargedNow = isOut(cur);
       if (view === "active" && dischargedNow) return false;
       if (view === "discharged" && !dischargedNow) return false;
       if (statusFilter !== "all" && String(cur.status ?? "") !== statusFilter)
@@ -287,7 +287,7 @@ export default function AuthorizationsClient({
     const locPatients = new Map<string, Set<string>>();
     let totalDays = 0;
     for (const g of filtered) {
-      if (g.current?.discharged) continue; // active patients only
+      if (isOut(g.current)) continue; // active patients only
       for (const a of g.auths) {
         const loc = (a.level_of_care ?? "").trim();
         if (!loc) continue; // only levels of care that were created/entered
