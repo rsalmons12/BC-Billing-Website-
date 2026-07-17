@@ -1113,8 +1113,14 @@ function AuthReport({
           le.patients += 1;
           le.days += days;
         }
+        // A discharge date that has already arrived takes a patient off the
+        // active board even when the discharged toggle was never flipped
+        // (imports bring the date, not the toggle). Such patients can't be
+        // "past due" or "review due".
+        const dischMs = parseDay(r.discharge_date);
+        const outByDate = dischMs != null && dischMs <= todayMs;
         const nrMs = parseDay(r.next_review_date);
-        if (nrMs != null) {
+        if (nrMs != null && !outByDate) {
           if (nrMs >= todayMs && nrMs <= soonMs) reviewsDue += 1;
           else if (nrMs < todayMs) pastDue += 1;
         }

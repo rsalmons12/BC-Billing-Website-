@@ -47,8 +47,22 @@ function authDays(a: Authorization): number | null {
   return inclusiveDays(a.start_date, a.end_date);
 }
 
+// A patient is "out" (off the active board) once the discharged toggle is set
+// OR a discharge date has already arrived. Imports bring in a discharge date but
+// don't flip the toggle, so we must honor the date too — otherwise long-gone
+// patients keep showing up as active/past-due.
+function isOut(a: Authorization): boolean {
+  if (a.discharged) return true;
+  const d = parseDate(a.discharge_date);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d.getTime() <= today.getTime();
+}
+
 // A claim is up for its Next Review once today lands on the review date/after.
 function isDueForReview(a: Authorization): boolean {
+  if (isOut(a)) return false;
   const d = parseDate(a.next_review_date);
   if (!d) return false;
   const today = new Date();
@@ -59,7 +73,7 @@ function isDueForReview(a: Authorization): boolean {
 // Past due = the Next Review date is strictly BEFORE today and nothing has been
 // updated (e.g. review 7/14, today 7/15). Discharged patients are never past due.
 function isPastDue(a: Authorization): boolean {
-  if (a.discharged) return false;
+  if (isOut(a)) return false;
   const d = parseDate(a.next_review_date);
   if (!d) return false;
   const today = new Date();
