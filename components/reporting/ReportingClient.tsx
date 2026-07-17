@@ -1067,9 +1067,31 @@ function AuthReport({
     };
     const todayMs = parseDay(today)!;
     const soonMs = parseDay(addDays(today, 7))!;
+    // Count PER PATIENT (matching the Authorizations tab): group every auth
+    // record by facility + patient name, then use only that patient's CURRENT
+    // (most-recently-begun) authorization. A patient with several auth lines —
+    // an initial auth plus reviews, or a PHP→IOP step-down — is counted once,
+    // otherwise Reporting over-counts vs. the Authorizations board.
+    const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+    const recency = (r: AnyRow): number => {
+      const begun = [r.start_date, r.admit_date]
+        .map((v) => Date.parse(String(v ?? "").trim()))
+        .filter((t) => !isNaN(t)) as number[];
+      if (begun.length) return Math.max(...begun);
+      const c = Date.parse(String(r.created_at ?? ""));
+      return isNaN(c) ? 0 : c;
+    };
+    const byPatient = new Map<string, AnyRow[]>();
+    for (const r of filtered) {
+      const key = `${(r.facility_id as string) ?? ""}||${norm(r.patient_name)}`;
+      if (!byPatient.has(key)) byPatient.set(key, []);
+      byPatient.get(key)!.push(r);
+    }
     const byLoc = new Map<string, { patients: number; days: number }>();
     const byFac = new Map<string, { total: number; active: number; days: number }>();
-    for (const r of filtered) {
+    for (const auths of byPatient.values()) {
+      auths.sort((a, b) => recency(b) - recency(a));
+      const r = auths[0]; // this patient's current authorization
       const isDischarged = Boolean(r.discharged);
       const days = toNum(r.total_days);
       const fid = (r.facility_id as string) ?? "—";
@@ -1083,7 +1105,7 @@ function AuthReport({
         activeDays += days;
         fe.active += 1;
         fe.days += days;
-        if (String(r.status ?? "").trim().toLowerCase() === "pending") pending += 1;
+        if (/pending/.test(String(r.status ?? "").toLowerCase())) pending += 1;
         const loc = String(r.level_of_care ?? "").trim();
         if (loc) {
           if (!byLoc.has(loc)) byLoc.set(loc, { patients: 0, days: 0 });
@@ -1104,7 +1126,8 @@ function AuthReport({
       return c && c >= prodFrom && c <= prodTo;
     }).length;
     return {
-      total: filtered.length,
+      total: byPatient.size, // patients, not raw auth records
+      totalRecords: filtered.length,
       active,
       discharged,
       activeDays,
@@ -1253,14 +1276,14 @@ function AuthReport({
       ) : dept === "authorizations" ? (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-            <Stat label="Active auths" value={num(authStats.active)} accent="recovered" />
+            <Stat label="Active patients" value={num(authStats.active)} accent="recovered" />
             <Stat label="New auths" value={num(authStats.newAuths)} accent="secured" />
             <Stat label="Past due" value={num(authStats.pastDue)} accent="risk" />
             <Stat label="Pending" value={num(authStats.pending)} accent="gold" />
             <Stat label="Discharged" value={num(authStats.discharged)} />
             <Stat label="Auth days (active)" value={num(authStats.activeDays)} accent="gold" />
             <Stat label="Reviews due ≤7d" value={num(authStats.reviewsDue)} accent="gold" />
-            <Stat label="Total auths" value={num(authStats.total)} />
+            <Stat label="Patients" value={num(authStats.total)} />
           </div>
 
           <DailyProduction
