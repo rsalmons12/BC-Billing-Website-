@@ -1092,7 +1092,12 @@ function AuthReport({
     for (const auths of byPatient.values()) {
       auths.sort((a, b) => recency(b) - recency(a));
       const r = auths[0]; // this patient's current authorization
-      const isDischarged = Boolean(r.discharged);
+      // A patient is off the active board once the discharged toggle is set OR
+      // the discharge date has arrived (imports bring the date, not the toggle).
+      // So they don't count as active, pending, past due, or review due.
+      const dischMs = parseDay(r.discharge_date);
+      const isDischarged =
+        Boolean(r.discharged) || (dischMs != null && dischMs <= todayMs);
       const days = toNum(r.total_days);
       const fid = (r.facility_id as string) ?? "—";
       if (!byFac.has(fid)) byFac.set(fid, { total: 0, active: 0, days: 0 });
@@ -1113,14 +1118,8 @@ function AuthReport({
           le.patients += 1;
           le.days += days;
         }
-        // A discharge date that has already arrived takes a patient off the
-        // active board even when the discharged toggle was never flipped
-        // (imports bring the date, not the toggle). Such patients can't be
-        // "past due" or "review due".
-        const dischMs = parseDay(r.discharge_date);
-        const outByDate = dischMs != null && dischMs <= todayMs;
         const nrMs = parseDay(r.next_review_date);
-        if (nrMs != null && !outByDate) {
+        if (nrMs != null) {
           if (nrMs >= todayMs && nrMs <= soonMs) reviewsDue += 1;
           else if (nrMs < todayMs) pastDue += 1;
         }
