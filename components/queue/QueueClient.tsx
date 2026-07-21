@@ -295,13 +295,39 @@ export default function QueueClient({
       `${c.facility_id ?? ""}|${(c.member_id || c.patient_name || c.claim_id)
         .trim()
         .toLowerCase()}`;
+
+    // EVEN DISPERSAL — every patient in a facility belongs to exactly ONE of that
+    // facility's collectors, chosen by a stable hash of the patient key modulo the
+    // roster size. 5,000 Pathways claims across 5 collectors => ~1,000 each, with
+    // no overlap, and it does NOT depend on who logs in first. (Requires that a
+    // collector can read co-collector rows in `assignments` — see the asg_read
+    // policy in migration 0034; without it a staff roster is just themselves.)
+    // 100+ specialists work only the 100+ band, so they take no share of the 0–99
+    // pool and are left out of the roster.
+    const priorityIds = new Set(
+      collectors.filter((p) => p.queue_tier === "priority_100").map((p) => p.id)
+    );
+    const rosterByFacility = new Map<string, string[]>();
+    for (const a of asg) {
+      if (priorityIds.has(a.profile_id)) continue;
+      if (!rosterByFacility.has(a.facility_id)) rosterByFacility.set(a.facility_id, []);
+      const arr = rosterByFacility.get(a.facility_id)!;
+      if (!arr.includes(a.profile_id)) arr.push(a.profile_id);
+    }
+    // Stable order so the same patient hashes to the same collector every load.
+    for (const arr of rosterByFacility.values()) arr.sort();
+    const hashKey = (s: string) => {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+      return Math.abs(h);
+    };
     const ownerByPatient = new Map<string, string>();
     for (const c of claims) {
-      const w = workMap[c.claim_id];
-      if (w?.claimed_at === today && w?.claimed_by) {
-        const k = pkeyOf(c);
-        if (!ownerByPatient.has(k)) ownerByPatient.set(k, w.claimed_by);
-      }
+      const k = pkeyOf(c);
+      if (ownerByPatient.has(k)) continue;
+      const roster = rosterByFacility.get(c.facility_id ?? "") ?? [];
+      if (roster.length === 0) continue; // no roster yet -> falls to shared pool
+      ownerByPatient.set(k, roster[hashKey(k) % roster.length]);
     }
 
     // Diagnostic breakdown so management can see WHY a queue is empty —
@@ -338,18 +364,20 @@ export default function QueueClient({
       .map((c) => {
         const w = workMap[c.claim_id] ?? null;
         const owner = ownerByPatient.get(pkeyOf(c));
-        const reservedByMe = owner === collectorId;
-        const takenByOther = !!owner && owner !== collectorId;
+        // My even share vs. a co-collector's share. We KEEP co-collectors'
+        // patients in the list as a help pool — they only surface once this
+        // collector's own share is cleared (or via "Take more"), so a share
+        // never strands when someone is out, but the default is a clean split.
+        const mineByShare = owner === collectorId;
+        const otherShare = !!owner && owner !== collectorId;
         return {
           ...c,
           work: w,
-          _mine: reservedByMe,
-          _takenByOther: takenByOther,
+          _mine: mineByShare,
+          _takenByOther: otherShare,
           _pkey: pkeyOf(c),
         };
-      })
-      // A patient owned by another collector today is out of this pool.
-      .filter((r) => !r._takenByOther);
+      });
 
     // Priority tiers: 100+ first, then 65–99, then younger; oldest-first within.
     const tier = (age: number | null) => {
@@ -501,7 +529,7 @@ export default function QueueClient({
     (r) => (r.age_days ?? 0) > RISK_AGE_THRESHOLD
   ).length;
   const balanceRemaining = todaySet.reduce((s, r) => s + (r.balance ?? 0), 0);
-  const backlog = unworked.length; // everything not yet worked, incl. rollover
+  const backlog = herUnworked.length; // this collector's OWN even share, unworked
 
   // While any 65+ risk claim is still open today, lock the younger ones so the
   // collector can't skip ahead.
@@ -513,7 +541,7 @@ export default function QueueClient({
     view === "today"
       ? workedTodayRows
       : view === "backlog"
-        ? unworked // the full backlog, so a stray leftover claim is findable
+        ? herUnworked // this collector's own even share (their real backlog)
         : boardRows;
   const q = search.trim().toLowerCase();
   const shown = baseRows.filter((r) => {
@@ -1069,7 +1097,7 @@ export default function QueueClient({
                       : diag && diag.total === 0
                         ? "No claims imported for your facilities yet."
                         : diag && diag.takenByOthers > 0
-                          ? `Every available patient in your facilities is already being worked by another collector today (${diag.takenByOthers} claim${diag.takenByOthers === 1 ? "" : "s"} taken). Ask management to add facilities or reassign.`
+                          ? `Your share is fully worked or resting right now. ${diag.takenByOthers} claim${diag.takenByOthers === 1 ? " is" : "s are"} in your co-collectors' shares — use "➕ Take 25 more" to help clear them.`
                           : "Nothing left to work in your facilities today — everything's worked, with the auth team, or 100+ (Admin-only)."
                   ) : backlog === 0 ? (
                     "🎉 Backlog clear — nice work."
