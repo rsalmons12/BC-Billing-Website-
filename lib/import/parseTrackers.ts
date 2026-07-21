@@ -552,7 +552,11 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
       office: findCol(h, [/office name/, /^office$/, /facility/]),
       entered: findCol(h, [/payment entered/]),
       deposit: findCol(h, [/deposit date/]),
-      patient: findCol(h, [/patient full name|patient name|patient/]),
+      // Match the NAME column, never an id column. Some exports carry a
+      // "Payment Patient ID" column before "Patient Full Name"; a bare /patient/
+      // would grab the id and import numbers as names, so require name/full name
+      // (or an exact "patient" header).
+      patient: findCol(h, [/patient full name|patient name|^patient$/]),
       member: findCol(h, [/member id/]),
       cpt: findCol(h, [/cpt descri|charge cpt|cpt/]),
       source: findCol(h, [/payment source|payer/]),
@@ -638,7 +642,9 @@ export function parseRepricing(
     const col = {
       claim: findCol(h, [/claim id/]),
       office: findCol(h, [/facility name|office name|facility/]),
-      patient: findCol(h, [/patient full name|patient name|patient/]),
+      // Name column only — never a "… Patient ID" column that also contains
+      // the word "patient".
+      patient: findCol(h, [/patient full name|patient name|^patient$/]),
       member: findCol(h, [/member id/]),
       date: findCol(h, [/claim date|from date|claim from/]),
       charge: findCol(h, [/charge amount|total amount|claim total/]),
