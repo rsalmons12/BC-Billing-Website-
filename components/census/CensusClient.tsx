@@ -409,6 +409,7 @@ export default function CensusClient({
       member_id: r.member_id,
       auth: r.auth,
       comments: r.comments,
+      notes: r.notes,
       step_up: r.step_up,
       repriced: r.repriced,
       days: r.days,
