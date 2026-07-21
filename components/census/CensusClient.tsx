@@ -208,7 +208,11 @@ export default function CensusClient({
   const dayCols = useMemo(() => {
     const s = new Set<string>();
     for (const r of weekRows) for (const k of Object.keys(r.days ?? {})) s.add(k);
-    if (s.size === 0 && week) for (let i = 0; i < 7; i++) s.add(addDaysIso(week, i));
+    // ALWAYS lay out the full 7-day week from the week start, then union in any
+    // actual codes. Without this, a freshly imported/sparsely filled week (e.g.
+    // the upcoming week with only one stray code) collapses to a single day
+    // column, leaving nowhere to type Tue–Fri or add GN/CM/etc.
+    if (week) for (let i = 0; i < 7; i++) s.add(addDaysIso(week, i));
     return Array.from(s).sort();
   }, [weekRows, week]);
 
