@@ -22,6 +22,12 @@ export default function MoneyOutlookPanel({ outlooks }: { outlooks: FacilityOutl
   if (!current) return null;
 
   const dm = DIR_META[current.direction];
+  // Full per-facility breakdown (every site at once) when viewing the roll-up.
+  const perFacility = outlooks
+    .filter((o) => o.facility_id)
+    .slice()
+    .sort((a, b) => b.paidCur - a.paidCur);
+  const showBreakdown = sel === "all" && perFacility.length > 1;
 
   return (
     <section className="card overflow-hidden">
@@ -90,6 +96,54 @@ export default function MoneyOutlookPanel({ outlooks }: { outlooks: FacilityOutl
           );
         })}
       </div>
+
+      {/* Full per-facility forecast — every site at a glance */}
+      {showBreakdown && (
+        <div className="border-t border-surface-border">
+          <div className="px-5 pt-4 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+            Forecast by facility · {current.curLabel}
+          </div>
+          <div className="scroll-x overflow-auto px-2 pb-3">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-surface-muted">
+                  <th className="th text-left">Facility</th>
+                  <th className="th text-center">Trend</th>
+                  <th className="th text-right">Collected</th>
+                  <th className="th text-right">Last month</th>
+                  <th className="th text-left">Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perFacility.map((o, i) => {
+                  const m = DIR_META[o.direction];
+                  return (
+                    <tr key={o.facility_id!} className={i % 2 ? "bg-surface/40" : ""}>
+                      <td className="td">
+                        <button
+                          onClick={() => setSel(o.facility_id!)}
+                          className="font-medium text-command hover:underline"
+                        >
+                          {o.facility_name}
+                        </button>
+                      </td>
+                      <td className={`td text-center font-semibold ${m.text}`}>
+                        {m.icon}{" "}
+                        {o.pct == null ? "New" : `${o.pct >= 0 ? "+" : ""}${o.pct.toFixed(0)}%`}
+                      </td>
+                      <td className="td text-right font-mono">{money(o.paidCur)}</td>
+                      <td className="td text-right font-mono text-surface-muted">
+                        {money(o.paidPrior)}
+                      </td>
+                      <td className="td text-xs text-surface-muted">{o.reason}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
