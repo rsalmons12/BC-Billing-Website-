@@ -98,9 +98,13 @@ function rateFor(r: Census): number {
   return censusLocRate(r.level_of_care);
 }
 
-// Expected revenue = per-GN rate × GN sessions delivered this week.
+// Expected reimbursement is 30% of billed. Change here if that differs.
+const EXPECTED_PCT = 0.3;
+
+// Expected revenue = per-GN rate × GN sessions delivered × 30% (expected
+// reimbursement share of billed).
 function expectedFor(r: Census): number {
-  return rateFor(r) * (actualsFor(r.days).GN ?? 0);
+  return rateFor(r) * (actualsFor(r.days).GN ?? 0) * EXPECTED_PCT;
 }
 
 // GN (group note) sessions expected per week for a level of care. Uses the
@@ -609,7 +613,7 @@ export default function CensusClient({
                 >
                   Rate / GN
                 </th>
-                <th className="th text-right" title="Expected revenue = rate per GN × GN sessions delivered">
+                <th className="th text-right" title="Expected revenue = rate per GN × GN sessions delivered × 30%">
                   Expected $
                 </th>
                 <th className="th text-right">Paid $</th>
@@ -761,7 +765,7 @@ export default function CensusClient({
                   </td>
                   <td
                     className="td text-right font-mono text-xs"
-                    title={`${act.GN ?? 0} GN × ${money(rateFor(r))} per GN`}
+                    title={`${act.GN ?? 0} GN × ${money(rateFor(r))} per GN × 30%`}
                   >
                     {money(expectedFor(r))}
                   </td>
