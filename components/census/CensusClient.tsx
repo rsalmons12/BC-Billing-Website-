@@ -10,6 +10,7 @@ import {
   CENSUS_BILLING_STATUS,
   CENSUS_LOC_OPTIONS,
   CENSUS_LOC_GN,
+  censusLocRate,
   type Census,
   type Facility,
 } from "@/lib/types";
@@ -83,13 +84,19 @@ function EditMoney({
   );
 }
 
-// Expected reimbursement is a fixed 30% of billed (GN × rate). Change here if
-// the expected percentage differs.
-const EXPECTED_PCT = 0.3;
+// Weekly rules from the census Summary sheet (per client, per week). Missed
+// sessions are tracked per service — GN, CM, and ID each get their own bucket
+// (PF is not counted toward missed).
+const WEEKLY_RULES: Record<string, number> = { CM: 2, ID: 1 };
+const REQ_CODES = ["GN", "CM", "ID"] as const;
 
-// Weekly rules from the census Summary sheet (per client, per week).
-const WEEKLY_RULES: Record<string, number> = { CM: 2, PF: 1, ID: 1 };
-const REQ_CODES = ["GN", "CM", "PF", "ID"] as const;
+// Expected weekly revenue for a client = a per-row billed-rate override if set,
+// otherwise the standard rate for their level of care (PHP $4,800 / IOP $4,300).
+function expectedFor(r: Census): number {
+  const override = r.gn_rate;
+  if (override != null && override > 0) return override;
+  return censusLocRate(r.level_of_care);
+}
 
 // GN (group note) sessions expected per week for a level of care. Uses the
 // mapped value first (PHP, Detox, Residential … have no number), then falls
@@ -104,7 +111,7 @@ function locProgramDays(loc: string | null): number {
 }
 
 function requirementsFor(loc: string | null): Record<string, number> {
-  return { GN: locProgramDays(loc), CM: WEEKLY_RULES.CM, PF: WEEKLY_RULES.PF, ID: WEEKLY_RULES.ID };
+  return { GN: locProgramDays(loc), CM: WEEKLY_RULES.CM, ID: WEEKLY_RULES.ID };
 }
 
 // Count each service code across a patient's day cells.
@@ -221,18 +228,20 @@ export default function CensusClient({
     [weekRows]
   );
 
-  // Expected $ = GN sessions × the patient's GN rate; Paid $ = entered.
-  // Missed = total required sessions still short this week, across all clients.
+  // Expected $ = the billed weekly rate for each client's level of care; Paid $
+  // is entered. Missed sessions are bucketed PER SERVICE (GN / CM / ID each get
+  // their own total) rather than lumped into one number.
   const amounts = useMemo(() => {
     let exp = 0;
     let paid = 0;
-    let missed = 0;
+    const missed: Record<string, number> = {};
+    for (const c of REQ_CODES) missed[c] = 0;
     for (const r of weekRows) {
       const act = actualsFor(r.days);
-      exp += (act.GN ?? 0) * (r.gn_rate ?? 0) * EXPECTED_PCT;
+      exp += expectedFor(r);
       paid += r.paid_amount ?? 0;
       const req = requirementsFor(r.level_of_care);
-      for (const c of REQ_CODES) missed += Math.max(0, req[c] - (act[c] ?? 0));
+      for (const c of REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
     }
     return { exp, paid, missed };
   }, [weekRows]);
@@ -544,11 +553,14 @@ export default function CensusClient({
           {CENSUS_SESSION_CODES.map((c) => (
             <SumCard key={c} label={`${c} Sessions`} value={String(tally[c] ?? 0)} />
           ))}
-          <SumCard
-            label="Missed"
-            value={String(amounts.missed)}
-            accent={amounts.missed > 0 ? "risk" : "recovered"}
-          />
+          {REQ_CODES.map((c) => (
+            <SumCard
+              key={c}
+              label={`Missed ${c}`}
+              value={String(amounts.missed[c] ?? 0)}
+              accent={(amounts.missed[c] ?? 0) > 0 ? "risk" : "recovered"}
+            />
+          ))}
           <SumCard label="Expected $" value={money(amounts.exp)} accent="gold" />
           <SumCard label="Paid $" value={money(amounts.paid)} accent="recovered" />
         </div>
@@ -586,11 +598,14 @@ export default function CensusClient({
                 <th className="th text-center" title="Required sessions still missing this week">
                   Missed
                 </th>
-                <th className="th text-right" title="Dollars per GN session">
-                  Rate/GN
+                <th
+                  className="th text-right"
+                  title="Weekly billed rate override — blank uses the standard LOC rate (PHP $4,800 / IOP $4,300)"
+                >
+                  Billed Rate
                 </th>
-                <th className="th text-right" title="GN sessions × rate × 30%">
-                  Expected $ (30%)
+                <th className="th text-right" title="Expected revenue = the billed weekly rate">
+                  Expected $
                 </th>
                 <th className="th text-right">Paid $</th>
                 <th className="th min-w-[11rem]">Billing Status</th>
@@ -741,9 +756,13 @@ export default function CensusClient({
                   </td>
                   <td
                     className="td text-right font-mono text-xs"
-                    title={`${act.GN ?? 0} GN × ${money(r.gn_rate ?? 0)} × 30%`}
+                    title={
+                      r.gn_rate && r.gn_rate > 0
+                        ? "Per-row billed rate override"
+                        : `Standard ${r.level_of_care || "LOC"} rate`
+                    }
                   >
-                    {money((act.GN ?? 0) * (r.gn_rate ?? 0) * EXPECTED_PCT)}
+                    {money(expectedFor(r))}
                   </td>
                   <td className="td p-0.5">
                     <EditMoney
