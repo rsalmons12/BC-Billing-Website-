@@ -361,16 +361,16 @@ export const CENSUS_LOC_GN: Record<string, number> = {
 };
 export const CENSUS_LOC_OPTIONS = ["", ...Object.keys(CENSUS_LOC_GN)];
 
-// Standard WEEKLY billed rate by level of care — the CPT the week bills under.
-// Expected revenue is based off the billed amount, and the rate is fixed by
-// service: S0201 (PHP SA SERVICES) = $4,800/wk, H0015 (IOP SA SERVICES) =
-// $4,300/wk. Add levels here as their billed rates are confirmed.
+// Billed rate PER GN SESSION by level of care — the CPT the week bills under.
+// Expected revenue is based off the billed amount: rate per GN × GN sessions
+// delivered. S0201 (PHP SA SERVICES) = $4,800/GN, H0015 (IOP SA SERVICES) =
+// $4,300/GN. Add levels here as their billed rates are confirmed.
 export const CENSUS_LOC_RATE: Record<string, number> = {
-  PHP: 4800, // S0201
-  IOP: 4300, // H0015
+  PHP: 4800, // S0201, per GN
+  IOP: 4300, // H0015, per GN
 };
 
-// Weekly billed rate for a patient's level of care. PHP / Partial Care (PC) →
+// Per-GN billed rate for a patient's level of care. PHP / Partial Care (PC) →
 // the PHP rate; IOP → the IOP rate. Unknown levels return 0 (set a per-row rate).
 export function censusLocRate(loc: string | null | undefined): number {
   const u = String(loc ?? "").toUpperCase();

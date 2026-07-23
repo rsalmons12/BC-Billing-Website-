@@ -90,12 +90,17 @@ function EditMoney({
 const WEEKLY_RULES: Record<string, number> = { CM: 2, ID: 1 };
 const REQ_CODES = ["GN", "CM", "ID"] as const;
 
-// Expected weekly revenue for a client = a per-row billed-rate override if set,
-// otherwise the standard rate for their level of care (PHP $4,800 / IOP $4,300).
-function expectedFor(r: Census): number {
+// Per-GN billed rate for a client: a per-row override if set, else the standard
+// rate for their level of care (PHP $4,800 / IOP $4,300 per GN).
+function rateFor(r: Census): number {
   const override = r.gn_rate;
   if (override != null && override > 0) return override;
   return censusLocRate(r.level_of_care);
+}
+
+// Expected revenue = per-GN rate × GN sessions delivered this week.
+function expectedFor(r: Census): number {
+  return rateFor(r) * (actualsFor(r.days).GN ?? 0);
 }
 
 // GN (group note) sessions expected per week for a level of care. Uses the
@@ -600,11 +605,11 @@ export default function CensusClient({
                 </th>
                 <th
                   className="th text-right"
-                  title="Weekly billed rate override — blank uses the standard LOC rate (PHP $4,800 / IOP $4,300)"
+                  title="Rate per GN override — blank uses the standard LOC rate (PHP $4,800 / IOP $4,300 per GN)"
                 >
-                  Billed Rate
+                  Rate / GN
                 </th>
-                <th className="th text-right" title="Expected revenue = the billed weekly rate">
+                <th className="th text-right" title="Expected revenue = rate per GN × GN sessions delivered">
                   Expected $
                 </th>
                 <th className="th text-right">Paid $</th>
@@ -756,11 +761,7 @@ export default function CensusClient({
                   </td>
                   <td
                     className="td text-right font-mono text-xs"
-                    title={
-                      r.gn_rate && r.gn_rate > 0
-                        ? "Per-row billed rate override"
-                        : `Standard ${r.level_of_care || "LOC"} rate`
-                    }
+                    title={`${act.GN ?? 0} GN × ${money(rateFor(r))} per GN`}
                   >
                     {money(expectedFor(r))}
                   </td>
