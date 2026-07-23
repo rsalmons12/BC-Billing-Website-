@@ -341,6 +341,7 @@ export default function CensusClient({
   const amounts = useMemo(() => {
     let exp = 0;
     let paid = 0;
+    let missedRev = 0; // revenue lost to missed GN sessions
     const missed: Record<string, number> = {};
     for (const c of REQ_CODES) missed[c] = 0;
     for (const r of weekRows) {
@@ -349,8 +350,10 @@ export default function CensusClient({
       paid += effectivePaid(r);
       const req = requirementsFor(r.level_of_care);
       for (const c of REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
+      const missedGN = Math.max(0, req.GN - (act.GN ?? 0));
+      missedRev += missedGN * rateFor(r) * EXPECTED_PCT;
     }
-    return { exp, paid, missed };
+    return { exp, paid, missed, missedRev };
   }, [weekRows, effectivePaid]);
 
   const save = useCallback(
@@ -668,8 +671,31 @@ export default function CensusClient({
               accent={(amounts.missed[c] ?? 0) > 0 ? "risk" : "recovered"}
             />
           ))}
+          <SumCard
+            label="Missed Rev $"
+            value={money(amounts.missedRev)}
+            accent={amounts.missedRev > 0 ? "risk" : "recovered"}
+          />
           <SumCard label="Expected $" value={money(amounts.exp)} accent="gold" />
           <SumCard label="Paid $" value={money(amounts.paid)} accent="recovered" />
+        </div>
+      )}
+
+      {/* Payments-link diagnostic: makes it obvious when Paid $ has nothing to
+          pull from (no payments imported for this facility). */}
+      {!loading && week && (
+        <div className="border-b border-surface-border bg-surface px-6 py-1 text-xs">
+          {payRows.length === 0 ? (
+            <span className="text-risk">
+              ⚠ No payments found for {facName} — Paid $ can’t auto-fill. Import this facility’s
+              payments in the Payments section.
+            </span>
+          ) : (
+            <span className="text-surface-muted">
+              🔗 Linked to <b className="text-surface-ink">{payRows.length.toLocaleString()}</b>{" "}
+              payment lines for {facName}. Paid $ pulls automatically by patient.
+            </span>
+          )}
         </div>
       )}
 
