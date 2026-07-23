@@ -4,15 +4,26 @@ import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
+import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer } from "@/lib/claims";
+import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import type {
   Claim,
   Payment,
   Negotiation,
   BilledClaim,
+  Authorization,
+  Census,
   Facility,
 } from "@/lib/types";
+
+type RepriceRow = {
+  facility_id: string | null;
+  total_amount: number | null;
+  amount_paid: number | null;
+  claim_status: string | null;
+};
 
 // Share of outstanding AR we expect to collect (facility projection rule).
 const EXPECTED_RATE = 0.33;
@@ -85,16 +96,27 @@ export default async function FacilityDashboard({
     build: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>
   ) => selectAll<T>(build as never).catch(() => [] as T[]);
 
-  const [{ data: facList }, allClaimsRaw, allPaymentsRaw, allNegRaw, allBilledRaw] =
-    await Promise.all([
-      supabase.from("facilities").select("*").order("name", { ascending: true }),
-      safeAll<Claim>((f, t) =>
-        supabase.from("claims").select("*").eq("present", true).range(f, t)
-      ),
-      safeAll<Payment>((f, t) => supabase.from("payments").select("*").range(f, t)),
-      safeAll<Negotiation>((f, t) => supabase.from("negotiations").select("*").range(f, t)),
-      safeAll<BilledClaim>((f, t) => supabase.from("billed_claims").select("*").range(f, t)),
-    ]);
+  const [
+    { data: facList },
+    allClaimsRaw,
+    allPaymentsRaw,
+    allNegRaw,
+    allBilledRaw,
+    allAuthsRaw,
+    allCensusRaw,
+    allRepricingRaw,
+  ] = await Promise.all([
+    supabase.from("facilities").select("*").order("name", { ascending: true }),
+    safeAll<Claim>((f, t) =>
+      supabase.from("claims").select("*").eq("present", true).range(f, t)
+    ),
+    safeAll<Payment>((f, t) => supabase.from("payments").select("*").range(f, t)),
+    safeAll<Negotiation>((f, t) => supabase.from("negotiations").select("*").range(f, t)),
+    safeAll<BilledClaim>((f, t) => supabase.from("billed_claims").select("*").range(f, t)),
+    safeAll<Authorization>((f, t) => supabase.from("authorizations").select("*").range(f, t)),
+    safeAll<Census>((f, t) => supabase.from("census").select("*").range(f, t)),
+    safeAll<RepriceRow>((f, t) => supabase.from("repricing").select("*").range(f, t)),
+  ]);
 
   // Hard scope everything to this login's facilities.
   const inScope = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
@@ -107,7 +129,22 @@ export default async function FacilityDashboard({
   const allPayments = inScope(allPaymentsRaw);
   const allNegotiations = inScope(allNegRaw);
   const allBilled = inScope(allBilledRaw);
+  const allAuths = inScope(allAuthsRaw);
+  const allCensus = inScope(allCensusRaw);
+  const allRepricing = inScope(allRepricingRaw);
   const multi = facilities.length > 1;
+
+  // Money Outlook — month-over-month forecast with the reasons behind it, over
+  // just this login's facilities (VMAH plans excluded from the aging signal).
+  const outlooks = computeOutlooks({
+    facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
+    payments: allPayments,
+    billed: allBilled,
+    claims: allClaims.filter((c) => !isExcludedMember(c.member_id)),
+    auths: allAuths,
+    census: allCensus,
+    repricing: allRepricing,
+  });
 
   // Which facility is being viewed: a specific one, or "all" (combined).
   const selectedId =
@@ -288,6 +325,9 @@ export default async function FacilityDashboard({
             />
             <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
           </section>
+
+          {/* Money Outlook — why revenue is improving or declining */}
+          <MoneyOutlookPanel outlooks={outlooks} />
 
           {/* Non-reimbursement risk (marketplace / exchange payers) */}
           {riskAR > 0 && (
