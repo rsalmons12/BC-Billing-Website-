@@ -4,8 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
+import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
+import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import {
   RISK_AGE_THRESHOLD,
   PRIORITY_AGE_THRESHOLD,
@@ -13,6 +15,44 @@ import {
   type AuthIssue,
   type Facility,
 } from "@/lib/types";
+
+// Never let one slow/failed query take down the whole overview.
+async function safe<T>(p: Promise<T[]>): Promise<T[]> {
+  try {
+    return await p;
+  } catch {
+    return [];
+  }
+}
+
+// Narrow row shapes for the Money Outlook fetches (only the columns it needs).
+type PayRow = {
+  facility_id: string | null;
+  paid_amount: number | null;
+  payment_source: string | null;
+  period: string | null;
+  deposit_date: string | null;
+};
+type BilledRow = { facility_id: string | null; total_amount: number | null; period: string | null };
+type AuthRow = {
+  facility_id: string | null;
+  discharged: boolean | null;
+  discharge_date: string | null;
+  next_review_date: string | null;
+  created_at: string | null;
+};
+type CensusRow = {
+  facility_id: string | null;
+  level_of_care: string | null;
+  week_start: string | null;
+  gn_rate: number | null;
+};
+type RepriceRow = {
+  facility_id: string | null;
+  total_amount: number | null;
+  amount_paid: number | null;
+  claim_status: string | null;
+};
 
 // Age band helpers. 100+ is the top priority tier; 65–99 is the risk band.
 const isPriority = (c: Claim) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD;
@@ -24,13 +64,59 @@ export default async function OverviewPage() {
   if (profile.role !== "management") redirect("/");
 
   const supabase = createClient();
-  const [{ data: facData }, claimsData, issuesData] = await Promise.all([
+  const [
+    { data: facData },
+    claimsData,
+    issuesData,
+    paymentsData,
+    billedData,
+    authsData,
+    censusData,
+    repricingData,
+  ] = await Promise.all([
     supabase.from("facilities").select("*").order("name"),
     selectAll<Claim>((f, t) =>
       supabase.from("claims").select("*").eq("present", true).range(f, t)
     ),
     selectAll<AuthIssue>((f, t) =>
       supabase.from("auth_issues").select("*").neq("status", "Completed").range(f, t)
+    ),
+    safe(
+      selectAll<PayRow>((f, t) =>
+        supabase
+          .from("payments")
+          .select("facility_id,paid_amount,payment_source,period,deposit_date")
+          .range(f, t)
+      )
+    ),
+    safe(
+      selectAll<BilledRow>((f, t) =>
+        supabase.from("billed_claims").select("facility_id,total_amount,period").range(f, t)
+      )
+    ),
+    safe(
+      selectAll<AuthRow>((f, t) =>
+        supabase
+          .from("authorizations")
+          .select("facility_id,discharged,discharge_date,next_review_date,created_at")
+          .range(f, t)
+      )
+    ),
+    safe(
+      selectAll<CensusRow>((f, t) =>
+        supabase
+          .from("census")
+          .select("facility_id,level_of_care,week_start,gn_rate")
+          .range(f, t)
+      )
+    ),
+    safe(
+      selectAll<RepriceRow>((f, t) =>
+        supabase
+          .from("repricing")
+          .select("facility_id,total_amount,amount_paid,claim_status")
+          .range(f, t)
+      )
     ),
   ]);
 
@@ -110,6 +196,21 @@ export default async function OverviewPage() {
     }
   );
 
+  // Money Outlook — month-over-month forecast with the reasons behind it.
+  const outlooks = computeOutlooks({
+    facilities: facilities.map((f) => ({
+      id: f.id,
+      name: f.name,
+      short_name: f.short_name,
+    })),
+    payments: paymentsData,
+    billed: billedData,
+    claims,
+    auths: authsData,
+    census: censusData,
+    repricing: repricingData,
+  });
+
   const byBalance = (a: Claim, b: Claim) => (b.balance ?? 0) - (a.balance ?? 0);
   const worst100 = claims.filter(isPriority).sort(byBalance).slice(0, 30);
   const worst65 = claims.filter(isRisk65).sort(byBalance).slice(0, 30);
@@ -144,6 +245,9 @@ export default async function OverviewPage() {
             <Stat label="65–99 Risk" value={String(totals.risk65Count)} accent="gold" />
             <Stat label="Open Auth Issues" value={String(totals.openIssues)} accent="secured" />
           </section>
+
+          {/* Money Outlook — why revenue is improving or declining */}
+          <MoneyOutlookPanel outlooks={outlooks} />
 
           {/* 100+ priority panel */}
           <RiskPanel
