@@ -6,6 +6,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
+import { normFacility } from "@/lib/import/parse";
 import {
   CENSUS_BILLING_STATUS,
   CENSUS_LOC_OPTIONS,
@@ -211,6 +212,23 @@ export default function CensusClient({
     return f?.short_name || f?.name || "Facility";
   }, [facilities, facilityId]);
 
+  // Payments may sit under a sibling facility record (e.g. census "NJ Recovery"
+  // vs payments "NJ Recovery Solutions LLC"). Pull payments from every facility
+  // whose name overlaps the selected one, so the link survives a split record.
+  const linkedFacilityIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (facilityId) ids.add(facilityId);
+    const self = facilities.find((f) => f.id === facilityId);
+    const base = normFacility(self?.name || self?.short_name || "");
+    if (base) {
+      for (const f of facilities) {
+        const n = normFacility(f.name || f.short_name || "");
+        if (n && (n === base || n.includes(base) || base.includes(n))) ids.add(f.id);
+      }
+    }
+    return Array.from(ids);
+  }, [facilities, facilityId]);
+
   const load = useCallback(async () => {
     if (!facilityId) return;
     setLoading(true);
@@ -223,20 +241,21 @@ export default function CensusClient({
           .order("week_start", { ascending: false })
           .range(f, t)
       ).catch(() => [] as Census[]),
-      // Paid-per-service lines from the Payments section for this facility.
+      // Paid-per-service lines from the Payments section, across any facility
+      // record whose name matches this one (handles split/duplicate facilities).
       selectAll<{ patient_name: string | null; dos_from: string | null; paid_amount: number | null }>(
         (f, t) =>
           supabase
             .from("payments")
             .select("patient_name,dos_from,paid_amount")
-            .eq("facility_id", facilityId)
+            .in("facility_id", linkedFacilityIds)
             .range(f, t)
       ).catch(() => []),
     ]);
     setRows(data);
     setPayRows(pays);
     setLoading(false);
-  }, [supabase, facilityId]);
+  }, [supabase, facilityId, linkedFacilityIds]);
 
   // Attribute EVERY payment to exactly one census week per patient, so no
   // payment is dropped just because its service date doesn't fall in a week.
@@ -355,6 +374,12 @@ export default function CensusClient({
     }
     return { exp, paid, missed, missedRev };
   }, [weekRows, effectivePaid]);
+
+  // How much of this week's Paid $ was auto-pulled from Payments (diagnostic).
+  const weekPulled = useMemo(
+    () => weekRows.reduce((s, r) => s + pulledPaid(r), 0),
+    [weekRows, pulledPaid]
+  );
 
   const save = useCallback(
     async (id: string, partial: Partial<Census>) => {
@@ -682,18 +707,22 @@ export default function CensusClient({
       )}
 
       {/* Payments-link diagnostic: makes it obvious when Paid $ has nothing to
-          pull from (no payments imported for this facility). */}
+          pull from, or why THIS week is empty (recent services not paid yet). */}
       {!loading && week && (
         <div className="border-b border-surface-border bg-surface px-6 py-1 text-xs">
           {payRows.length === 0 ? (
             <span className="text-risk">
-              ⚠ No payments found for {facName} — Paid $ can’t auto-fill. Import this facility’s
-              payments in the Payments section.
+              ⚠ No payments found for {facName} — Paid $ can’t auto-fill. Check that this
+              facility’s payments are imported in the Payments section.
             </span>
           ) : (
             <span className="text-surface-muted">
               🔗 Linked to <b className="text-surface-ink">{payRows.length.toLocaleString()}</b>{" "}
-              payment lines for {facName}. Paid $ pulls automatically by patient.
+              payment lines for {facName} ·{" "}
+              <b className="text-surface-ink">{money(weekPulled)}</b> pulled into this week
+              {weekPulled === 0
+                ? " — none of these clients have a matched payment for this week yet (recent services are usually paid later; try an earlier week)."
+                : "."}
             </span>
           )}
         </div>
