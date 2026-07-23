@@ -238,32 +238,53 @@ export default function CensusClient({
     setLoading(false);
   }, [supabase, facilityId]);
 
-  // Index payments by patient for fast per-week lookups.
-  const payIndex = useMemo(() => {
-    const m = new Map<string, { dos: number; paid: number }[]>();
-    for (const p of payRows) {
-      const name = normName(p.patient_name);
-      const dos = dayMs(p.dos_from);
-      if (!name || dos == null) continue;
-      if (!m.has(name)) m.set(name, []);
-      m.get(name)!.push({ dos, paid: p.paid_amount ?? 0 });
+  // Attribute EVERY payment to exactly one census week per patient, so no
+  // payment is dropped just because its service date doesn't fall in a week.
+  // A payment lands on the week that contains its service date; if it falls
+  // outside all of that patient's weeks (e.g. an old service paid back in May),
+  // it lands on that patient's CLOSEST week. One payment → one week, so weekly
+  // totals never double-count.
+  const paidByPatientWeek = useMemo(() => {
+    // patient key → their census week starts (ms), sorted.
+    const weeksByPatient = new Map<string, number[]>();
+    for (const r of rows) {
+      const k = normName(r.patient_name);
+      const w = dayMs(r.week_start);
+      if (!k || w == null) continue;
+      if (!weeksByPatient.has(k)) weeksByPatient.set(k, []);
+      const arr = weeksByPatient.get(k)!;
+      if (!arr.includes(w)) arr.push(w);
     }
-    return m;
-  }, [payRows]);
+    for (const arr of weeksByPatient.values()) arr.sort((a, b) => a - b);
 
-  // Paid $ auto-pulled from Payments: sum of this client's paid lines whose
-  // service date falls inside the census week (Mon–Sun of week_start).
+    const acc = new Map<string, number>(); // `${patient}|${weekMs}` → paid $
+    for (const p of payRows) {
+      const k = normName(p.patient_name);
+      const dos = dayMs(p.dos_from);
+      const weeks = weeksByPatient.get(k);
+      if (!k || dos == null || !weeks || weeks.length === 0) continue;
+      // Week that contains the service date, else the nearest week.
+      let target = weeks.find((w) => dos >= w && dos <= w + 6 * 86400000);
+      if (target == null) {
+        target = weeks.reduce(
+          (best, w) => (Math.abs(w - dos) < Math.abs(best - dos) ? w : best),
+          weeks[0]
+        );
+      }
+      const key = `${k}|${target}`;
+      acc.set(key, (acc.get(key) ?? 0) + (p.paid_amount ?? 0));
+    }
+    return acc;
+  }, [rows, payRows]);
+
+  // Paid $ auto-pulled from Payments for a given client-week.
   const pulledPaid = useCallback(
     (r: Census): number => {
-      const list = payIndex.get(normName(r.patient_name));
-      const start = dayMs(r.week_start);
-      if (!list || start == null) return 0;
-      const end = start + 6 * 86400000;
-      let sum = 0;
-      for (const p of list) if (p.dos >= start && p.dos <= end) sum += p.paid;
-      return sum;
+      const w = dayMs(r.week_start);
+      if (w == null) return 0;
+      return paidByPatientWeek.get(`${normName(r.patient_name)}|${w}`) ?? 0;
     },
-    [payIndex]
+    [paidByPatientWeek]
   );
 
   // Effective Paid $: a manual override wins; otherwise the pulled amount.
