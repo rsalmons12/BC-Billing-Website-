@@ -57,22 +57,25 @@ const DAY_STATUS_LABEL: Record<string, string> = {
   scholarship: "Scholarship",
 };
 
-// A money cell that saves a number (or null) on blur.
+// A money cell that saves a number (or null) on blur. An optional placeholder
+// can show an auto-derived value when the field is left blank.
 function EditMoney({
   value,
   onSave,
   className = "",
+  placeholder = "$",
 }: {
   value: number | null;
   onSave: (v: number | null) => void;
   className?: string;
+  placeholder?: string;
 }) {
   return (
     <input
       key={value ?? ""}
       defaultValue={value != null ? String(value) : ""}
       inputMode="decimal"
-      placeholder="$"
+      placeholder={placeholder}
       onBlur={(e) => {
         const raw = e.target.value.replace(/[$,\s]/g, "").trim();
         const n = raw === "" ? null : parseFloat(raw);
@@ -96,6 +99,26 @@ function rateFor(r: Census): number {
   const override = r.gn_rate;
   if (override != null && override > 0) return override;
   return censusLocRate(r.level_of_care);
+}
+
+// Canonical name key for cross-matching census ↔ payments regardless of order
+// or punctuation: "James Mccarthy" and "MCCARTHY, JAMES" both → "james mccarthy".
+const normName = (s: unknown) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+
+// A date string → midnight epoch ms (or null).
+function dayMs(v: unknown): number | null {
+  const t = Date.parse(String(v ?? "").trim());
+  if (isNaN(t)) return null;
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 // Expected reimbursement is 30% of billed. Change here if that differs.
@@ -173,6 +196,11 @@ export default function CensusClient({
   const supabase = useMemo(() => createClient(), []);
   const [facilityId, setFacilityId] = useState(facilities[0]?.id ?? "");
   const [rows, setRows] = useState<Census[]>([]);
+  // Payment lines for this facility (patient + service date + paid $), used to
+  // auto-fill each client-week's Paid $ from the Payments section.
+  const [payRows, setPayRows] = useState<
+    { patient_name: string | null; dos_from: string | null; paid_amount: number | null }[]
+  >([]);
   const [week, setWeek] = useState("");
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -186,17 +214,66 @@ export default function CensusClient({
   const load = useCallback(async () => {
     if (!facilityId) return;
     setLoading(true);
-    const data = await selectAll<Census>((f, t) =>
-      supabase
-        .from("census")
-        .select("*")
-        .eq("facility_id", facilityId)
-        .order("week_start", { ascending: false })
-        .range(f, t)
-    ).catch(() => [] as Census[]);
+    const [data, pays] = await Promise.all([
+      selectAll<Census>((f, t) =>
+        supabase
+          .from("census")
+          .select("*")
+          .eq("facility_id", facilityId)
+          .order("week_start", { ascending: false })
+          .range(f, t)
+      ).catch(() => [] as Census[]),
+      // Paid-per-service lines from the Payments section for this facility.
+      selectAll<{ patient_name: string | null; dos_from: string | null; paid_amount: number | null }>(
+        (f, t) =>
+          supabase
+            .from("payments")
+            .select("patient_name,dos_from,paid_amount")
+            .eq("facility_id", facilityId)
+            .range(f, t)
+      ).catch(() => []),
+    ]);
     setRows(data);
+    setPayRows(pays);
     setLoading(false);
   }, [supabase, facilityId]);
+
+  // Index payments by patient for fast per-week lookups.
+  const payIndex = useMemo(() => {
+    const m = new Map<string, { dos: number; paid: number }[]>();
+    for (const p of payRows) {
+      const name = normName(p.patient_name);
+      const dos = dayMs(p.dos_from);
+      if (!name || dos == null) continue;
+      if (!m.has(name)) m.set(name, []);
+      m.get(name)!.push({ dos, paid: p.paid_amount ?? 0 });
+    }
+    return m;
+  }, [payRows]);
+
+  // Paid $ auto-pulled from Payments: sum of this client's paid lines whose
+  // service date falls inside the census week (Mon–Sun of week_start).
+  const pulledPaid = useCallback(
+    (r: Census): number => {
+      const list = payIndex.get(normName(r.patient_name));
+      const start = dayMs(r.week_start);
+      if (!list || start == null) return 0;
+      const end = start + 6 * 86400000;
+      let sum = 0;
+      for (const p of list) if (p.dos >= start && p.dos <= end) sum += p.paid;
+      return sum;
+    },
+    [payIndex]
+  );
+
+  // Effective Paid $: a manual override wins; otherwise the pulled amount.
+  const effectivePaid = useCallback(
+    (r: Census): number => {
+      if (r.paid_amount != null && r.paid_amount > 0) return r.paid_amount;
+      return pulledPaid(r);
+    },
+    [pulledPaid]
+  );
 
   useEffect(() => {
     load();
@@ -248,12 +325,12 @@ export default function CensusClient({
     for (const r of weekRows) {
       const act = actualsFor(r.days);
       exp += expectedFor(r);
-      paid += r.paid_amount ?? 0;
+      paid += effectivePaid(r);
       const req = requirementsFor(r.level_of_care);
       for (const c of REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
     }
     return { exp, paid, missed };
-  }, [weekRows]);
+  }, [weekRows, effectivePaid]);
 
   const save = useCallback(
     async (id: string, partial: Partial<Census>) => {
@@ -769,11 +846,19 @@ export default function CensusClient({
                   >
                     {money(expectedFor(r))}
                   </td>
-                  <td className="td p-0.5">
+                  <td
+                    className="td p-0.5"
+                    title={
+                      pulledPaid(r) > 0
+                        ? `Auto-pulled from Payments: ${money(pulledPaid(r))} (leave blank to use it, or type to override)`
+                        : "No matching payments yet — enter manually or import payments"
+                    }
+                  >
                     <EditMoney
                       value={r.paid_amount ?? null}
                       onSave={(v) => save(r.id, { paid_amount: v })}
                       className="w-24 text-xs"
+                      placeholder={pulledPaid(r) > 0 ? `${money(pulledPaid(r))} auto` : "$"}
                     />
                   </td>
                   <td className="td">
