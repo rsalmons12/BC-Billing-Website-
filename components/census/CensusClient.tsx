@@ -113,6 +113,15 @@ const normName = (s: unknown) =>
     .sort()
     .join(" ");
 
+// A date string → midnight epoch ms (or null).
+function dayMs(v: unknown): number | null {
+  const t = Date.parse(String(v ?? "").trim());
+  if (isNaN(t)) return null;
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 // Expected reimbursement is 30% of billed. Change here if that differs.
 const EXPECTED_PCT = 0.3;
 
@@ -248,23 +257,33 @@ export default function CensusClient({
     setLoading(false);
   }, [supabase, facilityId, linkedFacilityIds]);
 
-  // Total paid per patient, from every payment line for this facility — no date
-  // restriction. If a patient has ANY payment (even an old one paid back in
-  // May), it shows on their row on whatever week is open.
-  const paidByPatient = useMemo(() => {
-    const m = new Map<string, number>();
+  // Payments indexed by patient, each with its service date, so a client-week's
+  // Paid $ is the payment(s) for THAT week's services — not a running total.
+  const payByPatient = useMemo(() => {
+    const m = new Map<string, { dos: number; paid: number }[]>();
     for (const p of payRows) {
       const k = normName(p.patient_name);
-      if (!k) continue;
-      m.set(k, (m.get(k) ?? 0) + (p.paid_amount ?? 0));
+      const dos = dayMs(p.dos_from);
+      if (!k || dos == null) continue;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push({ dos, paid: p.paid_amount ?? 0 });
     }
     return m;
   }, [payRows]);
 
-  // Paid $ auto-pulled from Payments for a client (their total paid).
+  // Paid $ auto-pulled from Payments for a client-week = sum of that client's
+  // paid lines whose service date falls inside the week (Mon–Sun of week_start).
   const pulledPaid = useCallback(
-    (r: Census): number => paidByPatient.get(normName(r.patient_name)) ?? 0,
-    [paidByPatient]
+    (r: Census): number => {
+      const list = payByPatient.get(normName(r.patient_name));
+      const start = dayMs(r.week_start);
+      if (!list || start == null) return 0;
+      const end = start + 6 * 86400000;
+      let sum = 0;
+      for (const p of list) if (p.dos >= start && p.dos <= end) sum += p.paid;
+      return sum;
+    },
+    [payByPatient]
   );
 
   // Effective Paid $: a manual override wins; otherwise the pulled amount.
@@ -680,10 +699,9 @@ export default function CensusClient({
             <span className="text-surface-muted">
               🔗 Linked to <b className="text-surface-ink">{payRows.length.toLocaleString()}</b>{" "}
               payment lines for {facName} ·{" "}
-              <b className="text-surface-ink">{money(weekPulled)}</b> in total payments for this
-              week’s clients
+              <b className="text-surface-ink">{money(weekPulled)}</b> paid for this week’s services
               {weekPulled === 0
-                ? " — none of these clients have any payments on file yet."
+                ? " — nothing paid yet for services in this week (recent weeks are usually paid later; check an earlier week)."
                 : "."}
             </span>
           )}
