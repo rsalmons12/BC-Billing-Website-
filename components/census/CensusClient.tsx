@@ -113,15 +113,6 @@ const normName = (s: unknown) =>
     .sort()
     .join(" ");
 
-// A date string → midnight epoch ms (or null).
-function dayMs(v: unknown): number | null {
-  const t = Date.parse(String(v ?? "").trim());
-  if (isNaN(t)) return null;
-  const d = new Date(t);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
 // Expected reimbursement is 30% of billed. Change here if that differs.
 const EXPECTED_PCT = 0.3;
 
@@ -257,53 +248,23 @@ export default function CensusClient({
     setLoading(false);
   }, [supabase, facilityId, linkedFacilityIds]);
 
-  // Attribute EVERY payment to exactly one census week per patient, so no
-  // payment is dropped just because its service date doesn't fall in a week.
-  // A payment lands on the week that contains its service date; if it falls
-  // outside all of that patient's weeks (e.g. an old service paid back in May),
-  // it lands on that patient's CLOSEST week. One payment → one week, so weekly
-  // totals never double-count.
-  const paidByPatientWeek = useMemo(() => {
-    // patient key → their census week starts (ms), sorted.
-    const weeksByPatient = new Map<string, number[]>();
-    for (const r of rows) {
-      const k = normName(r.patient_name);
-      const w = dayMs(r.week_start);
-      if (!k || w == null) continue;
-      if (!weeksByPatient.has(k)) weeksByPatient.set(k, []);
-      const arr = weeksByPatient.get(k)!;
-      if (!arr.includes(w)) arr.push(w);
-    }
-    for (const arr of weeksByPatient.values()) arr.sort((a, b) => a - b);
-
-    const acc = new Map<string, number>(); // `${patient}|${weekMs}` → paid $
+  // Total paid per patient, from every payment line for this facility — no date
+  // restriction. If a patient has ANY payment (even an old one paid back in
+  // May), it shows on their row on whatever week is open.
+  const paidByPatient = useMemo(() => {
+    const m = new Map<string, number>();
     for (const p of payRows) {
       const k = normName(p.patient_name);
-      const dos = dayMs(p.dos_from);
-      const weeks = weeksByPatient.get(k);
-      if (!k || dos == null || !weeks || weeks.length === 0) continue;
-      // Week that contains the service date, else the nearest week.
-      let target = weeks.find((w) => dos >= w && dos <= w + 6 * 86400000);
-      if (target == null) {
-        target = weeks.reduce(
-          (best, w) => (Math.abs(w - dos) < Math.abs(best - dos) ? w : best),
-          weeks[0]
-        );
-      }
-      const key = `${k}|${target}`;
-      acc.set(key, (acc.get(key) ?? 0) + (p.paid_amount ?? 0));
+      if (!k) continue;
+      m.set(k, (m.get(k) ?? 0) + (p.paid_amount ?? 0));
     }
-    return acc;
-  }, [rows, payRows]);
+    return m;
+  }, [payRows]);
 
-  // Paid $ auto-pulled from Payments for a given client-week.
+  // Paid $ auto-pulled from Payments for a client (their total paid).
   const pulledPaid = useCallback(
-    (r: Census): number => {
-      const w = dayMs(r.week_start);
-      if (w == null) return 0;
-      return paidByPatientWeek.get(`${normName(r.patient_name)}|${w}`) ?? 0;
-    },
-    [paidByPatientWeek]
+    (r: Census): number => paidByPatient.get(normName(r.patient_name)) ?? 0,
+    [paidByPatient]
   );
 
   // Effective Paid $: a manual override wins; otherwise the pulled amount.
@@ -719,9 +680,10 @@ export default function CensusClient({
             <span className="text-surface-muted">
               🔗 Linked to <b className="text-surface-ink">{payRows.length.toLocaleString()}</b>{" "}
               payment lines for {facName} ·{" "}
-              <b className="text-surface-ink">{money(weekPulled)}</b> pulled into this week
+              <b className="text-surface-ink">{money(weekPulled)}</b> in total payments for this
+              week’s clients
               {weekPulled === 0
-                ? " — none of these clients have a matched payment for this week yet (recent services are usually paid later; try an earlier week)."
+                ? " — none of these clients have any payments on file yet."
                 : "."}
             </span>
           )}
