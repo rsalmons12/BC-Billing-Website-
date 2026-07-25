@@ -160,6 +160,9 @@ function parseChargesDue(rows: unknown[][]): ParsedClaim[] | null {
     payer: findCol(headers, [/current payer|payer/]),
     patient: findCol(headers, [/patient full name|patient name/]),
     claim: findCol(headers, [/charge claim id|claim id/]),
+    // The per-charge line id — unique for every row, so each charge is kept
+    // as its own line instead of collapsing when a claim spans several charges.
+    debit: findCol(headers, [/charge\/debit id|debit id/]),
     from: findCol(headers, [/charge from date|from date/]),
     charge: findCol(headers, [/charge\/debit amount|charge amount|debit amount/]),
     balance: findCol(headers, [/charge balance|balance/]),
@@ -190,9 +193,13 @@ function parseChargesDue(rows: unknown[][]): ParsedClaim[] | null {
     // Real rows carry a numeric claim id; the "X Totals" and grand-total rows
     // have none, so they're skipped.
     if (!claimId || !/^\d+$/.test(claimId)) continue;
+    // Key each row by the unique per-charge id so multiple charge lines under
+    // one claim are all kept (the claims table needs a unique id per row).
+    const debitId = col.debit >= 0 ? toStr(r[col.debit]) : "";
+    const rowId = debitId || claimId;
     const age = ageOf(r[col.from]);
     out.push({
-      claim_id: claimId,
+      claim_id: rowId,
       facility_name: facility,
       patient_name: col.patient >= 0 ? toStr(r[col.patient]) : "",
       member_id: "",
