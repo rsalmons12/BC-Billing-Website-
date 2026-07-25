@@ -126,6 +126,92 @@ function parseRaw(rows: unknown[][]): ParsedClaim[] | null {
   return out;
 }
 
+// ----- "Charges Due Insurance - by Date Range" (single-facility AR export) ----
+// No Office Name column and no Age column: the facility comes from the
+// "Customer is X" banner, and age is derived from the service date. Rows are
+// grouped by payer (blank after the first row of each group, with "X Totals"
+// subtotal rows) — the payer is forward-filled and the total rows skipped.
+function parseChargesDue(rows: unknown[][]): ParsedClaim[] | null {
+  let facility = "";
+  for (let i = 0; i < Math.min(rows.length, 6); i++) {
+    const joined = rows[i].map(toStr).join(" ");
+    const m = joined.match(/customer is\s+(.+?)\s*$/i);
+    if (m) {
+      facility = m[1].trim();
+      break;
+    }
+  }
+
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(rows.length, 12); i++) {
+    const cells = rows[i].map(norm);
+    if (
+      cells.some((c) => c.includes("charge claim id")) &&
+      cells.some((c) => c.includes("charge from"))
+    ) {
+      headerRow = i;
+      break;
+    }
+  }
+  if (headerRow === -1) return null;
+
+  const headers = rows[headerRow].map(norm);
+  const col = {
+    payer: findCol(headers, [/current payer|payer/]),
+    patient: findCol(headers, [/patient full name|patient name/]),
+    claim: findCol(headers, [/charge claim id|claim id/]),
+    from: findCol(headers, [/charge from date|from date/]),
+    charge: findCol(headers, [/charge\/debit amount|charge amount|debit amount/]),
+    balance: findCol(headers, [/charge balance|balance/]),
+  };
+  if (col.claim < 0 || col.from < 0) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const ageOf = (v: unknown): number | null => {
+    let d: Date | null = null;
+    if (v instanceof Date) d = new Date(v);
+    else {
+      const t = Date.parse(String(v ?? "").trim());
+      if (!isNaN(t)) d = new Date(t);
+    }
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((today.getTime() - d.getTime()) / 86400000));
+  };
+
+  const out: ParsedClaim[] = [];
+  let payer = "";
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const pcell = col.payer >= 0 ? toStr(r[col.payer]) : "";
+    if (pcell && !/totals?$/i.test(pcell)) payer = pcell; // forward-fill payer group
+    const claimId = toStr(r[col.claim]);
+    // Real rows carry a numeric claim id; the "X Totals" and grand-total rows
+    // have none, so they're skipped.
+    if (!claimId || !/^\d+$/.test(claimId)) continue;
+    const age = ageOf(r[col.from]);
+    out.push({
+      claim_id: claimId,
+      facility_name: facility,
+      patient_name: col.patient >= 0 ? toStr(r[col.patient]) : "",
+      member_id: "",
+      dos_from: col.from >= 0 ? toStr(r[col.from]) : "",
+      dos_to: "",
+      charge_amount: col.charge >= 0 ? toNum(r[col.charge]) : null,
+      balance: col.balance >= 0 ? toNum(r[col.balance]) : null,
+      age_days: age,
+      bucket: deriveBucket(age),
+      // Store the payer as a status so it shows in Collections and the facility
+      // AR-by-payer breakdown (which reads "… at <payer>").
+      claim_status: payer ? `Due at ${payer}` : "",
+      notes: "",
+      initials: "",
+    });
+  }
+  return out.length ? out : null;
+}
+
 // ----- grouped per-facility tabs -----
 function parseGroupedSheet(
   facility: string,
@@ -203,7 +289,7 @@ export function parseWorkbook(data: ArrayBuffer): ParseResult {
     header: 1,
     blankrows: false,
   });
-  const raw = parseRaw(firstRows);
+  const raw = parseRaw(firstRows) || parseChargesDue(firstRows);
   if (raw && raw.length) {
     result.format = "raw";
     result.sheetsParsed.push(wb.SheetNames[0]);
