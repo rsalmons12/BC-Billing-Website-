@@ -181,6 +181,11 @@ export default function QueueClient({
     over100: number;
     excluded: number;
   } | null>(null);
+  // Management readout: how each facility's patients divide across its collectors.
+  const [splitPreview, setSplitPreview] = useState<
+    { fid: string; name: string; rows: { id: string; name: string; patients: number; risk: number }[] }[]
+  >([]);
+  const [showSplit, setShowSplit] = useState(false);
 
   const today = todayStr();
   const yesterday = yesterdayStr();
@@ -347,6 +352,39 @@ export default function QueueClient({
       over100: live.filter((c) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD).length,
       excluded: excludedC,
     });
+
+    // Management readout: tally how each facility's patients divide across its
+    // assigned collectors (with the 65+ risk count), so the even split is
+    // visible and verifiable at a glance.
+    if (isManagement) {
+      const nameOf = (id: string) => {
+        const p = collectors.find((c) => c.id === id);
+        return p?.full_name || p?.initials || id.slice(0, 8);
+      };
+      const byFac = new Map<string, Map<string, { pts: Set<string>; risk: Set<string> }>>();
+      for (const c of claims) {
+        const owner = ownerByPatient.get(pkeyOf(c));
+        if (!owner) continue;
+        const fid = c.facility_id ?? "";
+        if (!byFac.has(fid)) byFac.set(fid, new Map());
+        const m = byFac.get(fid)!;
+        if (!m.has(owner)) m.set(owner, { pts: new Set(), risk: new Set() });
+        const e = m.get(owner)!;
+        e.pts.add(pkeyOf(c));
+        if ((c.age_days ?? 0) > RISK_AGE_THRESHOLD) e.risk.add(pkeyOf(c));
+      }
+      setSplitPreview(
+        Array.from(byFac.entries())
+          .map(([fid, m]) => ({
+            fid,
+            name: facName(fid),
+            rows: Array.from(m.entries())
+              .map(([id, e]) => ({ id, name: nameOf(id), patients: e.pts.size, risk: e.risk.size }))
+              .sort((a, b) => b.patients - a.patients),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    }
 
     const mine = claims
       .filter((c) => {
@@ -923,6 +961,16 @@ export default function QueueClient({
           </button>
         )}
 
+        {isManagement && splitPreview.length > 0 && (
+          <button
+            onClick={() => setShowSplit((v) => !v)}
+            className="badge bg-command/10 px-3 py-1.5 text-xs font-semibold text-command"
+            title="See how each facility's patients divide across its collectors"
+          >
+            {showSplit ? "▾ Hide split" : "▸ Facility split"}
+          </button>
+        )}
+
         {/* daily target editor */}
         <label className="flex items-center gap-1.5 text-xs font-semibold text-surface-muted">
           Daily target
@@ -941,6 +989,42 @@ export default function QueueClient({
           <span className="ml-auto text-xs font-medium text-secured">{saveState}</span>
         )}
       </div>
+
+      {/* Facility split readout (management) — proves the even division and that
+          65+ risk is spread, not piled on one person. */}
+      {isManagement && showSplit && splitPreview.length > 0 && (
+        <div className="space-y-3 border-b border-surface-border bg-surface px-6 py-4">
+          {splitPreview.map((f) => {
+            const total = f.rows.reduce((s, r) => s + r.patients, 0);
+            return (
+              <div key={f.fid} className="rounded-lg border border-surface-border bg-surface-card p-3">
+                <div className="mb-2 text-sm font-semibold">
+                  {f.name}{" "}
+                  <span className="text-surface-muted">
+                    · {total} patient{total === 1 ? "" : "s"} across {f.rows.length} collector
+                    {f.rows.length === 1 ? "" : "s"}
+                    {f.rows.length === 1 && (
+                      <span className="ml-1 text-risk">⚠ only one assigned — no split</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {f.rows.map((r) => (
+                    <span key={r.id} className="badge bg-command/10 text-command">
+                      {r.name}: <b className="ml-1">{r.patients}</b>
+                      {r.risk > 0 && (
+                        <span className="ml-1 text-risk" title="65+ risk patients in this share">
+                          ({r.risk} risk)
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* progress cards */}
       <div className="grid grid-cols-2 gap-3 border-b border-surface-border bg-surface px-6 py-3 md:grid-cols-6">
