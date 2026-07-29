@@ -604,26 +604,28 @@ export default function QueueClient({
   // "management" (their login emails) — nothing is typed or preset. This also
   // runs automatically ~5 PM via cron. Management sends for the selected
   // collector; a collector sends their own day.
-  const sendEodSummary = async () => {
+  const sendEodSummary = async (test = false) => {
     setEodBusy(true);
-    setSaveState("Sending summary…");
+    setSaveState(test ? "Sending test…" : "Sending summary…");
     try {
       const res = await fetch("/api/eod-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectorId }),
+        body: JSON.stringify({ collectorId, test }),
       });
       const data = await res.json().catch(() => ({}));
       setSaveState(
         res.ok
-          ? `✓ Emailed to ${data.recipients ?? 0} manager(s) — ${data.worked ?? 0} worked`
+          ? test
+            ? "✓ Test emailed to you — check your inbox"
+            : `✓ Emailed to ${data.recipients ?? 0} manager(s) — ${data.worked ?? 0} worked`
           : `Error: ${data.error || "could not send"}`
       );
     } catch {
       setSaveState("Error: could not send summary");
     } finally {
       setEodBusy(false);
-      setTimeout(() => setSaveState(""), 3500);
+      setTimeout(() => setSaveState(""), 4000);
     }
   };
 
@@ -1004,12 +1006,20 @@ export default function QueueClient({
         </label>
 
         <button
-          onClick={sendEodSummary}
+          onClick={() => sendEodSummary(false)}
           disabled={eodBusy}
           className="badge bg-secured/12 px-3 py-1.5 text-xs font-semibold text-secured hover:bg-secured/20 disabled:opacity-50"
           title="Email an end-of-day production summary to management"
         >
           {eodBusy ? "Sending…" : "✉ Email end-of-day summary"}
+        </button>
+        <button
+          onClick={() => sendEodSummary(true)}
+          disabled={eodBusy}
+          className="badge bg-surface px-3 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface-card disabled:opacity-50"
+          title="Send a test summary to your own email"
+        >
+          Send test to me
         </button>
 
         {saveState && (
