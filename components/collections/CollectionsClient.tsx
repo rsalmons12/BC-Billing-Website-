@@ -7,6 +7,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   WATCH_AGE_THRESHOLD,
@@ -114,6 +115,7 @@ export default function CollectionsClient({
   const [loading, setLoading] = useState(false);
   const [bucket, setBucket] = useState<Bucket>("all");
   const [worked, setWorked] = useState<Worked>("all");
+  const [payerF, setPayerF] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState<string>("");
   const [groupByPatient, setGroupByPatient] = useState(true);
@@ -308,6 +310,8 @@ export default function CollectionsClient({
       if (worked === "worked" && !isWorked(r.work)) return false;
       if (worked === "unworked" && isWorked(r.work)) return false;
 
+      if (!matchesPayer(r.claim_status, payerF)) return false;
+
       if (q) {
         const hay = `${r.patient_name ?? ""} ${r.member_id ?? ""} ${r.claim_id} ${
           r.claim_status ?? ""
@@ -316,7 +320,13 @@ export default function CollectionsClient({
       }
       return true;
     });
-  }, [rows, bucket, worked, search]);
+  }, [rows, bucket, worked, payerF, search]);
+
+  // Payer families present in the loaded claims, for the payer dropdown.
+  const payerOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort(),
+    [rows]
+  );
 
   const totals = useMemo(() => {
     let charge = 0;
@@ -471,6 +481,20 @@ export default function CollectionsClient({
             </button>
           ))}
         </div>
+
+        <select
+          value={payerF}
+          onChange={(e) => setPayerF(e.target.value)}
+          className="input max-w-[10rem]"
+          title="Filter by payer"
+        >
+          <option value="all">All payers</option>
+          {payerOptions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
 
         <input
           placeholder="Search patient, member, claim…"

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
 import {
@@ -121,6 +122,7 @@ export default function QueueClient({
   // Filters
   const [search, setSearch] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
+  const [payerF, setPayerF] = useState("all");
   // Risk-first enforcement: collectors must clear today's 65+ before working
   // anything younger. Management can lift it.
   const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
@@ -584,6 +586,7 @@ export default function QueueClient({
   const q = search.trim().toLowerCase();
   const shown = baseRows.filter((r) => {
     if (riskOnly && (r.age_days ?? 0) <= RISK_AGE_THRESHOLD) return false;
+    if (!matchesPayer(r.claim_status, payerF)) return false;
     if (q) {
       const hay = `${r.patient_name ?? ""} ${r.claim_id ?? ""} ${r.member_id ?? ""} ${
         r.claim_status ?? ""
@@ -592,6 +595,9 @@ export default function QueueClient({
     }
     return true;
   });
+
+  // Payer families present in this queue's claims, for the payer dropdown.
+  const payerOptions = Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort();
 
   const saveTarget = async (next: number) => {
     const val = Math.max(1, Math.min(1000, Math.round(next || DEFAULT_TARGET)));
@@ -929,6 +935,21 @@ export default function QueueClient({
             </button>
           ))}
         </div>
+
+        {/* payer filter */}
+        <select
+          value={payerF}
+          onChange={(e) => setPayerF(e.target.value)}
+          className="input max-w-[9rem]"
+          title="Filter by payer"
+        >
+          <option value="all">All payers</option>
+          {payerOptions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
 
         {/* search */}
         <input
