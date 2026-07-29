@@ -33,7 +33,21 @@ export interface FacilityOutlook {
   headline: string;
   reason: string; // one-line summary of the drivers
   drivers: OutlookDriver[];
+  // Billing volume by level of care (from census GN sessions), this month vs
+  // last — the leading indicator of revenue 30–45 days out.
+  locBilling: {
+    loc: string;
+    curServices: number;
+    priorServices: number;
+    curClients: number;
+    priorClients: number;
+  }[];
+  forecast: string; // 30–45 day payment-lag revenue read
 }
+
+// Payments land ~30–45 days after a service is billed, so a change in this
+// month's billing volume flows into revenue about a month and a half out.
+const PAY_LAG_TEXT = "~30–45 days";
 
 const EXPECTED_PCT = 0.3; // census billing estimate = GN sessions × rate × 30%
 const MON = [
@@ -92,6 +106,29 @@ function locWeight(loc: string | null | undefined): number {
   return m ? Number(m[1]) : 0;
 }
 
+// Level-of-care family for the billing breakdown (IOP / PHP / OP / …).
+const LOC_ORDER = ["Detox", "Residential", "PHP", "IOP", "OP", "Other"] as const;
+function locFamily(loc: string | null | undefined): string {
+  const u = String(loc ?? "").toUpperCase().trim();
+  if (!u) return "Other";
+  if (/DETOX|WITHDRAW/.test(u)) return "Detox";
+  if (/RESID|\bRTC\b|INPATIENT/.test(u)) return "Residential";
+  if (/PHP|PARTIAL|\bPC\b/.test(u)) return "PHP";
+  if (/IOP/.test(u)) return "IOP";
+  if (/\bOP\b|OUTPATIENT/.test(u)) return "OP";
+  return "Other";
+}
+
+// Count GN (billable group) sessions across a census row's day cells.
+function gnCount(days: Record<string, string> | null | undefined): number {
+  if (!days) return 0;
+  let n = 0;
+  for (const code of Object.values(days))
+    for (const part of String(code).split(/[/,]/))
+      if (part.trim().toUpperCase() === "GN") n++;
+  return n;
+}
+
 function dayMs(v: string | null | undefined): number | null {
   const t = Date.parse(String(v ?? "").trim());
   if (isNaN(t)) return null;
@@ -127,6 +164,8 @@ type CensusRow = {
   level_of_care: string | null;
   week_start: string | null;
   gn_rate: number | null;
+  patient_name: string | null;
+  days: Record<string, string> | null;
 };
 type RepriceRow = {
   facility_id: string | null;
@@ -355,6 +394,62 @@ function buildOne(
     }
   }
 
+  // ----- billing volume by level of care (leading indicator) -----
+  const locAgg = new Map<
+    string,
+    { curSvc: number; priorSvc: number; curCl: Set<string>; priorCl: Set<string> }
+  >();
+  for (const c of cen) {
+    const m = monthOf(c.week_start);
+    if (m !== cur && m !== prior) continue;
+    const fam = locFamily(c.level_of_care);
+    if (!locAgg.has(fam))
+      locAgg.set(fam, { curSvc: 0, priorSvc: 0, curCl: new Set(), priorCl: new Set() });
+    const e = locAgg.get(fam)!;
+    const gn = gnCount(c.days);
+    const patient = String(c.patient_name ?? "").trim().toLowerCase();
+    if (m === cur) {
+      e.curSvc += gn;
+      if (patient) e.curCl.add(patient);
+    } else {
+      e.priorSvc += gn;
+      if (patient) e.priorCl.add(patient);
+    }
+  }
+  const locBilling = LOC_ORDER.filter((l) => locAgg.has(l)).map((loc) => {
+    const e = locAgg.get(loc)!;
+    return {
+      loc,
+      curServices: e.curSvc,
+      priorServices: e.priorSvc,
+      curClients: e.curCl.size,
+      priorClients: e.priorCl.size,
+    };
+  });
+
+  // ----- forecast (payment lag) -----
+  const svcCur = locBilling.reduce((s, l) => s + l.curServices, 0);
+  const svcPrior = locBilling.reduce((s, l) => s + l.priorServices, 0);
+  let forecast = "";
+  if (svcCur > 0 || svcPrior > 0) {
+    const declines = locBilling
+      .filter((l) => l.curServices < l.priorServices)
+      .sort((a, b) => b.priorServices - b.curServices - (a.priorServices - a.curServices));
+    if (svcCur < svcPrior * 0.98 && declines.length) {
+      forecast =
+        `Billing volume is down this month (` +
+        declines
+          .slice(0, 3)
+          .map((l) => `${l.loc} ${l.curServices} vs ${l.priorServices}`)
+          .join(", ") +
+        `). Since payers pay ${PAY_LAG_TEXT} after billing, expect this to pull revenue DOWN in the next 1–2 months.`;
+    } else if (svcCur > svcPrior * 1.02) {
+      forecast = `Billing volume is up this month — expect revenue to rise ${PAY_LAG_TEXT} out as these bills get paid.`;
+    } else {
+      forecast = `Billing volume is steady month over month; revenue ${PAY_LAG_TEXT} out should hold.`;
+    }
+  }
+
   // ----- compose the one-line reason -----
   const byImpact = (a: OutlookDriver, b: OutlookDriver) => b.impact - a.impact;
   const drags = drivers
@@ -390,6 +485,8 @@ function buildOne(
     headline,
     reason,
     drivers,
+    locBilling,
+    forecast,
   };
 }
 

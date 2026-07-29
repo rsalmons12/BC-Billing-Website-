@@ -97,6 +97,53 @@ export default function MoneyOutlookPanel({ outlooks }: { outlooks: FacilityOutl
         })}
       </div>
 
+      {/* Billing by level of care — leading indicator + payment-lag forecast */}
+      {current.locBilling.length > 0 && (
+        <div className="border-t border-surface-border px-5 py-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+            Services billed by level of care · {current.curLabel} vs {current.priorLabel}
+          </div>
+          <div className="scroll-x overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-surface-muted">
+                  <th className="th text-left">Level of care</th>
+                  <th className="th text-right">Services (this mo)</th>
+                  <th className="th text-right">Services (last mo)</th>
+                  <th className="th text-center">Trend</th>
+                  <th className="th text-right">Clients (this / last)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {current.locBilling.map((l, i) => {
+                  const down = l.curServices < l.priorServices;
+                  const up = l.curServices > l.priorServices;
+                  const meta = up ? DIR_META.up : down ? DIR_META.down : DIR_META.flat;
+                  return (
+                    <tr key={l.loc} className={i % 2 ? "bg-surface/40" : ""}>
+                      <td className="td font-medium">{l.loc}</td>
+                      <td className="td text-right font-mono">{l.curServices}</td>
+                      <td className="td text-right font-mono text-surface-muted">
+                        {l.priorServices}
+                      </td>
+                      <td className={`td text-center font-semibold ${meta.text}`}>{meta.icon}</td>
+                      <td className="td text-right font-mono">
+                        {l.curClients} / <span className="text-surface-muted">{l.priorClients}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {current.forecast && (
+            <p className="mt-3 rounded-lg bg-gold/10 px-3 py-2 text-sm text-surface-ink">
+              🔮 <b>Forecast:</b> {current.forecast}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Full per-facility forecast — every site at a glance */}
       {showBreakdown && (
         <div className="border-t border-surface-border">
