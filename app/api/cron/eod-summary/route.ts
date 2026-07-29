@@ -2,13 +2,10 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   managementEmails,
-  usersEmailMap,
-  facilityNamer,
-  collectorSummary,
+  buildTeamDigest,
   renderDigest,
   sendResend,
   easternToday,
-  type CollectorSummary,
 } from "@/lib/report/eodSummary";
 
 // Runs on a schedule (see vercel.json) — around 5 PM Eastern — and emails a
@@ -39,30 +36,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: "no management emails on file" });
 
   const date = easternToday();
-
-  // Everyone who worked today — from the Queue production log AND from claims
-  // marked worked in Collections (claim_work.updated_by).
-  const [{ data: prod }, { data: cw }] = await Promise.all([
-    admin.from("production_log").select("collector_id").eq("worked_on", date),
-    admin.from("claim_work").select("updated_by").eq("date_worked", date),
-  ]);
-  const collectorIds = Array.from(
-    new Set(
-      [
-        ...(prod ?? []).map((p: { collector_id: string }) => p.collector_id),
-        ...(cw ?? []).map((c: { updated_by: string | null }) => c.updated_by),
-      ].filter(Boolean) as string[]
-    )
-  );
-  if (collectorIds.length === 0)
+  const summaries = await buildTeamDigest(admin, date);
+  if (summaries.length === 0)
     return NextResponse.json({ ok: true, sent: false, reason: "no production today" });
-
-  const facName = await facilityNamer(admin);
-  const emailOf = await usersEmailMap(admin);
-  const summaries: CollectorSummary[] = [];
-  for (const id of collectorIds)
-    summaries.push(await collectorSummary(admin, id, date, facName, emailOf));
-  summaries.sort((a, b) => b.worked - a.worked);
 
   const totWorked = summaries.reduce((s, c) => s + c.worked, 0);
   try {
