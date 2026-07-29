@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  managementEmails,
+  managementEmailsDiag,
   usersEmailMap,
   facilityNamer,
   collectorSummary,
@@ -48,18 +48,28 @@ export async function POST(request: Request) {
 
   // A test goes ONLY to the person testing (their own login email), so email
   // delivery can be verified independent of the management setup.
-  const to = body.test
-    ? [user.email ?? ""].filter((e) => e.includes("@"))
-    : await managementEmails(admin);
-  if (to.length === 0)
-    return NextResponse.json(
-      {
-        error: body.test
-          ? "Your account has no email to send the test to."
-          : "No management emails on file — mark at least one user as management in Admin.",
-      },
-      { status: 400 }
-    );
+  let to: string[];
+  if (body.test) {
+    to = [user.email ?? ""].filter((e) => e.includes("@"));
+    if (to.length === 0)
+      return NextResponse.json(
+        { error: "Your account has no email to send the test to." },
+        { status: 400 }
+      );
+  } else {
+    const { emails, mgmtCount } = await managementEmailsDiag(admin);
+    to = emails;
+    if (to.length === 0)
+      return NextResponse.json(
+        {
+          error:
+            mgmtCount === 0
+              ? "No users are marked 'management'. Open Admin → Users and set at least one user's Role to 'management'."
+              : `${mgmtCount} user(s) are marked 'management', but none has a login email on file to send to.`,
+        },
+        { status: 400 }
+      );
+  }
 
   const date = easternToday();
   const facName = await facilityNamer(admin);

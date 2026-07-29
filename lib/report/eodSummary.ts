@@ -43,13 +43,24 @@ export async function usersEmailMap(admin: Admin): Promise<Map<string, string>> 
   return map;
 }
 
-// Login emails of everyone whose profile role is "management".
-export async function managementEmails(admin: Admin): Promise<string[]> {
+// Login emails of everyone whose profile role is "management", plus a small
+// diagnostic so a caller can tell "nobody is marked management" apart from
+// "they're marked, but their emails couldn't be read".
+export async function managementEmailsDiag(
+  admin: Admin
+): Promise<{ emails: string[]; mgmtCount: number }> {
   const { data: mgmt } = await admin.from("profiles").select("id").eq("role", "management");
   const ids = (mgmt ?? []).map((m: { id: string }) => m.id);
-  if (ids.length === 0) return [];
-  const emails = await usersEmailMap(admin);
-  return Array.from(new Set(ids.map((id) => emails.get(id)).filter((e): e is string => !!e)));
+  if (ids.length === 0) return { emails: [], mgmtCount: 0 };
+  const map = await usersEmailMap(admin);
+  const emails = Array.from(
+    new Set(ids.map((id) => map.get(id)).filter((e): e is string => !!e))
+  );
+  return { emails, mgmtCount: ids.length };
+}
+
+export async function managementEmails(admin: Admin): Promise<string[]> {
+  return (await managementEmailsDiag(admin)).emails;
 }
 
 export interface CollectorSummary {
