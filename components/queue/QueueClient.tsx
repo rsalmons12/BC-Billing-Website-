@@ -735,37 +735,6 @@ export default function QueueClient({
 
   const undoWorked = (r: ClaimRow) => patchRow(r.claim_id, { date_worked: "" });
 
-  // Shift a claim to the Marketplace / Exchange tab (removes it from the queue).
-  const moveToMarketplace = async (r: ClaimRow) => {
-    if (
-      !confirm(
-        `Move ${r.patient_name || r.claim_id} to Marketplace / Exchange? It will leave the queue.`
-      )
-    )
-      return;
-    setRows((prev) => prev.filter((x) => x.claim_id !== r.claim_id));
-    const { error } = await supabase.from("marketplace_claims").upsert(
-      {
-        claim_id: r.claim_id,
-        facility_id: r.facility_id,
-        patient_name: r.patient_name,
-        member_id: r.member_id,
-        dob: r.dob,
-        dos_from: r.dos_from,
-        dos_to: r.dos_to,
-        charge_amount: r.charge_amount,
-        balance: r.balance,
-        age_days: r.age_days,
-        claim_status: r.claim_status,
-        payer: r.claim_status, // status carries the payer ("at X")
-        initials: collector.initials || "",
-        created_by: self.id,
-      },
-      { onConflict: "claim_id" }
-    );
-    setSaveState(error ? `Error: ${error.message}` : "→ Marketplace / Exchange");
-    if (!error) setTimeout(() => setSaveState(""), 1200);
-  };
 
   const emailFacilityHasAddr = (r: ClaimRow) =>
     Boolean(facilities.find((f) => f.id === r.facility_id)?.email);
@@ -1490,12 +1459,6 @@ export default function QueueClient({
                                 className="badge bg-gold/15 px-2.5 py-1 text-[11px] font-semibold text-gold hover:bg-gold/25"
                               >
                                 ✎ Flag for adjustment
-                              </button>
-                              <button
-                                onClick={() => moveToMarketplace(r)}
-                                className="badge bg-risk/12 px-2.5 py-1 text-[11px] font-semibold text-risk hover:bg-risk/25"
-                              >
-                                ⇄ Shift to Marketplace / Exchange
                               </button>
                             </div>
                           </div>
