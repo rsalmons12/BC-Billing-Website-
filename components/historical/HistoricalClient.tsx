@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { moneyCents } from "@/lib/format";
 import { parseHistorical, type HistoricalRow } from "@/lib/import/parseTrackers";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 
 type Row = HistoricalRow & { id: string };
 
@@ -23,6 +24,7 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
   const [search, setSearch] = useState("");
   const [stateF, setStateF] = useState("all");
   const [yearF, setYearF] = useState("all");
+  const [payerF, setPayerF] = useState("all");
   const [busy, setBusy] = useState("");
 
   const load = useCallback(async () => {
@@ -49,19 +51,25 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
       ),
     [rows]
   );
+  // Payer families actually present in the data, so the dropdown only lists real ones.
+  const payers = useMemo(
+    () => Array.from(new Set(rows.map((r) => payerBucket(r.payer)))).sort(),
+    [rows]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (stateF !== "all" && r.state !== stateF) return false;
       if (yearF !== "all" && r.year !== yearF) return false;
+      if (!matchesPayer(r.payer, payerF)) return false;
       if (q) {
         const hay = `${r.prefix} ${r.payer} ${r.cpt_code} ${r.rev_code} ${r.description} ${r.code_used}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [rows, search, stateF, yearF]);
+  }, [rows, search, stateF, yearF, payerF]);
 
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -134,6 +142,12 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
           <option value="all">All years</option>
           {years.map((y) => (
             <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+        <select value={payerF} onChange={(e) => setPayerF(e.target.value)} className="input max-w-[9rem]">
+          <option value="all">All payers</option>
+          {payers.map((p) => (
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
         <div className="ml-auto flex items-center gap-3 text-xs">
