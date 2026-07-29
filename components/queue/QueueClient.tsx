@@ -600,47 +600,30 @@ export default function QueueClient({
   // Payer families present in this queue's claims, for the payer dropdown.
   const payerOptions = Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort();
 
-  // Email an end-of-day production summary. Management sends it for whichever
-  // collector is selected; a collector sends their own. The recipient(s) are
-  // entered here (and remembered on this device) — not preset anywhere.
+  // Email an end-of-day production summary now. Recipients are everyone marked
+  // "management" (their login emails) — nothing is typed or preset. This also
+  // runs automatically ~5 PM via cron. Management sends for the selected
+  // collector; a collector sends their own day.
   const sendEodSummary = async () => {
-    const saved =
-      (typeof window !== "undefined" && localStorage.getItem("eodRecipients")) || "";
-    const to = window.prompt(
-      "Email the end-of-day summary to (comma-separated addresses):",
-      saved
-    );
-    if (to == null) return; // cancelled
-    const recipients = to.trim();
-    if (!recipients) {
-      setSaveState("Enter at least one email.");
-      setTimeout(() => setSaveState(""), 2500);
-      return;
-    }
-    try {
-      localStorage.setItem("eodRecipients", recipients);
-    } catch {
-      /* ignore storage errors */
-    }
     setEodBusy(true);
     setSaveState("Sending summary…");
     try {
       const res = await fetch("/api/eod-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectorId, to: recipients }),
+        body: JSON.stringify({ collectorId }),
       });
       const data = await res.json().catch(() => ({}));
       setSaveState(
         res.ok
-          ? `✓ Summary emailed (${data.worked ?? 0} worked)`
+          ? `✓ Emailed to ${data.recipients ?? 0} manager(s) — ${data.worked ?? 0} worked`
           : `Error: ${data.error || "could not send"}`
       );
     } catch {
       setSaveState("Error: could not send summary");
     } finally {
       setEodBusy(false);
-      setTimeout(() => setSaveState(""), 3000);
+      setTimeout(() => setSaveState(""), 3500);
     }
   };
 
