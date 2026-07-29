@@ -123,6 +123,7 @@ export default function QueueClient({
   const [search, setSearch] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
   const [payerF, setPayerF] = useState("all");
+  const [eodBusy, setEodBusy] = useState(false);
   // Risk-first enforcement: collectors must clear today's 65+ before working
   // anything younger. Management can lift it.
   const [enforceRiskFirst, setEnforceRiskFirst] = useState(true);
@@ -599,6 +600,31 @@ export default function QueueClient({
   // Payer families present in this queue's claims, for the payer dropdown.
   const payerOptions = Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort();
 
+  // Email an end-of-day production summary. Management sends it for whichever
+  // collector is selected; a collector sends their own.
+  const sendEodSummary = async () => {
+    setEodBusy(true);
+    setSaveState("Sending summary…");
+    try {
+      const res = await fetch("/api/eod-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectorId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setSaveState(
+        res.ok
+          ? `✓ Summary emailed (${data.worked ?? 0} worked)`
+          : `Error: ${data.error || "could not send"}`
+      );
+    } catch {
+      setSaveState("Error: could not send summary");
+    } finally {
+      setEodBusy(false);
+      setTimeout(() => setSaveState(""), 3000);
+    }
+  };
+
   const saveTarget = async (next: number) => {
     const val = Math.max(1, Math.min(1000, Math.round(next || DEFAULT_TARGET)));
     setTarget(val);
@@ -974,6 +1000,15 @@ export default function QueueClient({
             className="input w-20 text-center"
           />
         </label>
+
+        <button
+          onClick={sendEodSummary}
+          disabled={eodBusy}
+          className="badge bg-secured/12 px-3 py-1.5 text-xs font-semibold text-secured hover:bg-secured/20 disabled:opacity-50"
+          title="Email an end-of-day production summary to management"
+        >
+          {eodBusy ? "Sending…" : "✉ Email end-of-day summary"}
+        </button>
 
         {saveState && (
           <span className="ml-auto text-xs font-medium text-secured">{saveState}</span>
