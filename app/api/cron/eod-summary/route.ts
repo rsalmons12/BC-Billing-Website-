@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   managementEmails,
+  usersEmailMap,
   facilityNamer,
   collectorSummary,
   renderDigest,
@@ -50,8 +51,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, sent: false, reason: "no production today" });
 
   const facName = await facilityNamer(admin);
+  const emailOf = await usersEmailMap(admin);
   const summaries: CollectorSummary[] = [];
-  for (const id of collectorIds) summaries.push(await collectorSummary(admin, id, date, facName));
+  for (const id of collectorIds)
+    summaries.push(await collectorSummary(admin, id, date, facName, emailOf));
   summaries.sort((a, b) => b.worked - a.worked);
 
   const totWorked = summaries.reduce((s, c) => s + c.worked, 0);

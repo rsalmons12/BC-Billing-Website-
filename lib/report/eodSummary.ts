@@ -16,20 +16,26 @@ export const FROM_EMAIL =
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-// Login emails of everyone whose profile role is "management".
-export async function managementEmails(admin: Admin): Promise<string[]> {
-  const { data: mgmt } = await admin.from("profiles").select("id").eq("role", "management");
-  const ids = new Set((mgmt ?? []).map((m: { id: string }) => m.id));
-  if (ids.size === 0) return [];
-  const emails: string[] = [];
+// Map of user id → login email (all auth users).
+export async function usersEmailMap(admin: Admin): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
   for (let page = 1; page <= 10; page++) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
     const users = data?.users ?? [];
     if (error || users.length === 0) break;
-    for (const u of users) if (ids.has(u.id) && u.email) emails.push(u.email);
+    for (const u of users) if (u.email) map.set(u.id, u.email);
     if (users.length < 1000) break;
   }
-  return Array.from(new Set(emails));
+  return map;
+}
+
+// Login emails of everyone whose profile role is "management".
+export async function managementEmails(admin: Admin): Promise<string[]> {
+  const { data: mgmt } = await admin.from("profiles").select("id").eq("role", "management");
+  const ids = (mgmt ?? []).map((m: { id: string }) => m.id);
+  if (ids.length === 0) return [];
+  const emails = await usersEmailMap(admin);
+  return Array.from(new Set(ids.map((id) => emails.get(id)).filter((e): e is string => !!e)));
 }
 
 export interface CollectorSummary {
@@ -48,14 +54,21 @@ export async function collectorSummary(
   admin: Admin,
   collectorId: string,
   date: string,
-  facName: (id: string | null) => string
+  facName: (id: string | null) => string,
+  emailOf?: Map<string, string>
 ): Promise<CollectorSummary> {
   const { data: prof } = await admin
     .from("profiles")
     .select("full_name,initials,daily_target")
     .eq("id", collectorId)
     .maybeSingle();
-  const name = prof?.full_name?.trim() || prof?.initials?.trim() || "Collector";
+  // Never show a generic "Collector" — fall back to the login email when the
+  // profile has no name set.
+  const name =
+    prof?.full_name?.trim() ||
+    prof?.initials?.trim() ||
+    emailOf?.get(collectorId) ||
+    "Collector";
 
   const { data: prod } = await admin
     .from("production_log")
