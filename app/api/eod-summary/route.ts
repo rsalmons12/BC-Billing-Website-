@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   managementEmails,
+  usersEmailMap,
   facilityNamer,
   collectorSummary,
   renderDigest,
@@ -61,7 +62,12 @@ export async function POST(request: Request) {
 
   const date = new Date().toISOString().slice(0, 10);
   const facName = await facilityNamer(admin);
-  const summary = await collectorSummary(admin, collectorId, date, facName);
+  // Name fallback: the caller's own email (for their own summary), else look up.
+  const emailOf =
+    collectorId === user.id && user.email
+      ? new Map([[user.id, user.email]])
+      : await usersEmailMap(admin);
+  const summary = await collectorSummary(admin, collectorId, date, facName, emailOf);
 
   try {
     await sendResend(
