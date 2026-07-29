@@ -601,15 +601,34 @@ export default function QueueClient({
   const payerOptions = Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort();
 
   // Email an end-of-day production summary. Management sends it for whichever
-  // collector is selected; a collector sends their own.
+  // collector is selected; a collector sends their own. The recipient(s) are
+  // entered here (and remembered on this device) — not preset anywhere.
   const sendEodSummary = async () => {
+    const saved =
+      (typeof window !== "undefined" && localStorage.getItem("eodRecipients")) || "";
+    const to = window.prompt(
+      "Email the end-of-day summary to (comma-separated addresses):",
+      saved
+    );
+    if (to == null) return; // cancelled
+    const recipients = to.trim();
+    if (!recipients) {
+      setSaveState("Enter at least one email.");
+      setTimeout(() => setSaveState(""), 2500);
+      return;
+    }
+    try {
+      localStorage.setItem("eodRecipients", recipients);
+    } catch {
+      /* ignore storage errors */
+    }
     setEodBusy(true);
     setSaveState("Sending summary…");
     try {
       const res = await fetch("/api/eod-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectorId }),
+        body: JSON.stringify({ collectorId, to: recipients }),
       });
       const data = await res.json().catch(() => ({}));
       setSaveState(

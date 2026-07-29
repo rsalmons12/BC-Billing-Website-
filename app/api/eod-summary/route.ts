@@ -3,10 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 
 // Emails an end-of-day production summary for a collector to management.
-// Setup (one time, in the server env):
+// The recipient(s) are chosen in the app at send time (body.to) — not preset.
+// Env only:
 //   RESEND_API_KEY      – the Resend key (already used for facility messages)
-//   EOD_SUMMARY_TO      – comma-separated recipient emails (management)
 //   MESSAGES_FROM_EMAIL – optional "from" (defaults to collections@bcbilling.cloud)
+//   EOD_SUMMARY_TO      – optional fallback recipients if none entered
 const FROM = process.env.MESSAGES_FROM_EMAIL || "BC Billing <collections@bcbilling.cloud>";
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
