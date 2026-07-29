@@ -8,6 +8,7 @@ import {
   collectorSummary,
   renderDigest,
   sendResend,
+  easternToday,
 } from "@/lib/report/eodSummary";
 
 // Manual "send now" for the end-of-day summary. Recipients are resolved from
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
       { status: 400 }
     );
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = easternToday();
   const facName = await facilityNamer(admin);
   // Name fallback: the caller's own email (for their own summary), else look up.
   const emailOf =
