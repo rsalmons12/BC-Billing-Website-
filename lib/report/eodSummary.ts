@@ -159,6 +159,36 @@ export async function collectorSummary(
   };
 }
 
+// Everyone who worked today — from the Queue production log AND from claims
+// marked worked in any tab (claim_work.updated_by).
+export async function collectorsWhoWorked(admin: Admin, date: string): Promise<string[]> {
+  const [{ data: prod }, { data: cw }] = await Promise.all([
+    admin.from("production_log").select("collector_id").eq("worked_on", date),
+    admin.from("claim_work").select("updated_by").eq("date_worked", date),
+  ]);
+  return Array.from(
+    new Set(
+      [
+        ...(prod ?? []).map((p: { collector_id: string }) => p.collector_id),
+        ...(cw ?? []).map((c: { updated_by: string | null }) => c.updated_by),
+      ].filter(Boolean) as string[]
+    )
+  );
+}
+
+// Full team digest for one day: a summary per collector who worked, sorted by
+// most worked first. Shared by the manual "send now" button and the 5 PM cron.
+export async function buildTeamDigest(admin: Admin, date: string): Promise<CollectorSummary[]> {
+  const ids = await collectorsWhoWorked(admin, date);
+  if (ids.length === 0) return [];
+  const facName = await facilityNamer(admin);
+  const emailOf = await usersEmailMap(admin);
+  const summaries: CollectorSummary[] = [];
+  for (const id of ids) summaries.push(await collectorSummary(admin, id, date, facName, emailOf));
+  summaries.sort((a, b) => b.worked - a.worked);
+  return summaries;
+}
+
 // Build a facility id → name lookup from the facilities table.
 export async function facilityNamer(admin: Admin): Promise<(id: string | null) => string> {
   const { data } = await admin.from("facilities").select("id,name,short_name");

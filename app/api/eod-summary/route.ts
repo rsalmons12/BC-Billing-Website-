@@ -6,9 +6,11 @@ import {
   usersEmailMap,
   facilityNamer,
   collectorSummary,
+  buildTeamDigest,
   renderDigest,
   sendResend,
   easternToday,
+  type CollectorSummary,
 } from "@/lib/report/eodSummary";
 
 // Manual "send now" for the end-of-day summary. Recipients are resolved from
@@ -42,12 +44,14 @@ export async function POST(request: Request) {
     /* no body is fine */
   }
 
-  // Management may send for a chosen collector; anyone else sends their own day.
   const { data: me } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  const collectorId = me?.role === "management" && body.collectorId ? body.collectorId : user.id;
+  const isMgmt = me?.role === "management";
+  const date = easternToday();
 
+  // ---- Recipients ---------------------------------------------------------
   // A test goes ONLY to the person testing (their own login email), so email
-  // delivery can be verified independent of the management setup.
+  // delivery can be verified independent of the management setup. Everything
+  // else goes to the accounts marked "management".
   let to: string[];
   if (body.test) {
     to = [user.email ?? ""].filter((e) => e.includes("@"));
@@ -71,23 +75,38 @@ export async function POST(request: Request) {
       );
   }
 
-  const date = easternToday();
-  const facName = await facilityNamer(admin);
-  // Name fallback: the caller's own email (for their own summary), else look up.
-  const emailOf =
-    collectorId === user.id && user.email
-      ? new Map([[user.id, user.email]])
-      : await usersEmailMap(admin);
-  const summary = await collectorSummary(admin, collectorId, date, facName, emailOf);
+  // ---- Content ------------------------------------------------------------
+  // Management (real send) gets the WHOLE team's day — the same digest the
+  // 5 PM cron sends — so a manager never has to pick a collector to see the
+  // numbers. A test, or a non-management collector, gets that one person's day.
+  let summaries: CollectorSummary[];
+  let subject: string;
+  if (isMgmt && !body.test) {
+    summaries = await buildTeamDigest(admin, date);
+    const totWorked = summaries.reduce((s, c) => s + c.worked, 0);
+    subject = `End-of-Day Production — ${totWorked} claims worked across ${summaries.length} collector${
+      summaries.length === 1 ? "" : "s"
+    }`;
+  } else {
+    const facName = await facilityNamer(admin);
+    // Name fallback: the caller's own email, else look up in auth.
+    const emailOf =
+      user.email ? new Map([[user.id, user.email]]) : await usersEmailMap(admin);
+    const summary = await collectorSummary(admin, user.id, date, facName, emailOf);
+    summaries = [summary];
+    subject = `${body.test ? "[TEST] " : ""}End-of-Day — ${summary.name} · ${summary.worked} worked`;
+  }
 
   try {
-    await sendResend(
-      to,
-      `${body.test ? "[TEST] " : ""}End-of-Day — ${summary.name} · ${summary.worked} worked`,
-      renderDigest([summary], date)
-    );
+    await sendResend(to, subject, renderDigest(summaries, date));
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
   }
-  return NextResponse.json({ ok: true, worked: summary.worked, recipients: to.length, test: !!body.test });
+  return NextResponse.json({
+    ok: true,
+    collectors: summaries.length,
+    worked: summaries.reduce((s, c) => s + c.worked, 0),
+    recipients: to.length,
+    test: !!body.test,
+  });
 }

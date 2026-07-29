@@ -1009,7 +1009,7 @@ export default function QueueClient({
           onClick={() => sendEodSummary(false)}
           disabled={eodBusy}
           className="badge bg-secured/12 px-3 py-1.5 text-xs font-semibold text-secured hover:bg-secured/20 disabled:opacity-50"
-          title="Email an end-of-day production summary to management"
+          title="Email the whole team's end-of-day production summary to management"
         >
           {eodBusy ? "Sending…" : "✉ Email end-of-day summary"}
         </button>
