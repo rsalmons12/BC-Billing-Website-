@@ -32,6 +32,9 @@ type PayRow = {
   payment_source: string | null;
   period: string | null;
   deposit_date: string | null;
+  cpt_description: string | null;
+  dos_from: string | null;
+  patient_name: string | null;
 };
 type BilledRow = { facility_id: string | null; total_amount: number | null; period: string | null };
 type AuthRow = {
@@ -87,7 +90,9 @@ export default async function OverviewPage() {
       selectAll<PayRow>((f, t) =>
         supabase
           .from("payments")
-          .select("facility_id,paid_amount,payment_source,period,deposit_date")
+          .select(
+            "facility_id,paid_amount,payment_source,period,deposit_date,cpt_description,dos_from,patient_name"
+          )
           .range(f, t)
       )
     ),
