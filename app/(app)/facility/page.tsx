@@ -247,20 +247,26 @@ export default async function FacilityDashboard({
     return `/facility?${p.toString()}`;
   };
 
-  // ---- Negotiations: expected revenue, paid ~14 days after approval --------
+  // ---- Negotiations: expected revenue still to land (paid ~14 days after
+  // approval). Count only the negotiated DOLLARS (not the rate), and only deals
+  // whose payment hasn't already landed — a negotiation signed months ago has
+  // already been paid, so it must not inflate "expected" or "due soon".
+  const today0 = new Date(now);
+  today0.setHours(0, 0, 0, 0);
+  const soon = new Date(today0.getTime() + NEG_PAY_LAG_DAYS * 86400000);
+  const negAmt = (n: Negotiation) => n.negotiated_amount ?? 0;
   const approvedNegs = negotiations.filter((n) => /approv|signed/i.test(n.status || ""));
-  const negExpected = approvedNegs.reduce(
-    (s, n) => s + (n.negotiated_amount ?? n.approved_rate ?? 0),
-    0
-  );
-  // How much is expected to land within the next 14 days (signed + 14 days).
+  let negExpected = 0;
   let negDueSoon = 0;
-  const soon = new Date(now.getTime() + NEG_PAY_LAG_DAYS * 86400000);
+  let negOpen = 0;
   for (const n of approvedNegs) {
     const signed = parseDate(n.date_signed);
-    if (!signed) continue;
-    const payBy = new Date(signed.getTime() + NEG_PAY_LAG_DAYS * 86400000);
-    if (payBy <= soon) negDueSoon += n.negotiated_amount ?? n.approved_rate ?? 0;
+    const payBy = signed ? new Date(signed.getTime() + NEG_PAY_LAG_DAYS * 86400000) : null;
+    // Already landed → excluded from expected/due-soon.
+    if (payBy && payBy < today0) continue;
+    negOpen++;
+    negExpected += negAmt(n);
+    if (payBy && payBy >= today0 && payBy <= soon) negDueSoon += negAmt(n);
   }
 
   return (
@@ -382,11 +388,16 @@ export default async function FacilityDashboard({
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-                <BigStat label="Approved / signed" value={String(approvedNegs.length)} />
+                <BigStat
+                  label="Awaiting payment"
+                  value={String(negOpen)}
+                  sub={`${approvedNegs.length} approved on file`}
+                />
                 <BigStat
                   label="Expected revenue"
                   value={money(negExpected)}
                   accent="secured"
+                  sub="not yet landed"
                 />
                 <BigStat
                   label="Landing within 14 days"
