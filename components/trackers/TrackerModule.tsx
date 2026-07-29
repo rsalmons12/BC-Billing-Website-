@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { normFacility } from "@/lib/import/parse";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 import { periodOf } from "@/lib/import/parseTrackers";
 import type { Facility } from "@/lib/types";
 
@@ -42,6 +43,9 @@ export interface TrackerConfig {
   table: string;
   statusKey?: string;
   statusOptions?: string[];
+  // When set, show a Payer dropdown that buckets this column (payer / payment
+  // source / status text) into payer families (BCBS, Aetna, Cigna, …).
+  payerKey?: string;
   searchKeys: string[];
   columns: ColumnDef[];
   parse: (buf: ArrayBuffer) => {
@@ -127,6 +131,7 @@ export default function TrackerModule({
   const [loading, setLoading] = useState(true);
   const [facilityFilter, setFacilityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [payerFilter, setPayerFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
@@ -228,6 +233,7 @@ export default function TrackerModule({
         String(r[config.statusKey] ?? "").trim() !== statusFilter
       )
         return false;
+      if (config.payerKey && !matchesPayer(r[config.payerKey], payerFilter)) return false;
       if (config.extraFilters && extraFilter !== "all") {
         const opt = config.extraFilters.options.find((o) => o.value === extraFilter);
         if (opt && !opt.test(r)) return false;
@@ -255,7 +261,13 @@ export default function TrackerModule({
       );
     }
     return kept;
-  }, [rows, statusFilter, extraFilter, monthFilter, search, config, archiveView]);
+  }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView]);
+
+  // Payer families present in the data, for the payer dropdown.
+  const payerOptions = useMemo(() => {
+    if (!config.payerKey) return [] as string[];
+    return Array.from(new Set(rows.map((r) => payerBucket(r[config.payerKey!])))).sort();
+  }, [rows, config.payerKey]);
 
   // Distinct months present in the data (newest first) for the Month dropdown.
   const monthOptions = useMemo(() => {
@@ -378,6 +390,22 @@ export default function TrackerModule({
                 </option>
               ))}
             <option value="">— No status —</option>
+          </select>
+        )}
+
+        {config.payerKey && payerOptions.length > 0 && (
+          <select
+            value={payerFilter}
+            onChange={(e) => setPayerFilter(e.target.value)}
+            className="input max-w-[10rem]"
+            title="Filter by payer"
+          >
+            <option value="all">All payers</option>
+            {payerOptions.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
           </select>
         )}
 

@@ -11,6 +11,7 @@ import type { Facility } from "@/lib/types";
 const config: TrackerConfig = {
   table: "billed_claims",
   defaultSortKey: "patient_name",
+  payerKey: "payer_name",
   searchKeys: ["patient_name", "claim_id", "payer_name"],
   parse: (buf) => parseBilled(buf),
   // Just a visual report — no claim-id matching, no notes. Accumulates by month

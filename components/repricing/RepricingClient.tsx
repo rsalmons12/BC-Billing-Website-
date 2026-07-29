@@ -60,6 +60,7 @@ const config: TrackerConfig = {
   defaultSortKey: "patient_name",
   statusKey: "payment_status",
   statusOptions: ["Pending", "Approved", "Denied", "Not Worked"],
+  payerKey: "payer",
   searchKeys: ["claim_id", "patient_name", "member_id", "payer", "remark_codes", "claim_status"],
   parse: (buf) => parseRepricing(buf),
   renderSummary,
