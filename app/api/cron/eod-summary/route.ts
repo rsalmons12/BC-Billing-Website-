@@ -39,13 +39,19 @@ export async function GET(request: Request) {
 
   const date = new Date().toISOString().slice(0, 10);
 
-  // Collectors who logged production today.
-  const { data: prod } = await admin
-    .from("production_log")
-    .select("collector_id")
-    .eq("worked_on", date);
+  // Everyone who worked today — from the Queue production log AND from claims
+  // marked worked in Collections (claim_work.updated_by).
+  const [{ data: prod }, { data: cw }] = await Promise.all([
+    admin.from("production_log").select("collector_id").eq("worked_on", date),
+    admin.from("claim_work").select("updated_by").eq("date_worked", date),
+  ]);
   const collectorIds = Array.from(
-    new Set((prod ?? []).map((p: { collector_id: string }) => p.collector_id).filter(Boolean))
+    new Set(
+      [
+        ...(prod ?? []).map((p: { collector_id: string }) => p.collector_id),
+        ...(cw ?? []).map((c: { updated_by: string | null }) => c.updated_by),
+      ].filter(Boolean) as string[]
+    )
   );
   if (collectorIds.length === 0)
     return NextResponse.json({ ok: true, sent: false, reason: "no production today" });

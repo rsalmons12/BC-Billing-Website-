@@ -70,12 +70,27 @@ export async function collectorSummary(
     emailOf?.get(collectorId) ||
     "Collector";
 
-  const { data: prod } = await admin
-    .from("production_log")
-    .select("claim_id")
-    .eq("collector_id", collectorId)
-    .eq("worked_on", date);
-  const claimIds = Array.from(new Set((prod ?? []).map((p: { claim_id: string }) => p.claim_id)));
+  // Claims worked today = the Queue's production log UNION claim_work rows this
+  // person marked worked today (captures work done from Collections too, which
+  // doesn't write the production log).
+  const [{ data: prod }, { data: cw }] = await Promise.all([
+    admin
+      .from("production_log")
+      .select("claim_id")
+      .eq("collector_id", collectorId)
+      .eq("worked_on", date),
+    admin
+      .from("claim_work")
+      .select("claim_id")
+      .eq("date_worked", date)
+      .eq("updated_by", collectorId),
+  ]);
+  const claimIds = Array.from(
+    new Set([
+      ...(prod ?? []).map((p: { claim_id: string }) => p.claim_id),
+      ...(cw ?? []).map((c: { claim_id: string }) => c.claim_id),
+    ])
+  );
 
   type C = {
     facility_id: string | null;
