@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { collectorId?: string } = {};
+  let body: { collectorId?: string; test?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -44,10 +44,18 @@ export async function POST(request: Request) {
   const { data: me } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
   const collectorId = me?.role === "management" && body.collectorId ? body.collectorId : user.id;
 
-  const to = await managementEmails(admin);
+  // A test goes ONLY to the person testing (their own login email), so email
+  // delivery can be verified independent of the management setup.
+  const to = body.test
+    ? [user.email ?? ""].filter((e) => e.includes("@"))
+    : await managementEmails(admin);
   if (to.length === 0)
     return NextResponse.json(
-      { error: "No management emails on file — mark at least one user as management in Admin." },
+      {
+        error: body.test
+          ? "Your account has no email to send the test to."
+          : "No management emails on file — mark at least one user as management in Admin.",
+      },
       { status: 400 }
     );
 
@@ -58,11 +66,11 @@ export async function POST(request: Request) {
   try {
     await sendResend(
       to,
-      `End-of-Day — ${summary.name} · ${summary.worked} worked`,
+      `${body.test ? "[TEST] " : ""}End-of-Day — ${summary.name} · ${summary.worked} worked`,
       renderDigest([summary], date)
     );
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
   }
-  return NextResponse.json({ ok: true, worked: summary.worked, recipients: to.length });
+  return NextResponse.json({ ok: true, worked: summary.worked, recipients: to.length, test: !!body.test });
 }
