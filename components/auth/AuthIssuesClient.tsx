@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 import { AUTH_ISSUE_STATUSES } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
 import { logAuthActivity } from "@/lib/activity";
@@ -29,6 +30,7 @@ export default function AuthIssuesClient({
   const [issues, setIssues] = useState<AuthIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>("active");
+  const [payerF, setPayerF] = useState("all");
   const [saveState, setSaveState] = useState("");
 
   const load = useCallback(async () => {
@@ -103,12 +105,17 @@ export default function AuthIssuesClient({
 
   const shown = useMemo(
     () =>
-      issues.filter((i) =>
-        view === "completed"
-          ? i.status === "Completed"
-          : i.status !== "Completed"
+      issues.filter(
+        (i) =>
+          (view === "completed" ? i.status === "Completed" : i.status !== "Completed") &&
+          matchesPayer(i.payer, payerF)
       ),
-    [issues, view]
+    [issues, view, payerF]
+  );
+
+  const payerOptions = useMemo(
+    () => Array.from(new Set(issues.map((i) => payerBucket(i.payer)))).sort(),
+    [issues]
   );
 
   const totals = useMemo(() => {
@@ -165,6 +172,19 @@ export default function AuthIssuesClient({
             </button>
           ))}
         </div>
+        <select
+          value={payerF}
+          onChange={(e) => setPayerF(e.target.value)}
+          className="input max-w-[10rem]"
+          title="Filter by payer"
+        >
+          <option value="all">All payers</option>
+          {payerOptions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
         <button
           onClick={exportXlsx}
           disabled={shown.length === 0}

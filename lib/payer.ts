@@ -35,9 +35,10 @@ function payerText(raw: unknown): string {
 export function payerBucket(raw: unknown): PayerBucket {
   const s = payerText(raw).toLowerCase();
   if (!s) return "Other";
-  // Blue family first (Horizon/Highmark/Anthem/Independence/Capital are all Blue).
+  // Blue family first — ANY "blue" or "bcbs", plus the Blue-affiliated plans
+  // (Horizon, Highmark, Anthem, Independence, Carefirst, Empire, Regence, …).
   if (
-    /bcbs|blue\s*cross|blue\s*shield|bluecard|blue\s*card|\bhorizon\b|highmark|anthem|independence|capital blue|carefirst|empire|\bbcn\b|regence|wellmark|premera|\bbc\b/.test(
+    /bcbs|blue|\bhorizon\b|highmark|anthem|independence|carefirst|empire|\bbcn\b|regence|wellmark|premera|\bbc\b/.test(
       s
     )
   )

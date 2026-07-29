@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
+import { payerBucket, matchesPayer } from "@/lib/payer";
 import type { Facility, ClaimAdjustment } from "@/lib/types";
 
 function todayStr(): string {
@@ -33,6 +34,7 @@ export default function AdjustmentsClient({
   const [from, setFrom] = useState(addDays(today, -6));
   const [to, setTo] = useState(today);
   const [facilityFilter, setFacilityFilter] = useState("all");
+  const [payerF, setPayerF] = useState("all");
   const [rows, setRows] = useState<ClaimAdjustment[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -71,9 +73,15 @@ export default function AdjustmentsClient({
       const d = (r.created_at || "").slice(0, 10);
       if (d < from || d > to) return false;
       if (facilityFilter !== "all" && r.facility_id !== facilityFilter) return false;
+      if (!matchesPayer(r.claim_status, payerF)) return false;
       return true;
     });
-  }, [rows, from, to, facilityFilter]);
+  }, [rows, from, to, facilityFilter, payerF]);
+
+  const payerOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort(),
+    [rows]
+  );
 
   const preset = (k: "today" | "week" | "month") => {
     if (k === "today") {
@@ -158,6 +166,21 @@ export default function AdjustmentsClient({
             {facilities.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.short_name || f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <span className="label">Payer</span>
+          <select
+            value={payerF}
+            onChange={(e) => setPayerF(e.target.value)}
+            className="input min-w-[9rem]"
+          >
+            <option value="all">All payers</option>
+            {payerOptions.map((p) => (
+              <option key={p} value={p}>
+                {p}
               </option>
             ))}
           </select>
