@@ -119,6 +119,21 @@ function locFamily(loc: string | null | undefined): string {
   return "Other";
 }
 
+// Billing CPT codes → level-of-care family (the precise service-type signal).
+// S0201/H0035 = PHP, H0015/S9480 = IOP, 90853 = OP.
+const CPT_LOC: Record<string, string> = {
+  S0201: "PHP",
+  H0035: "PHP",
+  H0015: "IOP",
+  S9480: "IOP",
+  "90853": "OP",
+};
+function cptFamily(cpt: string | null | undefined): string {
+  // A CPT cell can read "H0015" or "H0015 - IOP SA SERVICES"; take the leading code.
+  const m = String(cpt ?? "").trim().toUpperCase().match(/[A-Z]?\d{3,5}[A-Z]?/);
+  return m ? CPT_LOC[m[0]] ?? "" : "";
+}
+
 // Count GN (billable group) sessions across a census row's day cells.
 function gnCount(days: Record<string, string> | null | undefined): number {
   if (!days) return 0;
@@ -145,6 +160,9 @@ type PayRow = {
   payment_source: string | null;
   period: string | null;
   deposit_date: string | null;
+  cpt_description: string | null;
+  dos_from: string | null;
+  patient_name: string | null;
 };
 type BilledRow = {
   facility_id: string | null;
@@ -416,7 +434,44 @@ function buildOne(
       if (patient) e.priorCl.add(patient);
     }
   }
-  const locBilling = LOC_ORDER.filter((l) => locAgg.has(l)).map((loc) => {
+  // CPT-based service counts from the billing/payment lines (more precise than
+  // census when CPT codes are present). Each distinct patient+service-date+CPT
+  // is one service; counted in the month the service was rendered (dos_from).
+  const cptAgg = new Map<
+    string,
+    { curSvc: Set<string>; priorSvc: Set<string>; curCl: Set<string>; priorCl: Set<string> }
+  >();
+  for (const p of pays) {
+    const fam = cptFamily(p.cpt_description);
+    if (!fam) continue;
+    const m = monthOf(p.dos_from);
+    if (m !== cur && m !== prior) continue;
+    if (!cptAgg.has(fam))
+      cptAgg.set(fam, { curSvc: new Set(), priorSvc: new Set(), curCl: new Set(), priorCl: new Set() });
+    const e = cptAgg.get(fam)!;
+    const patient = String(p.patient_name ?? "").trim().toLowerCase();
+    const svcKey = `${patient}|${p.dos_from}|${p.cpt_description}`;
+    if (m === cur) {
+      e.curSvc.add(svcKey);
+      if (patient) e.curCl.add(patient);
+    } else {
+      e.priorSvc.add(svcKey);
+      if (patient) e.priorCl.add(patient);
+    }
+  }
+
+  // Merge: prefer CPT counts per family; fall back to census GN where no CPT.
+  const locBilling = LOC_ORDER.filter((l) => cptAgg.has(l) || locAgg.has(l)).map((loc) => {
+    const c = cptAgg.get(loc);
+    if (c) {
+      return {
+        loc,
+        curServices: c.curSvc.size,
+        priorServices: c.priorSvc.size,
+        curClients: c.curCl.size,
+        priorClients: c.priorCl.size,
+      };
+    }
     const e = locAgg.get(loc)!;
     return {
       loc,
