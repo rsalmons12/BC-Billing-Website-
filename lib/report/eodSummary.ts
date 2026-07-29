@@ -52,11 +52,26 @@ export async function managementEmailsDiag(
   const { data: mgmt } = await admin.from("profiles").select("id").eq("role", "management");
   const ids = (mgmt ?? []).map((m: { id: string }) => m.id);
   if (ids.length === 0) return { emails: [], mgmtCount: 0 };
-  const map = await usersEmailMap(admin);
-  const emails = Array.from(
-    new Set(ids.map((id) => map.get(id)).filter((e): e is string => !!e))
-  );
-  return { emails, mgmtCount: ids.length };
+  // Look each management user up directly (more reliable than paging the whole
+  // user list); fall back to the full map if a direct lookup comes back empty.
+  const emails: string[] = [];
+  for (const id of ids) {
+    try {
+      const { data } = await admin.auth.admin.getUserById(id);
+      const e = data?.user?.email;
+      if (e) emails.push(e);
+    } catch {
+      /* try the map fallback below */
+    }
+  }
+  if (emails.length === 0) {
+    const map = await usersEmailMap(admin);
+    for (const id of ids) {
+      const e = map.get(id);
+      if (e) emails.push(e);
+    }
+  }
+  return { emails: Array.from(new Set(emails)), mgmtCount: ids.length };
 }
 
 export async function managementEmails(admin: Admin): Promise<string[]> {
