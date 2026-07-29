@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/eod-summary",
-      "schedule": "0 21 * * *"
+      "schedule": "30 22 * * *"
     }
   ]
 }
