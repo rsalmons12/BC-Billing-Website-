@@ -13,6 +13,20 @@ type Admin = SupabaseClient<any, any, any>;
 export const FROM_EMAIL =
   process.env.MESSAGES_FROM_EMAIL || "BC Billing <collections@bcbilling.cloud>";
 
+// Today's date in US Eastern (YYYY-MM-DD). Work is stamped with the collector's
+// local (Eastern) date, so the summary must match on Eastern — not the server's
+// UTC date, which is a day ahead in the evening.
+export function easternToday(): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 

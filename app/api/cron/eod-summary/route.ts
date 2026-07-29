@@ -7,6 +7,7 @@ import {
   collectorSummary,
   renderDigest,
   sendResend,
+  easternToday,
   type CollectorSummary,
 } from "@/lib/report/eodSummary";
 
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
   if (to.length === 0)
     return NextResponse.json({ ok: false, reason: "no management emails on file" });
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = easternToday();
 
   // Everyone who worked today — from the Queue production log AND from claims
   // marked worked in Collections (claim_work.updated_by).
