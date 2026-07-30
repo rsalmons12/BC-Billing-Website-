@@ -44,6 +44,21 @@ export async function GET() {
     );
   }
 
+  // 0) Can the service-role client actually READ past row-level security?
+  // A correct service_role key bypasses RLS and sees every row; the anon key
+  // (a common misconfig) sees nothing without a user session.
+  const { count: facCount, error: facErr } = await admin
+    .from("facilities")
+    .select("id", { count: "exact", head: true });
+  const { count: profCount, error: allProfErr } = await admin
+    .from("profiles")
+    .select("id", { count: "exact", head: true });
+  out.facilitiesReadable = facCount ?? 0;
+  out.facilitiesReadError = facErr?.message ?? null;
+  out.profilesReadable = profCount ?? 0;
+  out.profilesReadError = allProfErr?.message ?? null;
+  out.serviceRoleKeyLooksValid = (facCount ?? 0) > 0 || (profCount ?? 0) > 0;
+
   // 1) Who is marked management?
   const { data: mgmt, error: profErr } = await admin
     .from("profiles")

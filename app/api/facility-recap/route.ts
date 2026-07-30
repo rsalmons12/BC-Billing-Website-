@@ -22,9 +22,13 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: me } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (me?.role !== "management")
-    return NextResponse.json({ error: "Management only." }, { status: 403 });
+  const { data: me } = await supabase
+    .from("profiles")
+    .select("role, facility_id")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (me?.role !== "management" && me?.role !== "facility")
+    return NextResponse.json({ error: "Not permitted." }, { status: 403 });
 
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
@@ -47,6 +51,39 @@ export async function POST(request: Request) {
   }
 
   const date = easternToday();
+
+  // FACILITY login: email THIS facility login its own recap(s) to its own
+  // session email. This is the facility-side "send me a test" — it never
+  // touches other facilities and doesn't depend on the admin email lookup.
+  if (me.role === "facility") {
+    const to = [user.email ?? ""].filter((e) => e.includes("@"));
+    if (to.length === 0)
+      return NextResponse.json({ error: "Your account has no email to send to." }, { status: 400 });
+    // The facilities this login may see: its primary facility + any assignments.
+    const { data: asg } = await supabase.from("assignments").select("facility_id");
+    const facilityIds = Array.from(
+      new Set(
+        [me.facility_id, ...((asg ?? []).map((a: { facility_id: string }) => a.facility_id))].filter(
+          Boolean
+        ) as string[]
+      )
+    );
+    if (facilityIds.length === 0)
+      return NextResponse.json({ error: "Your login isn't linked to a facility yet." }, { status: 400 });
+    const mine = await computeFacilityRecaps(admin, { facilityIds });
+    if (mine.length === 0)
+      return NextResponse.json({ error: "No facility data found for your login." }, { status: 400 });
+    const html = mine
+      .map((r) => renderFacilityRecap(r, date))
+      .join('<hr style="border:none;border-top:2px solid #ddd;margin:26px 0" />');
+    try {
+      await sendResend(to, `Your Daily Recap — ${mine.map((r) => r.name).join(", ")} (${date})`, html);
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true, facilities: mine.length, recipients: to.length });
+  }
+
   const recaps = await computeFacilityRecaps(admin);
 
   // PREVIEW: send the caller ONE email with every facility's recap stacked, so

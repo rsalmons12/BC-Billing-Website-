@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
+import MyRecapButton from "@/components/facility/MyRecapButton";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -274,8 +275,9 @@ export default async function FacilityDashboard({
       <Header profile={profile} email={email} subtitle={viewLabel} />
       <main className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <div className="rounded-lg bg-secured/8 px-4 py-2 text-xs font-medium text-secured">
-            Read-only overview · {viewLabel}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-secured/8 px-4 py-2">
+            <span className="text-xs font-medium text-secured">Read-only overview · {viewLabel}</span>
+            <MyRecapButton />
           </div>
 
           {excludedClaims.length > 0 && (
