@@ -5,7 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
+import CensusPanel from "@/components/overview/CensusPanel";
 import MyRecapButton from "@/components/facility/MyRecapButton";
+import { censusByFacility } from "@/lib/report/census";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -167,6 +169,16 @@ export default async function FacilityDashboard({
   const payments = scoped(allPayments);
   const negotiations = scoped(allNegotiations);
   const billed = scoped(allBilled);
+
+  // Current-week census for the facilities in view (patients, missed groups,
+  // missed revenue) — most recent week per facility.
+  const censusFacilityIds =
+    selectedId === "all" ? facilities.map((f) => f.id) : [selectedId];
+  const censusSummaries = censusByFacility(censusFacilityIds, allCensus);
+  const censusName = (id: string) => {
+    const f = facilities.find((x) => x.id === id);
+    return f?.short_name || f?.name || "—";
+  };
 
   const viewLabel = facility
     ? facility.short_name || facility.name
@@ -336,6 +348,9 @@ export default async function FacilityDashboard({
 
           {/* Money Outlook — why revenue is improving or declining */}
           <MoneyOutlookPanel outlooks={outlooks} />
+
+          {/* Facility census — current week: patients, missed groups, missed rev */}
+          <CensusPanel summaries={censusSummaries} facName={censusName} />
 
           {/* Non-reimbursement risk (marketplace / exchange payers) */}
           {riskAR > 0 && (
