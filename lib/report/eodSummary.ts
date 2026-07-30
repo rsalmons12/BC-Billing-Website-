@@ -282,13 +282,23 @@ export function renderDigest(summaries: CollectorSummary[], date: string): strin
   </div>`;
 }
 
-export async function sendResend(to: string[], subject: string, html: string): Promise<void> {
+export async function sendResend(
+  to: string[],
+  subject: string,
+  html: string,
+  bcc?: string[]
+): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) throw new Error("RESEND_API_KEY missing");
+  // BCC keeps management copied without exposing their addresses to the
+  // facility (and vice-versa). Drop anyone already in `to` to avoid a double.
+  const cleanBcc = (bcc ?? []).filter((e) => e && !to.includes(e));
+  const payload: Record<string, unknown> = { from: FROM_EMAIL, to, subject, html };
+  if (cleanBcc.length) payload.bcc = cleanBcc;
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM_EMAIL, to, subject, html }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
 }
