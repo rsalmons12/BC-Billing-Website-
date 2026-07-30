@@ -1,27 +1,30 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
-import { RISK_AGE_THRESHOLD, PRIORITY_AGE_THRESHOLD } from "@/lib/types";
+import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
 
 // ---------------------------------------------------------------------------
-// Facility daily recap — the same picture the management Overview page shows,
-// but scoped to ONE facility and mailed to that facility's own login. Reuses
-// the service-role (admin) client so the 5:30 PM cron can read every facility's
-// data without a user session. A facility only ever receives its own numbers.
+// Facility daily recap — a faithful copy of what a facility sees on ITS OWN
+// dashboard (/facility): Total AR, Expected Revenue, Collected & Billed this
+// month, the Money Outlook, non-reimbursement risk, AR by payer, payments by
+// payer, and negotiations. Scoped to one facility and mailed to that facility's
+// login. Nothing management-only (no charged/recovered, no per-claim tables).
 // ---------------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Admin = SupabaseClient<any, any, any>;
 
-// Page through a table with the admin client (no RLS), 1000 rows at a time.
-async function pageAll<T>(
-  admin: Admin,
-  build: (q: any) => any
-): Promise<T[]> {
+// The share of outstanding AR a facility is projected to collect (dashboard rule).
+const EXPECTED_RATE = 0.33;
+// Negotiated dollars land ~14 days after the approval/signed date.
+const NEG_PAY_LAG_DAYS = 14;
+
+// Page through a table 1000 rows at a time. Works with the service-role client
+// (no RLS) OR a facility's own session client (RLS scopes it to their facility).
+async function pageAll<T>(client: Admin, build: (q: any) => any): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; from < 200_000; from += 1000) {
-    const { data, error } = await build(admin).range(from, from + 999);
+    const { data, error } = await build(client).range(from, from + 999);
     const rows = (data as T[]) ?? [];
     if (error) break;
     out.push(...rows);
@@ -30,86 +33,130 @@ async function pageAll<T>(
   return out;
 }
 
-type Claim = {
-  claim_id: string;
+type ClaimRow = {
   facility_id: string;
-  patient_name: string | null;
   member_id: string | null;
-  dos_from: string | null;
-  charge_amount: number | null;
   balance: number | null;
   age_days: number | null;
   claim_status: string | null;
+};
+type PayRow = {
+  facility_id: string | null;
+  paid_amount: number | null;
+  payment_source: string | null;
+  deposit_date: string | null;
+  payment_entered: string | null;
+  period: string | null;
+  cpt_description: string | null;
+  dos_from: string | null;
+  patient_name: string | null;
+};
+type BilledRow = {
+  facility_id: string | null;
+  total_amount: number | null;
+  period: string | null;
+  entered_date: string | null;
+};
+type NegRow = {
+  facility_id: string | null;
+  negotiated_amount: number | null;
+  status: string | null;
+  date_signed: string | null;
 };
 
 export interface FacilityRecap {
   facilityId: string;
   name: string;
-  charged: number;
-  recovered: number;
-  balance: number;
-  pri100Count: number;
-  pri100Balance: number;
-  risk65Count: number;
-  risk65Balance: number;
-  openIssues: number;
+  monthLabel: string;
+  totalAR: number;
+  expectedRevenue: number;
+  collectedThisMonth: number;
+  billedThisMonth: number;
+  riskAR: number;
+  arRows: [string, number][];
+  payRows: [string, number][];
+  negOpen: number;
+  negExpected: number;
+  negDueSoon: number;
+  approvedNegCount: number;
   outlook: FacilityOutlook | null;
-  worst100: Claim[];
-  worst65: Claim[];
 }
 
-const isPriority = (c: Claim) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD;
-const isRisk65 = (c: Claim) =>
-  (c.age_days ?? 0) > RISK_AGE_THRESHOLD && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD;
+// Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
+function payerFromStatus(status: unknown): string {
+  const t = String(status ?? "").trim();
+  if (!t) return "Unassigned";
+  const m = t.match(/\bat\s+(.+)$/i);
+  if (!m) return "Other";
+  const p = m[1].split(/\s{2,}|[|,;]/)[0].trim();
+  return p ? p.toUpperCase() : "Other";
+}
 
-// Build a recap object per facility (mirrors the Overview aggregation). Pass
-// facilityIds to scope to specific facilities (e.g. a facility login's own).
+function parseDate(v: unknown): Date | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t);
+}
+function isSameMonth(v: unknown, now: Date): boolean {
+  const d = parseDate(v);
+  return !!d && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
+// Build a recap per facility (mirrors the /facility dashboard). Pass facilityIds
+// to scope to specific facilities (e.g. a facility login's own).
 export async function computeFacilityRecaps(
-  admin: Admin,
-  opts?: { facilityIds?: string[] }
+  client: Admin,
+  opts?: { facilityIds?: string[]; now?: Date }
 ): Promise<FacilityRecap[]> {
+  const now = opts?.now ?? new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
-  const scopeIn = (q: any, col = "facility_id") => (only ? q.in(col, Array.from(only)) : q);
-  const [facilitiesAll, claimsRaw, issues, payments, billed, auths, census, repricing] =
+  const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
+
+  const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing] =
     await Promise.all([
-      pageAll<{ id: string; name: string; short_name: string | null }>(admin, (a) =>
+      pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
         a.from("facilities").select("id,name,short_name").order("name")
       ),
-      pageAll<Claim>(admin, (a) =>
+      pageAll<ClaimRow>(client, (a) =>
         scopeIn(
           a
             .from("claims")
-            .select(
-              "claim_id,facility_id,patient_name,member_id,dos_from,charge_amount,balance,age_days,claim_status"
-            )
+            .select("facility_id,member_id,balance,age_days,claim_status")
             .eq("present", true)
         )
       ),
-      pageAll<{ facility_id: string | null }>(admin, (a) =>
-        scopeIn(a.from("auth_issues").select("facility_id").neq("status", "Completed"))
-      ),
-      pageAll<any>(admin, (a) =>
-        a
-          .from("payments")
-          .select(
-            "facility_id,paid_amount,payment_source,period,deposit_date,cpt_description,dos_from,patient_name"
-          )
+      pageAll<PayRow>(client, (a) =>
+        scopeIn(
+          a
+            .from("payments")
+            .select(
+              "facility_id,paid_amount,payment_source,deposit_date,payment_entered,period,cpt_description,dos_from,patient_name"
+            )
+        )
       ).catch(() => []),
-      pageAll<any>(admin, (a) =>
-        a.from("billed_claims").select("facility_id,total_amount,period")
+      pageAll<BilledRow>(client, (a) =>
+        scopeIn(a.from("billed_claims").select("facility_id,total_amount,period,entered_date"))
       ).catch(() => []),
-      pageAll<any>(admin, (a) =>
-        a
-          .from("authorizations")
-          .select("facility_id,discharged,discharge_date,next_review_date,created_at")
+      pageAll<NegRow>(client, (a) =>
+        scopeIn(a.from("negotiations").select("facility_id,negotiated_amount,status,date_signed"))
       ).catch(() => []),
-      pageAll<any>(admin, (a) =>
-        a
-          .from("census")
-          .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days")
+      pageAll<any>(client, (a) =>
+        scopeIn(
+          a
+            .from("authorizations")
+            .select("facility_id,discharged,discharge_date,next_review_date,created_at")
+        )
       ).catch(() => []),
-      pageAll<any>(admin, (a) =>
-        a.from("repricing").select("facility_id,total_amount,amount_paid,claim_status")
+      pageAll<any>(client, (a) =>
+        scopeIn(
+          a.from("census").select("facility_id,level_of_care,week_start,gn_rate,patient_name,days")
+        )
+      ).catch(() => []),
+      pageAll<any>(client, (a) =>
+        scopeIn(a.from("repricing").select("facility_id,total_amount,amount_paid,claim_status"))
       ).catch(() => []),
     ]);
 
@@ -119,48 +166,91 @@ export async function computeFacilityRecaps(
   const outlooks = computeOutlooks({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
     payments,
-    billed,
-    claims: claims.map((c) => ({
-      facility_id: c.facility_id,
-      balance: c.balance,
-      age_days: c.age_days,
-    })),
+    billed: billed.map((b) => ({ facility_id: b.facility_id, total_amount: b.total_amount, period: b.period })),
+    claims: claims.map((c) => ({ facility_id: c.facility_id, balance: c.balance, age_days: c.age_days })),
     auths,
     census,
     repricing,
   });
   const outlookOf = new Map(outlooks.filter((o) => o.facility_id).map((o) => [o.facility_id, o]));
 
-  const byBalance = (a: Claim, b: Claim) => (b.balance ?? 0) - (a.balance ?? 0);
+  const today0 = new Date(now);
+  today0.setHours(0, 0, 0, 0);
+  const soon = new Date(today0.getTime() + NEG_PAY_LAG_DAYS * 86400000);
 
   return facilities.map((f) => {
     const fc = claims.filter((c) => c.facility_id === f.id);
-    const charged = fc.reduce((s, c) => s + (c.charge_amount ?? 0), 0);
-    const balance = fc.reduce((s, c) => s + (c.balance ?? 0), 0);
-    const pri = fc.filter(isPriority);
-    const risk = fc.filter(isRisk65);
+    const totalAR = fc.reduce((s, c) => s + (c.balance ?? 0), 0);
+
+    const arByPayer = new Map<string, number>();
+    for (const c of fc) {
+      const bal = c.balance ?? 0;
+      if (bal <= 0) continue;
+      const p = payerFromStatus(c.claim_status);
+      arByPayer.set(p, (arByPayer.get(p) ?? 0) + bal);
+    }
+    const riskAR = fc.reduce((s, c) => s + (isRiskPayer(c.claim_status) ? c.balance ?? 0 : 0), 0);
+
+    const monthPays = payments.filter(
+      (p) =>
+        p.facility_id === f.id &&
+        (isSameMonth(p.deposit_date, now) || isSameMonth(p.payment_entered, now))
+    );
+    const collectedThisMonth = monthPays.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+    const payByPayer = new Map<string, number>();
+    for (const p of monthPays) {
+      const src = (p.payment_source || "Other").toUpperCase();
+      payByPayer.set(src, (payByPayer.get(src) ?? 0) + (p.paid_amount ?? 0));
+    }
+
+    const billedThisMonth = billed
+      .filter(
+        (b) =>
+          b.facility_id === f.id &&
+          (b.period ? b.period === monthKey : isSameMonth(b.entered_date, now))
+      )
+      .reduce((s, b) => s + (b.total_amount ?? 0), 0);
+
+    const approved = negs.filter(
+      (n) => n.facility_id === f.id && /approv|signed/i.test(n.status || "")
+    );
+    let negOpen = 0;
+    let negExpected = 0;
+    let negDueSoon = 0;
+    for (const n of approved) {
+      const signed = parseDate(n.date_signed);
+      const payBy = signed ? new Date(signed.getTime() + NEG_PAY_LAG_DAYS * 86400000) : null;
+      if (payBy && payBy < today0) continue; // already landed
+      negOpen++;
+      negExpected += n.negotiated_amount ?? 0;
+      if (payBy && payBy >= today0 && payBy <= soon) negDueSoon += n.negotiated_amount ?? 0;
+    }
+
     return {
       facilityId: f.id,
       name: f.short_name || f.name,
-      charged,
-      recovered: charged - balance,
-      balance,
-      pri100Count: pri.length,
-      pri100Balance: pri.reduce((s, c) => s + (c.balance ?? 0), 0),
-      risk65Count: risk.length,
-      risk65Balance: risk.reduce((s, c) => s + (c.balance ?? 0), 0),
-      openIssues: issues.filter((i) => i.facility_id === f.id).length,
+      monthLabel,
+      totalAR,
+      expectedRevenue: totalAR * EXPECTED_RATE,
+      collectedThisMonth,
+      billedThisMonth,
+      riskAR,
+      arRows: Array.from(arByPayer.entries()).sort((a, b) => b[1] - a[1]),
+      payRows: Array.from(payByPayer.entries())
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1]),
+      negOpen,
+      negExpected,
+      negDueSoon,
+      approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
-      worst100: pri.sort(byBalance).slice(0, 20),
-      worst65: risk.sort(byBalance).slice(0, 20),
     };
   });
 }
 
-// Facility id → its login email(s). A facility login is a profile with
-// role='facility' whose primary facility_id matches, OR who is granted the
-// facility via the assignments table (multi-facility logins). Emails come from
-// auth via getUserById (direct lookup, most reliable).
+// Facility id → its login email(s): profiles with role='facility' whose primary
+// facility_id matches, or who are granted the facility via assignments. Emails
+// via getUserById (direct, most reliable). NEEDS the service-role client.
 export async function facilityRecipients(admin: Admin): Promise<Map<string, string[]>> {
   const [{ data: profs }, { data: asgs }] = await Promise.all([
     admin.from("profiles").select("id,facility_id").eq("role", "facility"),
@@ -168,7 +258,6 @@ export async function facilityRecipients(admin: Admin): Promise<Map<string, stri
   ]);
   const profileIds = new Set((profs ?? []).map((p: { id: string }) => p.id));
 
-  // profile id → email
   const emailOf = new Map<string, string>();
   for (const p of (profs ?? []) as { id: string }[]) {
     try {
@@ -179,7 +268,6 @@ export async function facilityRecipients(admin: Admin): Promise<Map<string, stri
     }
   }
 
-  // facility id → set of profile ids that can see it
   const facToProfiles = new Map<string, Set<string>>();
   const add = (fid: string | null, pid: string) => {
     if (!fid) return;
@@ -201,39 +289,38 @@ export async function facilityRecipients(admin: Admin): Promise<Map<string, stri
   return out;
 }
 
-// ---- HTML rendering (mirrors the Overview page) ---------------------------
+// ---- HTML rendering (mirrors the /facility dashboard) ---------------------
 
-function statTile(label: string, value: string, color: string): string {
-  return `<td style="padding:10px 12px;border:1px solid #eee;border-radius:8px;vertical-align:top">
+const dirArrow = (d: string) =>
+  d === "up" ? "▲" : d === "down" ? "▼" : d === "risk" ? "⚠" : "▬";
+const dirColor = (d: string) =>
+  d === "up" ? "#137333" : d === "down" || d === "risk" ? "#b00020" : "#666";
+
+function statTile(label: string, value: string, color: string, sub?: string): string {
+  return `<td style="padding:12px 14px;border:1px solid #eee;border-radius:10px;vertical-align:top;width:25%">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888">${label}</div>
-    <div style="font-size:22px;font-weight:700;color:${color}">${value}</div>
+    <div style="font-size:21px;font-weight:700;color:${color}">${value}</div>
+    ${sub ? `<div style="font-size:11px;color:#999">${sub}</div>` : ""}
   </td>`;
 }
 
-function claimTable(title: string, color: string, rows: Claim[], emptyMsg: string): string {
+function breakdown(title: string, total: number, rows: [string, number][], accent: string, empty: string): string {
   const body = rows
-    .map(
-      (c) => `<tr>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee">${c.patient_name || "—"}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right"><b style="color:${color}">${c.age_days ?? 0}d</b></td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;color:#555">${c.dos_from || "—"}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;font-weight:600">${money(c.balance)}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;color:#555">${c.claim_status || "—"}</td>
-      </tr>`
-    )
+    .map(([label, val]) => {
+      const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+      const flag = isRiskPayer(label) ? ' <span style="color:#b00020">⚠</span>' : "";
+      return `<tr>
+        <td style="padding:4px 8px;border-bottom:1px solid #eee">${label}${flag}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;font-weight:600;color:${accent}">${money(val)}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${pct}%</td>
+      </tr>`;
+    })
     .join("");
-  return `<h3 style="margin:20px 0 6px;color:${color}">${title}</h3>
+  return `<h3 style="margin:18px 0 6px">${title} <span style="color:#888;font-weight:400">${money(total)}</span></h3>
     ${
       rows.length
-        ? `<table style="border-collapse:collapse;width:100%;font-size:13px">
-            <thead><tr style="text-align:left;color:#888">
-              <th style="padding:4px 8px">Patient</th>
-              <th style="padding:4px 8px;text-align:right">Age</th>
-              <th style="padding:4px 8px">DOS</th>
-              <th style="padding:4px 8px;text-align:right">Balance</th>
-              <th style="padding:4px 8px">Status</th>
-            </tr></thead><tbody>${body}</tbody></table>`
-        : `<p style="color:#888;margin:0">${emptyMsg}</p>`
+        ? `<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>${body}</tbody></table>`
+        : `<p style="color:#888;margin:0">${empty}</p>`
     }`;
 }
 
@@ -245,10 +332,15 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     year: "numeric",
   });
   const o = r.outlook;
-  const arrow =
-    o?.direction === "up" ? "▲" : o?.direction === "down" ? "▼" : o?.direction === "risk" ? "⚠" : "▬";
-  const arrowColor =
-    o?.direction === "up" ? "#137333" : o?.direction === "down" || o?.direction === "risk" ? "#b00020" : "#666";
+
+  const drivers = (o?.drivers ?? [])
+    .map(
+      (d) => `<div style="margin:6px 0">
+        <span style="color:${dirColor(d.direction)}">${dirArrow(d.direction)}</span>
+        <b>${d.label}</b> — <span style="color:#555">${d.detail}</span>
+      </div>`
+    )
+    .join("");
 
   const locRows = (o?.locBilling ?? [])
     .map(
@@ -256,7 +348,7 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
         <td style="padding:3px 8px;border-bottom:1px solid #eee">${l.loc}</td>
         <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curServices}</td>
         <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${l.priorServices}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curClients}</td>
+        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curClients} / ${l.priorClients}</td>
       </tr>`
     )
     .join("");
@@ -267,30 +359,25 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
 
     <table style="border-collapse:separate;border-spacing:6px;width:100%">
       <tr>
-        ${statTile("Charged", money(r.charged), "#222")}
-        ${statTile("Recovered", money(r.recovered), "#137333")}
-        ${statTile("Outstanding", money(r.balance), "#a8730b")}
-      </tr>
-      <tr>
-        ${statTile("100+ Priority", String(r.pri100Count), "#b00020")}
-        ${statTile("65–99 Risk", String(r.risk65Count), "#a8730b")}
-        ${statTile("Open Auth Issues", String(r.openIssues), "#1a56db")}
+        ${statTile("Total AR (Outstanding)", money(r.totalAR), "#a8730b")}
+        ${statTile("Expected Revenue", money(r.expectedRevenue), "#1a56db", `${Math.round(EXPECTED_RATE * 100)}% of AR`)}
+        ${statTile(`Collected · ${r.monthLabel}`, money(r.collectedThisMonth), "#137333")}
+        ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), "#222")}
       </tr>
     </table>
 
     ${
       o
-        ? `<div style="margin:18px 0;padding:12px 14px;border:1px solid #eee;border-radius:8px;background:#fafafa">
-            <div style="font-weight:700;margin-bottom:2px">
-              <span style="color:${arrowColor}">${arrow}</span> Money Outlook — ${o.headline}
+        ? `<div style="margin:18px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px;background:#fafafa">
+            <div style="font-weight:700;margin-bottom:2px">Money Outlook — ${o.curLabel} vs ${o.priorLabel}</div>
+            <div style="margin:2px 0 8px">
+              <span style="color:${dirColor(o.direction)};font-weight:700">${dirArrow(o.direction)} ${
+                o.pct != null ? `${o.pct > 0 ? "+" : ""}${o.pct.toFixed(0)}%` : ""
+              }</span>
+              &nbsp;${o.headline}
             </div>
-            <div style="color:#444">${o.reason}</div>
-            <div style="color:#666;margin-top:6px">
-              ${o.curLabel} paid <b>${money(o.paidCur)}</b> vs ${o.priorLabel} <b>${money(o.paidPrior)}</b>${
-                o.pct != null ? ` (${o.pct > 0 ? "+" : ""}${o.pct.toFixed(0)}%)` : ""
-              }
-            </div>
-            <div style="color:#666;margin-top:6px">🔮 ${o.forecast}</div>
+            <div style="color:#444;margin-bottom:6px">${o.reason}</div>
+            ${drivers}
             ${
               locRows
                 ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:10px">
@@ -298,16 +385,45 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
                       <th style="padding:3px 8px">Level of care</th>
                       <th style="padding:3px 8px;text-align:right">Services (now)</th>
                       <th style="padding:3px 8px;text-align:right">Prior</th>
-                      <th style="padding:3px 8px;text-align:right">Clients</th>
+                      <th style="padding:3px 8px;text-align:right">Clients (now / prior)</th>
                     </tr></thead><tbody>${locRows}</tbody></table>`
                 : ""
             }
+            <div style="color:#666;margin-top:8px">🔮 ${o.forecast}</div>
           </div>`
         : ""
     }
 
-    ${claimTable(`Priority · 100+ Days (${money(r.pri100Balance)})`, "#b00020", r.worst100, "No claims 100+ days. 🎉")}
-    ${claimTable(`Risk · 65–99 Days (${money(r.risk65Balance)})`, "#a8730b", r.worst65, "No claims in the 65–99 day band. 🎉")}
+    ${
+      r.riskAR > 0
+        ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #f2c2c2;border-radius:10px;background:#fdf3f3">
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <div>
+                <div style="font-weight:700;color:#b00020">⚠ Risk of non-reimbursement</div>
+                <div style="font-size:12px;color:#777">Marketplace / exchange plans — Highmark, Capital Blue Cross, Independence Blue Cross. Prioritize before these age out.</div>
+              </div>
+              <div style="text-align:right;white-space:nowrap">
+                <div style="font-size:20px;font-weight:700;color:#b00020">${money(r.riskAR)}</div>
+                <div style="font-size:12px;color:#777">${r.totalAR > 0 ? Math.round((r.riskAR / r.totalAR) * 100) : 0}% of AR</div>
+              </div>
+            </div>
+          </div>`
+        : ""
+    }
+
+    ${breakdown("Outstanding AR by payer", r.totalAR, r.arRows, "#a8730b", "No outstanding balance on file.")}
+    ${breakdown(`Payments collected · ${r.monthLabel} — by payer`, r.collectedThisMonth, r.payRows, "#137333", `No payments recorded yet for ${r.monthLabel}.`)}
+
+    <h3 style="margin:18px 0 6px">Negotiations — expected revenue</h3>
+    ${
+      r.approvedNegCount === 0
+        ? `<p style="color:#888;margin:0">No approved negotiations on file.</p>`
+        : `<table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
+            ${statTile("Awaiting payment", String(r.negOpen), "#222", `${r.approvedNegCount} approved on file`)}
+            ${statTile("Expected revenue", money(r.negExpected), "#1a56db", "not yet landed")}
+            ${statTile("Landing within 14 days", money(r.negDueSoon), "#137333", `paid ~${NEG_PAY_LAG_DAYS} days after approval`)}
+          </tr></table>`
+    }
 
     <hr style="border:none;border-top:1px solid #ddd;margin-top:22px" />
     <p style="font-size:11px;color:#888">Automated daily recap from BC Billing. Contains PHI — handle per HIPAA.</p>
