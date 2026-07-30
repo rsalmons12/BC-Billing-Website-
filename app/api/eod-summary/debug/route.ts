@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { SUPABASE_URL } from "@/lib/supabase/config";
 
 // Read-only diagnostic for the end-of-day email. Tells us, in plain JSON,
 // exactly why "no management email" happens: is anyone marked management, and
@@ -59,10 +60,10 @@ export async function GET() {
   // JWT decodes to {"role":"service_role", "ref":"<project>"}; the anon key
   // decodes to {"role":"anon", ...}. The project ref must match SUPABASE_URL.
   const keyInfo = describeKey(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  const urlRef =
-    (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "").match(
-      /https?:\/\/([a-z0-9]+)\.supabase\./i
-    )?.[1] ?? null;
+  // The project the admin client ACTUALLY connects to is the hard-wired URL in
+  // lib/supabase/config — NOT any NEXT_PUBLIC_* env var. The service key must
+  // belong to THIS project.
+  const urlRef = SUPABASE_URL.match(/https?:\/\/([a-z0-9]+)\.supabase\./i)?.[1] ?? null;
 
   const out: Record<string, unknown> = {
     you: { id: user.id, email: user.email, role: me?.role ?? null },
