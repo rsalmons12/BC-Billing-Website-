@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/eod-summary",
       "schedule": "30 22 * * *"
+    },
+    {
+      "path": "/api/cron/facility-recap",
+      "schedule": "30 22 * * *"
     }
   ]
 }
