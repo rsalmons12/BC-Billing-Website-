@@ -6,6 +6,8 @@ import Header from "@/components/Header";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import FacilityRecapButtons from "@/components/overview/FacilityRecapButtons";
+import CensusPanel from "@/components/overview/CensusPanel";
+import { censusByFacility } from "@/lib/report/census";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -228,6 +230,12 @@ export default async function OverviewPage() {
     repricing: repricingData,
   });
 
+  // Current-week census per facility (patients, missed groups, missed revenue).
+  const censusSummaries = censusByFacility(
+    facilities.map((f) => f.id),
+    censusData
+  );
+
   const byBalance = (a: Claim, b: Claim) => (b.balance ?? 0) - (a.balance ?? 0);
   const worst100 = claims.filter(isPriority).sort(byBalance).slice(0, 30);
   const worst65 = claims.filter(isRisk65).sort(byBalance).slice(0, 30);
@@ -273,6 +281,9 @@ export default async function OverviewPage() {
 
           {/* Money Outlook — why revenue is improving or declining */}
           <MoneyOutlookPanel outlooks={outlooks} />
+
+          {/* Facility census — current week: patients, missed groups, missed rev */}
+          <CensusPanel summaries={censusSummaries} facName={facName} />
 
           {/* 100+ priority panel */}
           <RiskPanel

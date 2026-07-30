@@ -1,0 +1,117 @@
+import { CENSUS_LOC_GN, censusLocRate } from "@/lib/types";
+
+// ---------------------------------------------------------------------------
+// Census summary math — the SAME rules the Census tab uses, factored out so the
+// Overview can show each facility's current-week census (patients), missed
+// groups (GN), and missed revenue. Missed sessions are per service; only GN
+// drives missed revenue. Expected reimbursement = 30% of billed.
+// ---------------------------------------------------------------------------
+
+const WEEKLY_RULES: Record<string, number> = { CM: 2, ID: 1 };
+export const CENSUS_REQ_CODES = ["GN", "CM", "ID"] as const;
+const EXPECTED_PCT = 0.3;
+
+export type CensusLike = {
+  facility_id: string | null;
+  level_of_care: string | null;
+  week_start: string | null;
+  gn_rate: number | null;
+  patient_name: string | null;
+  days: Record<string, string> | null;
+};
+
+// Per-GN billed rate: a per-row override if set, else the standard rate for the
+// level of care (PHP $4,800 / IOP $4,300 per GN).
+function rateFor(r: CensusLike): number {
+  if (r.gn_rate != null && r.gn_rate > 0) return r.gn_rate;
+  return censusLocRate(r.level_of_care);
+}
+
+// GN sessions expected per week for a level of care (mapped value, else any
+// number embedded in the name like "IOP CO 5" → 5).
+function locProgramDays(loc: string | null): number {
+  const key = String(loc ?? "").trim().replace(/\s+/g, " ");
+  for (const [name, gn] of Object.entries(CENSUS_LOC_GN))
+    if (name.toUpperCase() === key.toUpperCase()) return gn;
+  const m = key.match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function requirementsFor(loc: string | null): Record<string, number> {
+  return { GN: locProgramDays(loc), CM: WEEKLY_RULES.CM, ID: WEEKLY_RULES.ID };
+}
+
+// Count each service code across a patient's day cells.
+function actualsFor(days: Record<string, string> | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const code of Object.values(days ?? {}))
+    for (const part of String(code).split(/[/,]/)) {
+      const k = part.trim().toUpperCase();
+      if (k) out[k] = (out[k] ?? 0) + 1;
+    }
+  return out;
+}
+
+// A readable label for an ISO week start: "Week of Jul 13".
+export function censusWeekLabel(iso: string | null): string {
+  const m = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso || "—";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return `Week of ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+export interface CensusWeekSummary {
+  facilityId: string;
+  week: string | null; // ISO week_start of the most recent week
+  weekLabel: string;
+  patients: number; // current census — patients on the most recent week
+  missed: Record<string, number>; // GN / CM / ID missed sessions
+  missedGroups: number; // missed GN specifically
+  missedRev: number; // revenue lost to missed GN
+  expected: number; // expected revenue for the week
+}
+
+// Summarize ONE facility's most-recent census week from its rows.
+export function facilityCensusWeek(facilityId: string, rows: CensusLike[]): CensusWeekSummary | null {
+  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
+  if (fRows.length === 0) return null;
+  // Most current week = the latest week_start present.
+  const week = fRows.map((r) => r.week_start!).sort().slice(-1)[0];
+  const weekRows = fRows.filter((r) => r.week_start === week);
+
+  const missed: Record<string, number> = {};
+  for (const c of CENSUS_REQ_CODES) missed[c] = 0;
+  let missedRev = 0;
+  let expected = 0;
+  const patients = new Set<string>();
+  for (const r of weekRows) {
+    const act = actualsFor(r.days);
+    const req = requirementsFor(r.level_of_care);
+    for (const c of CENSUS_REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
+    const missedGN = Math.max(0, req.GN - (act.GN ?? 0));
+    missedRev += missedGN * rateFor(r) * EXPECTED_PCT;
+    expected += rateFor(r) * (act.GN ?? 0) * EXPECTED_PCT;
+    patients.add(String(r.patient_name ?? "").trim().toLowerCase() || Math.random().toString());
+  }
+  return {
+    facilityId,
+    week,
+    weekLabel: censusWeekLabel(week),
+    patients: patients.size,
+    missed,
+    missedGroups: missed.GN,
+    missedRev,
+    expected,
+  };
+}
+
+// Summarize every facility's most-recent week (facilities with no census are
+// skipped).
+export function censusByFacility(
+  facilityIds: string[],
+  rows: CensusLike[]
+): CensusWeekSummary[] {
+  return facilityIds
+    .map((id) => facilityCensusWeek(id, rows))
+    .filter((s): s is CensusWeekSummary => s !== null);
+}
