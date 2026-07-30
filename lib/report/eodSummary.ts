@@ -27,6 +27,20 @@ export function easternToday(): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+// Current hour (0–23) in US Eastern. Used to gate the cron so a single 5 PM ET
+// send lands year-round: the cron fires at both 21:00 and 22:00 UTC and only
+// the firing where Eastern local time is 17:00 (5 PM) actually sends — 21:00
+// UTC in summer (EDT), 22:00 UTC in winter (EST).
+export function easternHour(): number {
+  const s = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    hour12: false,
+  }).format(new Date());
+  const h = parseInt(s, 10);
+  return isNaN(h) ? -1 : h % 24; // "24" → 0 (midnight)
+}
+
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 

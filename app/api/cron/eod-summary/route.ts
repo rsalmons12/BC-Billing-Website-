@@ -6,6 +6,7 @@ import {
   renderDigest,
   sendResend,
   easternToday,
+  easternHour,
 } from "@/lib/report/eodSummary";
 
 // Runs on a schedule (see vercel.json) — around 5 PM Eastern — and emails a
@@ -23,6 +24,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
+
+  // Fires at 21:00 AND 22:00 UTC; only the one at 5 PM Eastern actually sends,
+  // so it stays at 5 PM ET through daylight-saving changes. ?force=1 bypasses
+  // (for a manual cron test).
+  const url = new URL(request.url);
+  if (easternHour() !== 17 && url.searchParams.get("force") !== "1")
+    return NextResponse.json({ ok: true, sent: false, reason: "not 5 PM Eastern" });
 
   let admin;
   try {
