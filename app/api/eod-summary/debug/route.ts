@@ -8,6 +8,40 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // user (it exposes management login emails). No email is sent.
 export const dynamic = "force-dynamic";
 
+// Identify the installed key WITHOUT revealing it: format, its JWT `role` claim,
+// and which project it belongs to. This is what distinguishes "right key" from
+// "anon key" from "key for the wrong project".
+function describeKey(key: string | undefined): {
+  present: boolean;
+  length: number;
+  format: string;
+  role: string | null;
+  projectRef: string | null;
+} {
+  if (!key) return { present: false, length: 0, format: "missing", role: null, projectRef: null };
+  const k = key.trim();
+  const base = { present: true, length: k.length } as const;
+  if (k.startsWith("sb_secret_"))
+    return { ...base, format: "new-secret-key (OK)", role: "service_role?", projectRef: null };
+  if (k.startsWith("sb_publishable_"))
+    return { ...base, format: "new-PUBLISHABLE-key (WRONG — use Secret)", role: "anon", projectRef: null };
+  const parts = k.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+      return {
+        ...base,
+        format: "legacy-jwt",
+        role: typeof payload.role === "string" ? payload.role : null,
+        projectRef: typeof payload.ref === "string" ? payload.ref : null,
+      };
+    } catch {
+      return { ...base, format: "jwt (unreadable payload)", role: null, projectRef: null };
+    }
+  }
+  return { ...base, format: "unrecognized", role: null, projectRef: null };
+}
+
 export async function GET() {
   const supabase = createClient();
   const {
@@ -21,10 +55,25 @@ export async function GET() {
     .eq("id", user.id)
     .maybeSingle();
 
+  // Identify WHICH key is installed, without exposing the secret. A service_role
+  // JWT decodes to {"role":"service_role", "ref":"<project>"}; the anon key
+  // decodes to {"role":"anon", ...}. The project ref must match SUPABASE_URL.
+  const keyInfo = describeKey(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const urlRef =
+    (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "").match(
+      /https?:\/\/([a-z0-9]+)\.supabase\./i
+    )?.[1] ?? null;
+
   const out: Record<string, unknown> = {
     you: { id: user.id, email: user.email, role: me?.role ?? null },
     hasResendKey: !!process.env.RESEND_API_KEY,
     hasCronSecret: !!process.env.CRON_SECRET,
+    serviceKey: {
+      ...keyInfo,
+      urlProjectRef: urlRef,
+      projectMatchesUrl:
+        keyInfo.projectRef && urlRef ? keyInfo.projectRef === urlRef : null,
+    },
   };
 
   if (me?.role !== "management")
