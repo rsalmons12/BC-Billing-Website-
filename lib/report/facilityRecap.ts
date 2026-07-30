@@ -331,10 +331,14 @@ export async function computeFacilityRecaps(
 // facility_id matches, or who are granted the facility via assignments. Emails
 // via getUserById (direct, most reliable). NEEDS the service-role client.
 export async function facilityRecipients(admin: Admin): Promise<Map<string, string[]>> {
-  const [{ data: profs }, { data: asgs }] = await Promise.all([
-    admin.from("profiles").select("id,facility_id").eq("role", "facility"),
+  const [{ data: profsRaw }, { data: asgs }] = await Promise.all([
+    admin.from("profiles").select("id,facility_id,receives_daily_emails").eq("role", "facility"),
     admin.from("assignments").select("profile_id,facility_id"),
   ]);
+  // Exclude facility logins toggled off in Admin (receives_daily_emails = false).
+  const profs = (profsRaw ?? []).filter(
+    (p: { receives_daily_emails: boolean | null }) => p.receives_daily_emails !== false
+  );
   const profileIds = new Set((profs ?? []).map((p: { id: string }) => p.id));
 
   const emailOf = new Map<string, string>();

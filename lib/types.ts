@@ -75,6 +75,7 @@ export interface Profile {
   daily_target: number | null;
   job_title: string | null;
   queue_tier: string | null; // 'standard' | 'priority_100'
+  receives_daily_emails: boolean | null; // false = excluded from the daily emails
   created_at: string;
 }
 

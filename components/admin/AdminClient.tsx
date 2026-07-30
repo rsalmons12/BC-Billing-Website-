@@ -50,6 +50,17 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : "Role updated");
   };
 
+  const setDailyEmails = async (p: Profile, receives_daily_emails: boolean) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, receives_daily_emails } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ receives_daily_emails })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : receives_daily_emails ? "Daily emails on" : "Daily emails off");
+  };
+
   const setJobTitle = async (p: Profile, job_title: string) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, job_title } : x))
@@ -167,6 +178,7 @@ export default function AdminClient({
           assignments={assignments}
           selfId={selfId}
           setRole={setRole}
+          setDailyEmails={setDailyEmails}
           setJobTitle={setJobTitle}
           setQueueTier={setQueueTier}
           setFacilityId={setFacilityId}
@@ -196,6 +208,7 @@ function UsersTab({
   assignments,
   selfId,
   setRole,
+  setDailyEmails,
   setJobTitle,
   setQueueTier,
   setFacilityId,
@@ -207,6 +220,7 @@ function UsersTab({
   assignments: Assignment[];
   selfId: string;
   setRole: (p: Profile, r: Role) => void;
+  setDailyEmails: (p: Profile, on: boolean) => void;
   setJobTitle: (p: Profile, title: string) => void;
   setQueueTier: (p: Profile, tier: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
@@ -248,6 +262,21 @@ function UsersTab({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <span className="label">Daily emails</span>
+                <label className="mt-1 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={p.receives_daily_emails !== false}
+                    onChange={(e) => setDailyEmails(p, e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-surface-muted">
+                    {p.receives_daily_emails !== false ? "Receives" : "Off"}
+                  </span>
+                </label>
               </div>
 
               {p.role === "staff" && (

@@ -63,8 +63,14 @@ export async function usersEmailMap(admin: Admin): Promise<Map<string, string>> 
 export async function managementEmailsDiag(
   admin: Admin
 ): Promise<{ emails: string[]; mgmtCount: number }> {
-  const { data: mgmt } = await admin.from("profiles").select("id").eq("role", "management");
-  const ids = (mgmt ?? []).map((m: { id: string }) => m.id);
+  // Exclude anyone toggled off in Admin (receives_daily_emails = false).
+  const { data: mgmt } = await admin
+    .from("profiles")
+    .select("id, receives_daily_emails")
+    .eq("role", "management");
+  const ids = (mgmt ?? [])
+    .filter((m: { receives_daily_emails: boolean | null }) => m.receives_daily_emails !== false)
+    .map((m: { id: string }) => m.id);
   if (ids.length === 0) return { emails: [], mgmtCount: 0 };
   // Look each management user up directly (more reliable than paging the whole
   // user list); fall back to the full map if a direct lookup comes back empty.
