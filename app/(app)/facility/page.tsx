@@ -225,11 +225,74 @@ export default async function FacilityDashboard({
 
   // ---- Billed in the viewed month (from the CollaborateMD billed report) ---
   // Prefer the report's month tag; fall back to the entered date for old rows.
-  const billedThisMonth = billed
-    .filter((b) =>
-      b.period ? b.period === viewMonthKey : isThisMonth(b.entered_date, viewMonth)
-    )
-    .reduce((s, b) => s + (b.total_amount ?? 0), 0);
+  const priorMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1);
+  const priorMonthKey = `${priorMonth.getFullYear()}-${String(priorMonth.getMonth() + 1).padStart(2, "0")}`;
+  const priorMonthLabel = priorMonth.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const billedInMonth = (key: string, when: Date) =>
+    billed.filter((b) => (b.period ? b.period === key : isThisMonth(b.entered_date, when)));
+  const billedThisMonth = billedInMonth(viewMonthKey, viewMonth).reduce(
+    (s, b) => s + (b.total_amount ?? 0),
+    0
+  );
+  const billedLastMonth = billedInMonth(priorMonthKey, priorMonth).reduce(
+    (s, b) => s + (b.total_amount ?? 0),
+    0
+  );
+
+  // Level-of-care SESSIONS billed each month, straight from the billed report's
+  // CPT Default Units (loc_units per claim). This is the accurate "why" behind a
+  // billing swing — e.g. PHP sessions this month vs last. Empty until a billed
+  // report with CPT units has been imported (then no made-up reason is shown).
+  const LOC_ORDER = ["PHP", "IOP", "OP"];
+  const locSessions = (key: string, when: Date) => {
+    const acc: Record<string, number> = {};
+    for (const b of billedInMonth(key, when)) {
+      const lu = b.loc_units;
+      if (!lu) continue;
+      for (const [f, u] of Object.entries(lu)) acc[f] = (acc[f] ?? 0) + (Number(u) || 0);
+    }
+    return acc;
+  };
+  const curLoc = locSessions(viewMonthKey, viewMonth);
+  const priorLoc = locSessions(priorMonthKey, priorMonth);
+  const locKeys = [
+    ...LOC_ORDER.filter((f) => f in curLoc || f in priorLoc),
+    ...Object.keys({ ...curLoc, ...priorLoc }).filter((f) => !LOC_ORDER.includes(f)),
+  ];
+  const locRows = locKeys.map((f) => ({
+    loc: f,
+    cur: curLoc[f] ?? 0,
+    prior: priorLoc[f] ?? 0,
+    delta: (curLoc[f] ?? 0) - (priorLoc[f] ?? 0),
+  }));
+
+  // Accurate, non-generic billing-trend note. Built ONLY from real numbers:
+  // states the dollar change, and names the biggest level-of-care driver only
+  // when the CPT-unit data actually shows one. Never a canned/guessed message.
+  const billedDelta = billedThisMonth - billedLastMonth;
+  const billedPct = billedLastMonth > 0 ? Math.round((billedDelta / billedLastMonth) * 100) : null;
+  let billingNote = "";
+  if (billedThisMonth > 0 || billedLastMonth > 0) {
+    if (billedLastMonth <= 0) {
+      billingNote = `No billing on file for ${priorMonthLabel} to compare against.`;
+    } else if (billedDelta === 0) {
+      billingNote = `Billing is unchanged from ${priorMonthLabel}.`;
+    } else {
+      const dir = billedDelta < 0 ? "down" : "up";
+      const movers = locRows
+        .filter((r) => (billedDelta < 0 ? r.delta < 0 : r.delta > 0))
+        .sort((a, b) => (billedDelta < 0 ? a.delta - b.delta : b.delta - a.delta));
+      const top = movers[0];
+      const stem = `Billing is ${dir} ${money(Math.abs(billedDelta))} (${Math.abs(
+        billedPct ?? 0
+      )}%) vs ${priorMonthLabel}.`;
+      billingNote = top
+        ? `${stem} Biggest driver: ${top.loc} sessions ${top.cur} vs ${top.prior} last month (${
+            top.delta > 0 ? "+" : ""
+          }${top.delta}).`
+        : stem;
+    }
+  }
 
   // Months available to look back at (from payment + billed dates), newest
   // first, for the month picker.
@@ -345,6 +408,64 @@ export default async function FacilityDashboard({
             />
             <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
           </section>
+
+          {/* Billing vs last month — accurate, data-only trend (no generic text) */}
+          {(billedThisMonth > 0 || billedLastMonth > 0) && (
+            <section className="card p-5">
+              <div className="mb-3 font-semibold">Billing vs last month</div>
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+                <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
+                <BigStat label={`Billed · ${priorMonthLabel}`} value={money(billedLastMonth)} />
+                <BigStat
+                  label="Change"
+                  value={`${billedDelta < 0 ? "−" : "+"}${money(Math.abs(billedDelta))}`}
+                  accent={billedDelta < 0 ? "risk" : "recovered"}
+                  sub={billedPct != null ? `${billedPct > 0 ? "+" : ""}${billedPct}%` : undefined}
+                />
+              </div>
+
+              {locRows.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-surface-muted">
+                        <th className="th">Level of care</th>
+                        <th className="th text-right">Sessions · {monthLabel}</th>
+                        <th className="th text-right">Sessions · {priorMonthLabel}</th>
+                        <th className="th text-right">Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {locRows.map((r) => (
+                        <tr key={r.loc}>
+                          <td className="td font-medium">{r.loc}</td>
+                          <td className="td text-right font-mono">{r.cur}</td>
+                          <td className="td text-right font-mono text-surface-muted">{r.prior}</td>
+                          <td
+                            className={`td text-right font-mono ${
+                              r.delta < 0 ? "text-risk" : r.delta > 0 ? "text-recovered" : "text-surface-muted"
+                            }`}
+                          >
+                            {r.delta > 0 ? "+" : ""}
+                            {r.delta}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {billingNote && (
+                <p className="mt-3 text-sm text-surface-ink">{billingNote}</p>
+              )}
+              {locRows.length === 0 && (
+                <p className="mt-2 text-xs text-surface-muted">
+                  Import a billed report with CPT units to see the level-of-care breakdown behind this change.
+                </p>
+              )}
+            </section>
+          )}
 
           {/* Money Outlook — why revenue is improving or declining */}
           <MoneyOutlookPanel outlooks={outlooks} />
