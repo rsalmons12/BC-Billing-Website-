@@ -89,11 +89,23 @@ export default async function OverviewPage() {
     repricingData,
   ] = await Promise.all([
     supabase.from("facilities").select("*").order("name"),
-    selectAll<Claim>((f, t) =>
-      supabase.from("claims").select("*").eq("present", true).range(f, t)
+    // Only the columns the Overview actually uses — much smaller payload than
+    // select("*") over every open claim, so the page loads far faster.
+    selectAll<Claim>(
+      (f, t) =>
+        supabase
+          .from("claims")
+          .select(
+            "claim_id,facility_id,patient_name,member_id,dos_from,dos_to,charge_amount,balance,age_days,claim_status"
+          )
+          .eq("present", true)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .range(f, t) as any
     ),
-    selectAll<AuthIssue>((f, t) =>
-      supabase.from("auth_issues").select("*").neq("status", "Completed").range(f, t)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    selectAll<AuthIssue>(
+      (f, t) =>
+        supabase.from("auth_issues").select("facility_id").neq("status", "Completed").range(f, t) as any
     ),
     safe(
       selectAll<PayRow>((f, t) =>
