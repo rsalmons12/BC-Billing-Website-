@@ -33,16 +33,6 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let admin;
-  try {
-    admin = createAdminClient();
-  } catch {
-    return NextResponse.json(
-      { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
-      { status: 503 }
-    );
-  }
-
   let body: { test?: boolean } = {};
   try {
     body = await request.json();
@@ -53,8 +43,9 @@ export async function POST(request: Request) {
   const date = easternToday();
 
   // FACILITY login: email THIS facility login its own recap(s) to its own
-  // session email. This is the facility-side "send me a test" — it never
-  // touches other facilities and doesn't depend on the admin email lookup.
+  // session email. Reads through the caller's OWN session (RLS scopes it to
+  // their facility), so this works even before the service-role key is set — a
+  // clean way to verify the facility experience end to end.
   if (me.role === "facility") {
     const to = [user.email ?? ""].filter((e) => e.includes("@"));
     if (to.length === 0)
@@ -70,7 +61,8 @@ export async function POST(request: Request) {
     );
     if (facilityIds.length === 0)
       return NextResponse.json({ error: "Your login isn't linked to a facility yet." }, { status: 400 });
-    const mine = await computeFacilityRecaps(admin, { facilityIds });
+    // Session client (not admin): RLS already limits reads to this facility.
+    const mine = await computeFacilityRecaps(supabase, { facilityIds });
     if (mine.length === 0)
       return NextResponse.json({ error: "No facility data found for your login." }, { status: 400 });
     const html = mine
@@ -82,6 +74,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
     }
     return NextResponse.json({ ok: true, facilities: mine.length, recipients: to.length });
+  }
+
+  // Everything below is the management side and DOES need the service-role
+  // reader (it spans every facility and reads other users' login emails).
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return NextResponse.json(
+      { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
+      { status: 503 }
+    );
   }
 
   const recaps = await computeFacilityRecaps(admin);
