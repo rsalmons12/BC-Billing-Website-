@@ -5,7 +5,10 @@ import { SUPABASE_URL } from "./config";
 // client component or expose the key to the browser. Used solely by the admin
 // "invite/create user" route.
 export function createAdminClient() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Strip ALL whitespace: service keys never contain any, and a stray space or
+  // newline from a copy/paste into the hosting dashboard otherwise produces an
+  // "invalid header value" error.
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").replace(/\s+/g, "");
   if (!key) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
   }
