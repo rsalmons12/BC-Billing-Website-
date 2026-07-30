@@ -168,6 +168,10 @@ type BilledRow = {
   facility_id: string | null;
   total_amount: number | null;
   period: string | null;
+  // Day counts per level of care for this claim, from the billed report's CPT
+  // Default Units (e.g. {PHP:3}). The most direct level-of-care volume signal.
+  loc_units?: Record<string, number> | null;
+  patient_name?: string | null;
 };
 type ClaimRow = { facility_id: string | null; balance: number | null; age_days: number | null };
 type AuthRow = {
@@ -460,8 +464,51 @@ function buildOne(
     }
   }
 
-  // Merge: prefer CPT counts per family; fall back to census GN where no CPT.
-  const locBilling = LOC_ORDER.filter((l) => cptAgg.has(l) || locAgg.has(l)).map((loc) => {
+  // Day counts straight from the billed report's CPT Default Units (the most
+  // direct signal): a claim's loc_units {PHP:3} adds 3 PHP days that month.
+  // Bucketed by the billed month (period). One patient with any days that month
+  // is one client for that level of care.
+  const billedAgg = new Map<
+    string,
+    { curSvc: number; priorSvc: number; curCl: Set<string>; priorCl: Set<string> }
+  >();
+  for (const b of bill) {
+    const lu = b.loc_units;
+    if (!lu) continue;
+    const m = monthOf(b.period);
+    if (m !== cur && m !== prior) continue;
+    const patient = String(b.patient_name ?? "").trim().toLowerCase();
+    for (const [fam, units] of Object.entries(lu)) {
+      const u = num(units);
+      if (!fam || u <= 0) continue;
+      if (!billedAgg.has(fam))
+        billedAgg.set(fam, { curSvc: 0, priorSvc: 0, curCl: new Set(), priorCl: new Set() });
+      const e = billedAgg.get(fam)!;
+      if (m === cur) {
+        e.curSvc += u;
+        if (patient) e.curCl.add(patient);
+      } else {
+        e.priorSvc += u;
+        if (patient) e.priorCl.add(patient);
+      }
+    }
+  }
+
+  // Merge, per level of care: prefer billed CPT units → then payment CPT lines →
+  // then census GN sessions.
+  const locBilling = LOC_ORDER.filter(
+    (l) => billedAgg.has(l) || cptAgg.has(l) || locAgg.has(l)
+  ).map((loc) => {
+    const b = billedAgg.get(loc);
+    if (b) {
+      return {
+        loc,
+        curServices: b.curSvc,
+        priorServices: b.priorSvc,
+        curClients: b.curCl.size,
+        priorClients: b.priorCl.size,
+      };
+    }
     const c = cptAgg.get(loc);
     if (c) {
       return {

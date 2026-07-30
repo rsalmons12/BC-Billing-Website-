@@ -400,11 +400,37 @@ export interface BilledRow {
   payer_name: string;
   payer_type: string;
   period: string; // YYYY-MM the report covers (from the "Claim Billed Date is between…" line)
+  // Days billed per level of care, summed from the report's "CPT Default Units"
+  // column by CPT code across all of a claim's charge lines. e.g. S0201 x3 →
+  // {PHP:3}. Money stays one row per claim; only these counts come from units.
+  loc_units: Record<string, number> | null;
+}
+
+// Billing CPT codes → level-of-care family (day counts): S0201/H0035 = PHP,
+// H0015/S9480 = IOP, 90853 = OP. Other codes (individual therapy, assessments)
+// are not level-of-care days and are ignored for the count.
+const BILLED_CPT_LOC: Record<string, string> = {
+  S0201: "PHP",
+  H0035: "PHP",
+  H0015: "IOP",
+  S9480: "IOP",
+  "90853": "OP",
+};
+function billedCptFamily(cpt: unknown): string {
+  const m = String(cpt ?? "").trim().toUpperCase().match(/[A-Z]?\d{3,5}[A-Z]?/);
+  return m ? BILLED_CPT_LOC[m[0]] ?? "" : "";
 }
 
 export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
   const wb = XLSX.read(data, { type: "array", cellDates: true });
-  const out: (BilledRow & { facility_name: string })[] = [];
+  // Raw per-CPT-line rows (one claim can span several); folded into per-claim
+  // rows with loc_units below.
+  type RawLine = Omit<BilledRow, "loc_units"> & {
+    facility_name: string;
+    cpt_code: string;
+    cpt_units: number;
+  };
+  const out: RawLine[] = [];
   const sheets: string[] = [];
 
   for (const name of wb.SheetNames) {
@@ -431,6 +457,8 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
     const col = {
       office: findCol(h, [/office name/, /^office$/, /facility/]),
       claim: findCol(h, [/^claim id$|claim id/]),
+      cpt: findCol(h, [/charge cpt code|^cpt code|^cpt$/]),
+      units: findCol(h, [/cpt default units|default units|^units/]),
       times: findCol(h, [/times billed|cntall/]),
       from: findCol(h, [/from date/]),
       to: findCol(h, [/to date/]),
@@ -458,6 +486,10 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
       out.push({
         facility_name: office || bannerFacility,
         claim_id: claim,
+        // The CPT code + its day units on THIS charge line (a claim can have
+        // several). Grouped into loc_units per claim below.
+        cpt_code: col.cpt >= 0 ? toStr(r[col.cpt]) : "",
+        cpt_units: col.units >= 0 ? toNum(r[col.units]) ?? 0 : 0,
         times_billed: col.times >= 0 ? toNum(r[col.times]) : null,
         from_date: col.from >= 0 ? toDateStr(r[col.from]) : "",
         to_date: col.to >= 0 ? toDateStr(r[col.to]) : "",
@@ -476,11 +508,30 @@ export function parseBilled(data: ArrayBuffer): TrackerParseResult<BilledRow> {
     if (added) sheets.push(name);
   }
 
-  // De-dupe within the file by claim id + month (a claim billed in two months
-  // stays as two rows so months accumulate).
+  // Collapse to one row per claim + month for the MONEY (Claim Total / Balance
+  // are per-claim, repeated on every CPT line — summing would multi-count). But
+  // the CPT DAY UNITS must be summed across a claim's lines by level of care,
+  // so a claim with S0201 x3 keeps {PHP:3}. First line of a claim carries its
+  // money; every line's units fold into that claim's loc_units.
   const byId = new Map<string, BilledRow & { facility_name: string }>();
-  for (const r of out) byId.set(`${r.claim_id}|${r.period}`, r);
-  const deduped = [...byId.values()];
+  for (const raw of out) {
+    const key = `${raw.claim_id}|${raw.period}`;
+    const { cpt_code, cpt_units, ...rest } = raw;
+    let g = byId.get(key);
+    if (!g) {
+      g = { ...rest, loc_units: {} };
+      byId.set(key, g);
+    }
+    const fam = billedCptFamily(cpt_code);
+    const u = typeof cpt_units === "number" ? cpt_units : 0;
+    if (fam && u > 0) g.loc_units![fam] = (g.loc_units![fam] ?? 0) + u;
+  }
+  const deduped = [...byId.values()].map((g) => ({
+    ...g,
+    // null (not {}) when a report has no level-of-care day codes, so the column
+    // stays clean.
+    loc_units: g.loc_units && Object.keys(g.loc_units).length ? g.loc_units : null,
+  }));
 
   return {
     rows: deduped,

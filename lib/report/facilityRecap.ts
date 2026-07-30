@@ -56,6 +56,8 @@ type BilledRow = {
   total_amount: number | null;
   period: string | null;
   entered_date: string | null;
+  loc_units: Record<string, number> | null;
+  patient_name: string | null;
 };
 type NegRow = {
   facility_id: string | null;
@@ -138,7 +140,11 @@ export async function computeFacilityRecaps(
         )
       ).catch(() => []),
       pageAll<BilledRow>(client, (a) =>
-        scopeIn(a.from("billed_claims").select("facility_id,total_amount,period,entered_date"))
+        scopeIn(
+          a
+            .from("billed_claims")
+            .select("facility_id,total_amount,period,entered_date,loc_units,patient_name")
+        )
       ).catch(() => []),
       pageAll<NegRow>(client, (a) =>
         scopeIn(a.from("negotiations").select("facility_id,negotiated_amount,status,date_signed"))
@@ -166,7 +172,13 @@ export async function computeFacilityRecaps(
   const outlooks = computeOutlooks({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
     payments,
-    billed: billed.map((b) => ({ facility_id: b.facility_id, total_amount: b.total_amount, period: b.period })),
+    billed: billed.map((b) => ({
+      facility_id: b.facility_id,
+      total_amount: b.total_amount,
+      period: b.period,
+      loc_units: b.loc_units,
+      patient_name: b.patient_name,
+    })),
     claims: claims.map((c) => ({ facility_id: c.facility_id, balance: c.balance, age_days: c.age_days })),
     auths,
     census,
