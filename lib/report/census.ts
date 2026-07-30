@@ -62,21 +62,25 @@ export function censusWeekLabel(iso: string | null): string {
 
 export interface CensusWeekSummary {
   facilityId: string;
-  week: string | null; // ISO week_start of the most recent week
+  week: string | null; // ISO week_start of the reported (prior) week
   weekLabel: string;
-  patients: number; // current census — patients on the most recent week
+  patients: number; // census — patients on the reported week
   missed: Record<string, number>; // GN / CM / ID missed sessions
   missedGroups: number; // missed GN specifically
   missedRev: number; // revenue lost to missed GN
   expected: number; // expected revenue for the week
 }
 
-// Summarize ONE facility's most-recent census week from its rows.
+// Summarize ONE facility's PRIOR census week (the last completed week — the
+// current week is usually still in progress). Falls back to the only week when
+// there's no prior week yet.
 export function facilityCensusWeek(facilityId: string, rows: CensusLike[]): CensusWeekSummary | null {
   const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
   if (fRows.length === 0) return null;
-  // Most current week = the latest week_start present.
-  const week = fRows.map((r) => r.week_start!).sort().slice(-1)[0];
+  // Distinct weeks, oldest→newest. Prior week = the one before the most recent;
+  // if only one week exists, use it (nothing prior to fall back to).
+  const distinctWeeks = Array.from(new Set(fRows.map((r) => r.week_start!))).sort();
+  const week = distinctWeeks[distinctWeeks.length - 2] ?? distinctWeeks[distinctWeeks.length - 1];
   const weekRows = fRows.filter((r) => r.week_start === week);
 
   const missed: Record<string, number> = {};
