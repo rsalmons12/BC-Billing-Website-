@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { easternToday, sendResend } from "@/lib/report/eodSummary";
+import { easternToday, sendResend, managementEmails } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
   facilityRecipients,
@@ -116,8 +116,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, preview: true, facilities: recaps.length, recipients: to.length });
   }
 
-  // REAL: each facility gets its own recap to its own login email.
-  const recipients = await facilityRecipients(admin);
+  // REAL: each facility gets its own recap to its own login email, with
+  // management BCC'd on every one.
+  const [recipients, mgmt] = await Promise.all([
+    facilityRecipients(admin),
+    managementEmails(admin),
+  ]);
   let sent = 0;
   const skipped: string[] = [];
   for (const r of recaps) {
@@ -127,11 +131,11 @@ export async function POST(request: Request) {
       continue;
     }
     try {
-      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date));
+      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), mgmt);
       sent++;
     } catch {
       skipped.push(r.name);
     }
   }
-  return NextResponse.json({ ok: true, sent, skipped });
+  return NextResponse.json({ ok: true, sent, skipped, managementCopied: mgmt.length });
 }

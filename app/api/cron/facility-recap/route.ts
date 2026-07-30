@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { easternToday, easternHour, sendResend } from "@/lib/report/eodSummary";
+import { easternToday, easternHour, sendResend, managementEmails } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
   facilityRecipients,
@@ -35,9 +35,10 @@ export async function GET(request: Request) {
   }
 
   const date = easternToday();
-  const [recaps, recipients] = await Promise.all([
+  const [recaps, recipients, mgmt] = await Promise.all([
     computeFacilityRecaps(admin),
     facilityRecipients(admin),
+    managementEmails(admin), // management is BCC'd on every facility recap
   ]);
 
   let sent = 0;
@@ -49,11 +50,11 @@ export async function GET(request: Request) {
       continue;
     }
     try {
-      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date));
+      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), mgmt);
       sent++;
     } catch {
       skipped.push(r.name);
     }
   }
-  return NextResponse.json({ ok: true, sent, skipped });
+  return NextResponse.json({ ok: true, sent, skipped, managementCopied: mgmt.length });
 }
