@@ -70,10 +70,17 @@ export interface FacilityRecap {
   facilityId: string;
   name: string;
   monthLabel: string;
+  priorMonthLabel: string;
   totalAR: number;
   expectedRevenue: number;
   collectedThisMonth: number;
   billedThisMonth: number;
+  billedLastMonth: number;
+  billedDelta: number;
+  billedPct: number | null;
+  // PHP/IOP/OP sessions this month vs last, from billed CPT units.
+  locRows: { loc: string; cur: number; prior: number; delta: number }[];
+  billingNote: string; // accurate, data-only; "" when nothing to compare
   riskAR: number;
   arRows: [string, number][];
   payRows: [string, number][];
@@ -114,6 +121,9 @@ export async function computeFacilityRecaps(
   const now = opts?.now ?? new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const prior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const priorKey = `${prior.getFullYear()}-${String(prior.getMonth() + 1).padStart(2, "0")}`;
+  const priorMonthLabel = prior.toLocaleString("en-US", { month: "long", year: "numeric" });
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
   const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
 
@@ -215,13 +225,64 @@ export async function computeFacilityRecaps(
       payByPayer.set(src, (payByPayer.get(src) ?? 0) + (p.paid_amount ?? 0));
     }
 
-    const billedThisMonth = billed
-      .filter(
+    const billedInMonth = (key: string, when: Date) =>
+      billed.filter(
         (b) =>
           b.facility_id === f.id &&
-          (b.period ? b.period === monthKey : isSameMonth(b.entered_date, now))
-      )
-      .reduce((s, b) => s + (b.total_amount ?? 0), 0);
+          (b.period ? b.period === key : isSameMonth(b.entered_date, when))
+      );
+    const billedThisMonth = billedInMonth(monthKey, now).reduce((s, b) => s + (b.total_amount ?? 0), 0);
+    const billedLastMonth = billedInMonth(priorKey, prior).reduce((s, b) => s + (b.total_amount ?? 0), 0);
+
+    // Level-of-care sessions billed each month, from the billed CPT units — the
+    // accurate "why" behind a billing swing (PHP/IOP/OP this month vs last).
+    const locSessions = (key: string, when: Date) => {
+      const acc: Record<string, number> = {};
+      for (const b of billedInMonth(key, when)) {
+        if (!b.loc_units) continue;
+        for (const [fam, u] of Object.entries(b.loc_units)) acc[fam] = (acc[fam] ?? 0) + (Number(u) || 0);
+      }
+      return acc;
+    };
+    const curLoc = locSessions(monthKey, now);
+    const priorLoc = locSessions(priorKey, prior);
+    const LOC_ORDER = ["PHP", "IOP", "OP"];
+    const locKeys = [
+      ...LOC_ORDER.filter((x) => x in curLoc || x in priorLoc),
+      ...Object.keys({ ...curLoc, ...priorLoc }).filter((x) => !LOC_ORDER.includes(x)),
+    ];
+    const locRows = locKeys.map((loc) => ({
+      loc,
+      cur: curLoc[loc] ?? 0,
+      prior: priorLoc[loc] ?? 0,
+      delta: (curLoc[loc] ?? 0) - (priorLoc[loc] ?? 0),
+    }));
+
+    // Accurate, data-only trend note (no generic/guessed text).
+    const billedDelta = billedThisMonth - billedLastMonth;
+    const billedPct = billedLastMonth > 0 ? Math.round((billedDelta / billedLastMonth) * 100) : null;
+    let billingNote = "";
+    if (billedThisMonth > 0 || billedLastMonth > 0) {
+      if (billedLastMonth <= 0) {
+        billingNote = `No billing on file for ${priorMonthLabel} to compare against.`;
+      } else if (billedDelta === 0) {
+        billingNote = `Billing is unchanged from ${priorMonthLabel}.`;
+      } else {
+        const dir = billedDelta < 0 ? "down" : "up";
+        const movers = locRows
+          .filter((r) => (billedDelta < 0 ? r.delta < 0 : r.delta > 0))
+          .sort((a, b) => (billedDelta < 0 ? a.delta - b.delta : b.delta - a.delta));
+        const top = movers[0];
+        const stem = `Billing is ${dir} ${money(Math.abs(billedDelta))} (${Math.abs(
+          billedPct ?? 0
+        )}%) vs ${priorMonthLabel}.`;
+        billingNote = top
+          ? `${stem} Biggest driver: ${top.loc} sessions ${top.cur} vs ${top.prior} last month (${
+              top.delta > 0 ? "+" : ""
+            }${top.delta}).`
+          : stem;
+      }
+    }
 
     const approved = negs.filter(
       (n) => n.facility_id === f.id && /approv|signed/i.test(n.status || "")
@@ -242,10 +303,16 @@ export async function computeFacilityRecaps(
       facilityId: f.id,
       name: f.short_name || f.name,
       monthLabel,
+      priorMonthLabel,
       totalAR,
       expectedRevenue: totalAR * EXPECTED_RATE,
       collectedThisMonth,
       billedThisMonth,
+      billedLastMonth,
+      billedDelta,
+      billedPct,
+      locRows,
+      billingNote,
       riskAR,
       arRows: Array.from(arByPayer.entries()).sort((a, b) => b[1] - a[1]),
       payRows: Array.from(payByPayer.entries())
@@ -365,6 +432,47 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     )
     .join("");
 
+  // "Billing vs last month" — accurate, data-only (no generic text).
+  const billLocRows = r.locRows
+    .map((l) => {
+      const c = l.delta < 0 ? "#b00020" : l.delta > 0 ? "#137333" : "#888";
+      return `<tr>
+        <td style="padding:3px 8px;border-bottom:1px solid #eee">${l.loc}</td>
+        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.cur}</td>
+        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${l.prior}</td>
+        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:${c}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
+      </tr>`;
+    })
+    .join("");
+  const billingBlock =
+    r.billedThisMonth > 0 || r.billedLastMonth > 0
+      ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px">
+          <div style="font-weight:700;margin-bottom:6px">Billing vs last month</div>
+          <table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
+            ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), "#222")}
+            ${statTile(`Billed · ${r.priorMonthLabel}`, money(r.billedLastMonth), "#222")}
+            ${statTile(
+              "Change",
+              `${r.billedDelta < 0 ? "−" : "+"}${money(Math.abs(r.billedDelta))}`,
+              r.billedDelta < 0 ? "#b00020" : "#137333",
+              r.billedPct != null ? `${r.billedPct > 0 ? "+" : ""}${r.billedPct}%` : undefined
+            )}
+          </tr></table>
+          ${
+            billLocRows
+              ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:6px">
+                  <thead><tr style="text-align:left;color:#888">
+                    <th style="padding:3px 8px">Level of care</th>
+                    <th style="padding:3px 8px;text-align:right">Sessions · ${r.monthLabel}</th>
+                    <th style="padding:3px 8px;text-align:right">Sessions · ${r.priorMonthLabel}</th>
+                    <th style="padding:3px 8px;text-align:right">Change</th>
+                  </tr></thead><tbody>${billLocRows}</tbody></table>`
+              : ""
+          }
+          ${r.billingNote ? `<div style="margin-top:8px;color:#333">${r.billingNote}</div>` : ""}
+        </div>`
+      : "";
+
   return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6">
     <h2 style="margin:0 0 2px">${r.name} — Daily Recap</h2>
     <p style="margin:0 0 16px;color:#555">${nice}</p>
@@ -377,6 +485,8 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
         ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), "#222")}
       </tr>
     </table>
+
+    ${billingBlock}
 
     ${
       o
