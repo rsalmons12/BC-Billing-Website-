@@ -12,6 +12,7 @@ create table if not exists billed_claims (
   total_amount numeric, balance numeric,
   patient_id text, patient_name text,
   payer_name text, payer_type text,
+  loc_units jsonb,   -- {PHP:n, IOP:n, OP:n} summed from CPT Default Units by code
   updated_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

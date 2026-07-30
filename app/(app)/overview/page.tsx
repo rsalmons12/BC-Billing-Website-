@@ -37,7 +37,13 @@ type PayRow = {
   dos_from: string | null;
   patient_name: string | null;
 };
-type BilledRow = { facility_id: string | null; total_amount: number | null; period: string | null };
+type BilledRow = {
+  facility_id: string | null;
+  total_amount: number | null;
+  period: string | null;
+  loc_units: Record<string, number> | null;
+  patient_name: string | null;
+};
 type AuthRow = {
   facility_id: string | null;
   discharged: boolean | null;
@@ -99,7 +105,10 @@ export default async function OverviewPage() {
     ),
     safe(
       selectAll<BilledRow>((f, t) =>
-        supabase.from("billed_claims").select("facility_id,total_amount,period").range(f, t)
+        supabase
+          .from("billed_claims")
+          .select("facility_id,total_amount,period,loc_units,patient_name")
+          .range(f, t)
       )
     ),
     safe(
