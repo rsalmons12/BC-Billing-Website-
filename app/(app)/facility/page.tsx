@@ -170,8 +170,8 @@ export default async function FacilityDashboard({
   const negotiations = scoped(allNegotiations);
   const billed = scoped(allBilled);
 
-  // Current-week census for the facilities in view (patients, missed groups,
-  // missed revenue) — most recent week per facility.
+  // Prior-week census for the facilities in view (patients, missed groups,
+  // missed revenue) — last completed week per facility.
   const censusFacilityIds =
     selectedId === "all" ? facilities.map((f) => f.id) : [selectedId];
   const censusSummaries = censusByFacility(censusFacilityIds, allCensus);

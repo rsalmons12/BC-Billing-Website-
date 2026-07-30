@@ -1,9 +1,9 @@
 import { money } from "@/lib/format";
 import type { CensusWeekSummary } from "@/lib/report/census";
 
-// Current-week census per facility on the Overview: patients (current census),
-// missed groups (GN), and missed revenue — always the most recent week, with
-// the week shown per facility.
+// Prior-week census per facility on the Overview: patients (census), missed
+// groups (GN), and missed revenue — always the last completed (prior) week,
+// with the week shown per facility.
 export default function CensusPanel({
   summaries,
   facName,
@@ -26,8 +26,8 @@ export default function CensusPanel({
   return (
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-5 py-3">
-        <span className="font-semibold">Facility Census · current week</span>
-        <span className="text-xs text-surface-muted">Most recent week per facility</span>
+        <span className="font-semibold">Facility Census · prior week</span>
+        <span className="text-xs text-surface-muted">Last completed week per facility</span>
       </div>
       <div className="scroll-x overflow-auto">
         <table className="w-full text-sm">
@@ -35,7 +35,7 @@ export default function CensusPanel({
             <tr>
               <th className="th">Facility</th>
               <th className="th">Week</th>
-              <th className="th text-right">Current Census (Patients)</th>
+              <th className="th text-right">Census (Patients)</th>
               <th className="th text-right">Missed Groups</th>
               <th className="th text-right">Missed Revenue</th>
             </tr>
@@ -66,7 +66,7 @@ export default function CensusPanel({
           <tfoot>
             <tr className="border-t border-surface-border bg-surface font-semibold">
               <td className="td">Network total</td>
-              <td className="td text-xs text-surface-muted">current week</td>
+              <td className="td text-xs text-surface-muted">prior week</td>
               <td className="td text-right font-mono">{tot.patients}</td>
               <td className="td text-right text-risk">{tot.missedGroups}</td>
               <td className="td text-right font-mono text-risk">{money(tot.missedRev)}</td>
