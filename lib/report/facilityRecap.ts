@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
+import { facilityCensusWeek, type CensusWeekSummary } from "./census";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -89,6 +90,7 @@ export interface FacilityRecap {
   negDueSoon: number;
   approvedNegCount: number;
   outlook: FacilityOutlook | null;
+  census: CensusWeekSummary | null; // prior week: patients, missed groups, missed rev
 }
 
 // Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
@@ -323,6 +325,7 @@ export async function computeFacilityRecaps(
       negDueSoon,
       approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
+      census: facilityCensusWeek(f.id, census),
     };
   });
 }
@@ -516,6 +519,19 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
                 : ""
             }
             <div style="color:#666;margin-top:8px">🔮 ${o.forecast}</div>
+          </div>`
+        : ""
+    }
+
+    ${
+      r.census
+        ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px">
+            <div style="font-weight:700;margin-bottom:6px">Census · ${r.census.weekLabel} (prior week)</div>
+            <table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
+              ${statTile("Census (Patients)", String(r.census.patients), "#222")}
+              ${statTile("Missed Groups", String(r.census.missedGroups), r.census.missedGroups > 0 ? "#b00020" : "#137333")}
+              ${statTile("Missed Revenue", money(r.census.missedRev), r.census.missedRev > 0 ? "#b00020" : "#137333")}
+            </tr></table>
           </div>`
         : ""
     }
