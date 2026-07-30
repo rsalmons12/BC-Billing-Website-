@@ -5,6 +5,7 @@ import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
+import FacilityRecapButtons from "@/components/overview/FacilityRecapButtons";
 import { money } from "@/lib/format";
 import { isExcludedMember } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -243,6 +244,14 @@ export default async function OverviewPage() {
       <Header profile={profile} email={email} subtitle="Network Overview" />
       <main className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-7xl space-y-6">
+          {/* Facility daily-recap controls (also runs automatically 5:30 PM ET) */}
+          <section className="card flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+            <div className="text-sm text-surface-muted">
+              Facilities get this recap automatically every day at 5:30 PM ET.
+            </div>
+            <FacilityRecapButtons />
+          </section>
+
           {/* Network totals */}
           <section className="grid grid-cols-2 gap-4 md:grid-cols-6">
             <Stat label="Charged" value={money(totals.charged)} />
