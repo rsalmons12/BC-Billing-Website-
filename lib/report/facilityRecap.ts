@@ -62,23 +62,31 @@ const isPriority = (c: Claim) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD;
 const isRisk65 = (c: Claim) =>
   (c.age_days ?? 0) > RISK_AGE_THRESHOLD && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD;
 
-// Build a recap object per facility (mirrors the Overview aggregation).
-export async function computeFacilityRecaps(admin: Admin): Promise<FacilityRecap[]> {
-  const [facilities, claimsRaw, issues, payments, billed, auths, census, repricing] =
+// Build a recap object per facility (mirrors the Overview aggregation). Pass
+// facilityIds to scope to specific facilities (e.g. a facility login's own).
+export async function computeFacilityRecaps(
+  admin: Admin,
+  opts?: { facilityIds?: string[] }
+): Promise<FacilityRecap[]> {
+  const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
+  const scopeIn = (q: any, col = "facility_id") => (only ? q.in(col, Array.from(only)) : q);
+  const [facilitiesAll, claimsRaw, issues, payments, billed, auths, census, repricing] =
     await Promise.all([
       pageAll<{ id: string; name: string; short_name: string | null }>(admin, (a) =>
         a.from("facilities").select("id,name,short_name").order("name")
       ),
       pageAll<Claim>(admin, (a) =>
-        a
-          .from("claims")
-          .select(
-            "claim_id,facility_id,patient_name,member_id,dos_from,charge_amount,balance,age_days,claim_status"
-          )
-          .eq("present", true)
+        scopeIn(
+          a
+            .from("claims")
+            .select(
+              "claim_id,facility_id,patient_name,member_id,dos_from,charge_amount,balance,age_days,claim_status"
+            )
+            .eq("present", true)
+        )
       ),
       pageAll<{ facility_id: string | null }>(admin, (a) =>
-        a.from("auth_issues").select("facility_id").neq("status", "Completed")
+        scopeIn(a.from("auth_issues").select("facility_id").neq("status", "Completed"))
       ),
       pageAll<any>(admin, (a) =>
         a
@@ -105,6 +113,7 @@ export async function computeFacilityRecaps(admin: Admin): Promise<FacilityRecap
       ).catch(() => []),
     ]);
 
+  const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
   const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
 
   const outlooks = computeOutlooks({
