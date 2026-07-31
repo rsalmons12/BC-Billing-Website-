@@ -7,6 +7,11 @@ import { RECORD_STATUS_OPTIONS, type Facility } from "@/lib/types";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
+// Extra status that pushes the claim back to Collections (matched by patient +
+// DOS), carries the note over, and removes the record from this tab.
+const BACK_TO_COLLECTIONS = "Back to Collections";
+const MEDREC_STATUS_OPTIONS = [...RECORD_STATUS_OPTIONS, BACK_TO_COLLECTIONS];
+
 // Every record status gets its own count tile, plus a "No status" tile for
 // rows that haven't been marked yet.
 const STATUS_TILES: { key: string; label: string; accent?: "recovered" | "gold" | "risk" | "secured" }[] = [
@@ -55,17 +60,34 @@ const config: TrackerConfig = {
   table: "medical_records",
   defaultSortKey: "patient_name",
   statusKey: "record_status",
-  statusOptions: RECORD_STATUS_OPTIONS,
+  statusOptions: MEDREC_STATUS_OPTIONS,
   searchKeys: ["patient_name", "payer", "dcn", "record_status", "claim_status"],
   parse: (buf) => parseMedicalRecords(buf),
   renderSummary,
+  // Selecting "Back to Collections" pushes the claim + note back to Collections
+  // and removes the row here.
+  actionStatus: {
+    value: BACK_TO_COLLECTIONS,
+    confirm:
+      "Send this record's claim back to Collections (matched by patient + date of service) and carry the note over? The record will be removed from Medical Records.",
+    run: async (row) => {
+      const res = await fetch("/api/medrec-to-collections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: `Error: ${data.error || "could not send"}` };
+      return { ok: !!data.ok, message: data.message || (data.ok ? "Sent to Collections." : "No match.") };
+    },
+  },
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", editable: true, min: "min-w-[11rem]" },
     { key: "dos_from", label: "DOS From", kind: "text", editable: true },
     { key: "dos_to", label: "DOS To", kind: "text", editable: true },
     { key: "payer", label: "Payer", kind: "text", editable: true },
     { key: "charge_amount", label: "Charge", kind: "money", editable: true },
-    { key: "record_status", label: "Record Status", kind: "select", options: RECORD_STATUS_OPTIONS, editable: true, min: "min-w-[9rem]" },
+    { key: "record_status", label: "Record Status", kind: "select", options: MEDREC_STATUS_OPTIONS, editable: true, min: "min-w-[9rem]" },
     { key: "claim_status", label: "Claim Status", kind: "text", editable: true },
     { key: "date_received", label: "Date Rec'd", kind: "text", editable: true },
     { key: "dcn", label: "DCN", kind: "text", editable: true },
