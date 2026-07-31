@@ -89,6 +89,15 @@ export interface TrackerConfig {
   // toggle and a per-row move action.
   archiveKey?: string;
   archiveLabels?: { active: string; archived: string; action: string; unaction: string };
+  // Optional: choosing this status value on a row runs a custom action instead
+  // of a normal save (e.g. "Back to Collections" pushes the claim + note back).
+  // On success the row is removed from the list.
+  actionStatus?: {
+    value: string;
+    confirm?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    run: (row: Record<string, any>) => Promise<{ ok: boolean; message: string }>;
+  };
   // Label for the add-row button (default "Add patient").
   addLabel?: string;
   // When set, rows are displayed sorted A–Z (case-insensitive) by this column,
@@ -160,6 +169,24 @@ export default function TrackerModule({
 
   const saveCell = useCallback(
     async (id: string, key: string, value: unknown) => {
+      // Special status → run a custom action (e.g. push back to Collections)
+      // and remove the row on success, rather than a normal field save.
+      const act = config.actionStatus;
+      if (act && key === config.statusKey && value === act.value) {
+        const row = rows.find((r) => r.id === id);
+        if (!row) return;
+        if (act.confirm && !confirm(act.confirm)) return;
+        setSaveState("Working…");
+        try {
+          const res = await act.run(row);
+          setSaveState(res.message);
+          if (res.ok) setRows((prev) => prev.filter((r) => r.id !== id));
+        } catch (e) {
+          setSaveState(`Error: ${e instanceof Error ? e.message : "action failed"}`);
+        }
+        setTimeout(() => setSaveState(""), 8000);
+        return;
+      }
       setRows((prev) =>
         prev.map((r) => (r.id === id ? { ...r, [key]: value } : r))
       );
@@ -171,7 +198,7 @@ export default function TrackerModule({
       setSaveState(error ? `Error: ${error.message}` : "Saved");
       if (!error) setTimeout(() => setSaveState(""), 1000);
     },
-    [supabase, config.table, userId]
+    [supabase, config.table, config.actionStatus, config.statusKey, userId, rows]
   );
 
   const addRow = useCallback(async () => {
