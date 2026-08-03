@@ -48,7 +48,52 @@ function Section({
   const [msg, setMsg] = useState("");
 
   const run = async (a: Action) => {
-    if (a.confirm && !confirm(a.confirm)) return;
+    // For the real facility send, show EXACTLY who it reaches and confirm first.
+    const isFacilityRealSend = a.url === "/api/facility-recap" && !a.body.test;
+    if (isFacilityRealSend) {
+      setBusy(true);
+      setMsg("Checking recipients…");
+      try {
+        const res = await fetch(a.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg(`Error: ${d.error || "could not check recipients"}`);
+          setBusy(false);
+          return;
+        }
+        const facs = (d.facilities ?? []) as { name: string; emails: string[] }[];
+        if (facs.length === 0) {
+          setMsg("No facility has a login email — nothing would send.");
+          setBusy(false);
+          setTimeout(() => setMsg(""), 10000);
+          return;
+        }
+        const lines = facs.map((f) => `• ${f.name} → ${f.emails.join(", ")}`).join("\n");
+        const skipped = (d.skipped ?? []) as string[];
+        if (
+          !confirm(
+            `This will email each facility ITS OWN recap to:\n\n${lines}\n\n${
+              d.managementCopied ?? 0
+            } manager(s) BCC'd.${skipped.length ? `\n\nNo login (skipped): ${skipped.join(", ")}` : ""}\n\nSend now?`
+          )
+        ) {
+          setMsg("Cancelled — nothing was sent.");
+          setBusy(false);
+          setTimeout(() => setMsg(""), 5000);
+          return;
+        }
+      } catch {
+        setMsg("Error: could not check recipients");
+        setBusy(false);
+        return;
+      }
+    } else if (a.confirm && !confirm(a.confirm)) {
+      return;
+    }
     setBusy(true);
     setMsg("Sending…");
     try {

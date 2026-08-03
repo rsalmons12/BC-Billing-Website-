@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let body: { test?: boolean } = {};
+  let body: { test?: boolean; dryRun?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -86,6 +86,32 @@ export async function POST(request: Request) {
       { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
       { status: 503 }
     );
+  }
+
+  // DRY RUN: return exactly who a real send would reach — no email sent — so the
+  // button can show the recipient list and confirm before anything goes out.
+  if (body.dryRun) {
+    const [recipients, mgmt, { data: facs }] = await Promise.all([
+      facilityRecipients(admin),
+      managementEmails(admin),
+      admin.from("facilities").select("id,name,short_name"),
+    ]);
+    const nameOf = (id: string) => {
+      const f = (facs ?? []).find((x: { id: string }) => x.id === id);
+      return f?.short_name || f?.name || id;
+    };
+    const willSend: { name: string; emails: string[] }[] = [];
+    const withRecip = new Set<string>();
+    for (const [fid, emails] of recipients) {
+      willSend.push({ name: nameOf(fid), emails });
+      withRecip.add(fid);
+    }
+    willSend.sort((a, b) => a.name.localeCompare(b.name));
+    const skipped = (facs ?? [])
+      .filter((f: { id: string }) => !withRecip.has(f.id))
+      .map((f: { name: string; short_name: string | null }) => f.short_name || f.name)
+      .sort();
+    return NextResponse.json({ ok: true, dryRun: true, facilities: willSend, skipped, managementCopied: mgmt.length });
   }
 
   const recaps = await computeFacilityRecaps(admin);
