@@ -83,10 +83,9 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     if (months.length && !months.includes(month)) setMonth(months[0]);
   }, [months, month]);
 
-  const facilityName =
-    facilities.find((f) => f.id === facilityId)?.name ||
-    facilities.find((f) => f.id === facilityId)?.short_name ||
-    "Facility";
+  const facility = facilities.find((f) => f.id === facilityId);
+  const facilityName = facility?.name || facility?.short_name || "Facility";
+  const billingRate = facility?.billing_rate ?? null;
 
   const monthPayments = payments.filter((p) => payMonth(p) === month);
   const monthBilled = billed.filter((b) => bilMonth(b) === month);
@@ -102,6 +101,8 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         billed: monthBilled,
         claims, // live AR snapshot
         negotiations,
+        billingRate, // invoice sheet = collected × rate
+        invoiceDate: new Date().toLocaleDateString("en-US"),
       });
       const blob = new Blob([buf], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -176,6 +177,27 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               <div className="font-display text-xl font-bold text-gold">{money(totalBilled)}</div>
               <div className="text-xs text-surface-muted">{monthBilled.length} claims</div>
             </div>
+          </div>
+        )}
+
+        {!loading && month && (
+          <div className="mt-3 rounded-lg border border-secured/40 bg-secured/5 p-3">
+            <div className="label">Invoice · {monthLabel(month)}</div>
+            {billingRate != null && billingRate > 0 ? (
+              <>
+                <div className="font-display text-2xl font-bold text-secured">
+                  {money(totalCollected * (billingRate / 100))}
+                </div>
+                <div className="text-xs text-surface-muted">
+                  {billingRate}% of {money(totalCollected)} collected · included as an INVOICE sheet in the bundle
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-surface-muted">
+                No billing rate set for {facilityName}. Add a <b>Bill %</b> in{" "}
+                <b>Admin → Facilities</b> to generate its invoice.
+              </div>
+            )}
           </div>
         )}
 

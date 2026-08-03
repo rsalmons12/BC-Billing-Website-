@@ -8,6 +8,7 @@ export interface Facility {
   ein: string | null;
   state: string | null;
   email: string | null;
+  billing_rate: number | null; // % of monthly collections billed to this facility
   created_at: string;
 }
 

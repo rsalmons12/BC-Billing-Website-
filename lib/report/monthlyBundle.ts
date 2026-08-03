@@ -33,6 +33,9 @@ export async function buildMonthlyBundle({
   billed,
   claims = [],
   negotiations = [],
+  billingRate = null,
+  invoiceNumber = "",
+  invoiceDate = "",
 }: {
   facilityName: string;
   monthLabel: string;
@@ -40,6 +43,9 @@ export async function buildMonthlyBundle({
   billed: BilledClaim[];
   claims?: Claim[];
   negotiations?: Negotiation[];
+  billingRate?: number | null; // % of collections billed to the facility
+  invoiceNumber?: string;
+  invoiceDate?: string;
 }): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "BC Billing";
@@ -117,6 +123,41 @@ export async function buildMonthlyBundle({
 
   const totalCollected = payments.reduce((s, p) => s + num(p.paid_amount), 0);
   const totalBilled = billed.reduce((s, b) => s + num(b.total_amount), 0);
+
+  // ===== INVOICE (fee = collected × the facility's billing rate) =====
+  if (billingRate != null && billingRate > 0) {
+    const fee = round(totalCollected * (billingRate / 100));
+    const inv = wb.addWorksheet("INVOICE");
+    title(inv, `Invoice — ${facilityName}`, 4);
+    inv.addRow([]);
+    kv(inv, "Bill To", facilityName);
+    if (invoiceNumber) kv(inv, "Invoice #", invoiceNumber);
+    if (invoiceDate) kv(inv, "Invoice Date", invoiceDate);
+    kv(inv, "Service Period", monthLabel);
+    inv.addRow([]);
+    section(inv, "Billing", 4);
+    table(
+      inv,
+      [
+        { header: "Description", key: "desc", width: 44 },
+        { header: "Collections", key: "coll", width: 18, money: true },
+        { header: "Rate", key: "rate", width: 10, pct: true },
+        { header: "Amount Due", key: "due", width: 18, money: true },
+      ],
+      [
+        {
+          desc: `Revenue cycle management fee — ${monthLabel}`,
+          coll: round(totalCollected),
+          rate: round(billingRate),
+          due: fee,
+        },
+      ],
+      { desc: "TOTAL DUE", coll: round(totalCollected), rate: round(billingRate), due: fee }
+    );
+    inv.addRow([]);
+    const note = inv.addRow([`Fee is ${billingRate}% of collections received in ${monthLabel}.`]);
+    note.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
+  }
 
   // ===== SUMMARY =====
   const sum = wb.addWorksheet("SUMMARY");

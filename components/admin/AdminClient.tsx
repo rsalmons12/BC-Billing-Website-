@@ -499,6 +499,7 @@ function FacilitiesTab({
               <th className="th">Legal name</th>
               <th className="th">Short name</th>
               <th className="th">State</th>
+              <th className="th">Bill %</th>
               <th className="th">Email (for Messages)</th>
               <th className="th"></th>
             </tr>
@@ -533,6 +534,21 @@ function FacilitiesTab({
                       save(f, { state: e.target.value })
                     }
                     className="cell-input w-16"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    defaultValue={f.billing_rate ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                      const next = v == null || isNaN(v) ? null : v;
+                      if (next !== (f.billing_rate ?? null)) save(f, { billing_rate: next });
+                    }}
+                    className="cell-input w-20"
+                    placeholder="%"
                   />
                 </td>
                 <td className="td">
