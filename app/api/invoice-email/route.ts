@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   const { data: fac } = await supabase
     .from("facilities")
-    .select("name, short_name, billing_rate")
+    .select("name, short_name, billing_rate, square_pay_url")
     .eq("id", body.facilityId)
     .maybeSingle();
   if (!fac) return NextResponse.json({ error: "Facility not found." }, { status: 404 });
@@ -228,6 +228,14 @@ export async function POST(request: Request) {
       </tbody>
     </table>
     <p style="font-size:12px;color:#777;margin-top:12px">Fee is ${rate}% of collections received in ${label}.</p>
+    ${
+      typeof fac.square_pay_url === "string" && /^https?:\/\//i.test(fac.square_pay_url.trim())
+        ? `<p style="margin:16px 0 4px">
+             <a href="${fac.square_pay_url.trim()}" style="display:inline-block;background:#006aff;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Pay via Square</a>
+           </p>
+           <p style="font-size:11px;color:#999;margin:0">Secure payment through Square.</p>`
+        : ""
+    }
     ${
       attachment
         ? `<p style="font-size:13px;color:#333;margin-top:10px">📎 The full ${label} monthly report is attached (Excel).</p>`
