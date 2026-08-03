@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let body: { facilityId?: string; month?: string; test?: boolean } = {};
+  let body: { facilityId?: string; month?: string; test?: boolean; dryRun?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -63,6 +63,44 @@ export async function POST(request: Request) {
       { error: `No billing rate set for ${fac.short_name || fac.name}. Set a Bill % in Admin → Facilities.` },
       { status: 400 }
     );
+
+  // Who WOULD receive this — internal users flagged "Invoices", never a
+  // facility. Resolve once; used by both the dry run and the real send.
+  const resolveRecipients = async (): Promise<string[]> => {
+    const admin = createAdminClient();
+    if (body.test) return [user.email ?? ""].filter((e) => e.includes("@"));
+    const { data: flagged } = await admin
+      .from("profiles")
+      .select("id, role")
+      .eq("receives_invoices", true)
+      .neq("role", "facility");
+    const ids = (flagged ?? []).map((p: { id: string }) => p.id);
+    const emails: string[] = [];
+    for (const id of ids) {
+      try {
+        const { data } = await admin.auth.admin.getUserById(id);
+        if (data?.user?.email) emails.push(data.user.email);
+      } catch {
+        /* skip */
+      }
+    }
+    return Array.from(new Set(emails));
+  };
+
+  // DRY RUN: return exactly who would receive it — no email, no report built —
+  // so the button can show the recipient list and confirm first.
+  if (body.dryRun) {
+    let recipients: string[];
+    try {
+      recipients = await resolveRecipients();
+    } catch {
+      return NextResponse.json(
+        { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
+        { status: 503 }
+      );
+    }
+    return NextResponse.json({ ok: true, dryRun: true, recipients });
+  }
 
   // Pull the facility's data for the report bundle (attached to the email).
   const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
@@ -124,40 +162,16 @@ export async function POST(request: Request) {
     /* if the bundle fails, still send the invoice email without the attachment */
   }
 
-  // Recipients: a test goes to the caller; otherwise the users flagged
-  // "receives invoices" in Admin.
-  let admin;
+  // Recipients: a test goes to the caller; otherwise the internal users flagged
+  // "Invoices" in Admin (never a facility). Same resolver as the dry run above.
+  let to: string[];
   try {
-    admin = createAdminClient();
+    to = await resolveRecipients();
   } catch {
     return NextResponse.json(
       { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
       { status: 503 }
     );
-  }
-  let to: string[];
-  if (body.test) {
-    to = [user.email ?? ""].filter((e) => e.includes("@"));
-  } else {
-    // ONLY internal users (management/staff) flagged "Invoices" — never a
-    // facility login. An invoice must never reach a facility, even if someone
-    // checks the box on a facility account by mistake.
-    const { data: flagged } = await admin
-      .from("profiles")
-      .select("id, role")
-      .eq("receives_invoices", true)
-      .neq("role", "facility");
-    const ids = (flagged ?? []).map((p: { id: string }) => p.id);
-    const emails: string[] = [];
-    for (const id of ids) {
-      try {
-        const { data } = await admin.auth.admin.getUserById(id);
-        if (data?.user?.email) emails.push(data.user.email);
-      } catch {
-        /* skip */
-      }
-    }
-    to = Array.from(new Set(emails));
   }
   if (to.length === 0)
     return NextResponse.json(
