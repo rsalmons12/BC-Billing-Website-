@@ -77,6 +77,7 @@ export interface Profile {
   job_title: string | null;
   queue_tier: string | null; // 'standard' | 'priority_100'
   receives_daily_emails: boolean | null; // false = excluded from the daily emails
+  receives_invoices: boolean | null; // true = receives facility invoice emails
   created_at: string;
 }
 

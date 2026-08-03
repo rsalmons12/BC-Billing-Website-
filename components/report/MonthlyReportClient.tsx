@@ -121,6 +121,33 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const totalCollected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
   const totalBilled = monthBilled.reduce((s, b) => s + (b.total_amount ?? 0), 0);
 
+  const [invoiceMsg, setInvoiceMsg] = useState("");
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const emailInvoice = async (test: boolean) => {
+    setInvoiceBusy(true);
+    setInvoiceMsg("Sending…");
+    try {
+      const res = await fetch("/api/invoice-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ facilityId, month, test }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setInvoiceMsg(
+        res.ok
+          ? test
+            ? "✓ Test invoice sent to you."
+            : `✓ Invoice emailed to ${data.recipients ?? 0} recipient(s).`
+          : `Error: ${data.error || "could not send"}`
+      );
+    } catch {
+      setInvoiceMsg("Error: could not send");
+    } finally {
+      setInvoiceBusy(false);
+      setTimeout(() => setInvoiceMsg(""), 10000);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <div className="card p-5">
@@ -190,6 +217,24 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                 </div>
                 <div className="text-xs text-surface-muted">
                   {billingRate}% of {money(totalCollected)} collected · included as an INVOICE sheet in the bundle
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => emailInvoice(false)}
+                    disabled={invoiceBusy}
+                    className="badge bg-secured/12 px-3 py-1.5 text-xs font-semibold text-secured hover:bg-secured/20 disabled:opacity-50"
+                    title="Email this invoice to the users marked 'Invoices' in Admin"
+                  >
+                    {invoiceBusy ? "Sending…" : "✉ Email invoice"}
+                  </button>
+                  <button
+                    onClick={() => emailInvoice(true)}
+                    disabled={invoiceBusy}
+                    className="badge bg-surface px-3 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface-card disabled:opacity-50"
+                  >
+                    Send test to me
+                  </button>
+                  {invoiceMsg && <span className="text-xs text-surface-ink">{invoiceMsg}</span>}
                 </div>
               </>
             ) : (
