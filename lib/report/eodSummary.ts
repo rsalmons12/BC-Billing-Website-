@@ -292,7 +292,8 @@ export async function sendResend(
   to: string[],
   subject: string,
   html: string,
-  bcc?: string[]
+  bcc?: string[],
+  attachments?: { filename: string; content: string }[]
 ): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) throw new Error("RESEND_API_KEY missing");
@@ -301,6 +302,7 @@ export async function sendResend(
   const cleanBcc = (bcc ?? []).filter((e) => e && !to.includes(e));
   const payload: Record<string, unknown> = { from: FROM_EMAIL, to, subject, html };
   if (cleanBcc.length) payload.bcc = cleanBcc;
+  if (attachments?.length) payload.attachments = attachments; // { filename, content: base64 }
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

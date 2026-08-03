@@ -4,7 +4,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
 import { sendResend } from "@/lib/report/eodSummary";
+import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
 import { money } from "@/lib/format";
+import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
 
 // Email a facility's monthly invoice (fee = collected × the facility's rate) to
 // the users marked "receives invoices" in Admin. Management only. Amounts are
@@ -62,25 +64,65 @@ export async function POST(request: Request) {
       { status: 400 }
     );
 
-  // Recompute collections for the month from payments (deposit → entered → period).
-  const pays = await selectAll<{
-    paid_amount: number | null;
-    deposit_date: string | null;
-    payment_entered: string | null;
-    period: string | null;
-  }>((f, t) =>
-    supabase
-      .from("payments")
-      .select("paid_amount,deposit_date,payment_entered,period")
-      .eq("facility_id", body.facilityId)
-      .range(f, t)
-  ).catch(() => []);
-  const collected = pays
-    .filter((p) => periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "") === body.month)
-    .reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+  // Pull the facility's data for the report bundle (attached to the email).
+  const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
+  const [pays, billed, claims, negotiations] = await Promise.all([
+    safe(
+      selectAll<Payment>((f, t) =>
+        supabase.from("payments").select("*").eq("facility_id", body.facilityId).range(f, t)
+      )
+    ),
+    safe(
+      selectAll<BilledClaim>((f, t) =>
+        supabase.from("billed_claims").select("*").eq("facility_id", body.facilityId).range(f, t)
+      )
+    ),
+    safe(
+      selectAll<Claim>((f, t) =>
+        supabase
+          .from("claims")
+          .select("*")
+          .eq("facility_id", body.facilityId)
+          .eq("present", true)
+          .range(f, t)
+      )
+    ),
+    safe(
+      selectAll<Negotiation>((f, t) =>
+        supabase.from("negotiations").select("*").eq("facility_id", body.facilityId).range(f, t)
+      )
+    ),
+  ]);
+
+  const payMonth = (p: Payment) => periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "");
+  const bilMonth = (b: BilledClaim) => b.period || periodOf(b.entered_date ?? "");
+  const monthPayments = pays.filter((p) => payMonth(p) === body.month);
+  const monthBilled = billed.filter((b) => bilMonth(b) === body.month);
+  const collected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
   const fee = Math.round(collected * (rate / 100) * 100) / 100;
   const facilityName = fac.short_name || fac.name;
   const label = monthLabel(body.month);
+
+  // Build the monthly report bundle (with the INVOICE sheet) to attach.
+  let attachment: { filename: string; content: string } | null = null;
+  try {
+    const buf = await buildMonthlyBundle({
+      facilityName,
+      monthLabel: label,
+      payments: monthPayments,
+      billed: monthBilled,
+      claims,
+      negotiations,
+      billingRate: rate,
+      invoiceDate: monthFull(body.month),
+    });
+    attachment = {
+      filename: `${facilityName}_${body.month}_Monthly_Report.xlsx`.replace(/[^\w.-]+/g, "_"),
+      content: Buffer.from(new Uint8Array(buf)).toString("base64"),
+    };
+  } catch {
+    /* if the bundle fails, still send the invoice email without the attachment */
+  }
 
   // Recipients: a test goes to the caller; otherwise the users flagged
   // "receives invoices" in Admin.
@@ -134,6 +176,11 @@ export async function POST(request: Request) {
       </tbody>
     </table>
     <p style="font-size:12px;color:#777;margin-top:12px">Fee is ${rate}% of collections received in ${label}.</p>
+    ${
+      attachment
+        ? `<p style="font-size:13px;color:#333;margin-top:10px">📎 The full ${label} monthly report is attached (Excel).</p>`
+        : ""
+    }
     <hr style="border:none;border-top:1px solid #ddd;margin-top:16px" />
     <p style="font-size:11px;color:#888">Automated invoice from BC Billing.</p>
   </div>`;
@@ -142,7 +189,9 @@ export async function POST(request: Request) {
     await sendResend(
       to,
       `${body.test ? "[TEST] " : ""}${monthFull(body.month)} Monthly Reporting and Invoice — ${facilityName}`,
-      html
+      html,
+      undefined,
+      attachment ? [attachment] : undefined
     );
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
