@@ -124,8 +124,47 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const [invoiceMsg, setInvoiceMsg] = useState("");
   const [invoiceBusy, setInvoiceBusy] = useState(false);
   const emailInvoice = async (test: boolean) => {
-    if (!test && !confirm(`Email ${facilityName}'s ${monthLabel(month)} invoice to the users marked "Invoices" in Admin? (Facilities never receive invoices.)`))
-      return;
+    // Real send: show EXACTLY who will receive it (never a facility) and confirm.
+    if (!test) {
+      setInvoiceBusy(true);
+      setInvoiceMsg("Checking recipients…");
+      try {
+        const res = await fetch("/api/invoice-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ facilityId, month, dryRun: true }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setInvoiceMsg(`Error: ${d.error || "could not check recipients"}`);
+          setInvoiceBusy(false);
+          return;
+        }
+        const rec = (d.recipients ?? []) as string[];
+        if (rec.length === 0) {
+          setInvoiceMsg('No one is set to receive invoices. Check "Invoices" for a user in Admin → Users.');
+          setInvoiceBusy(false);
+          setTimeout(() => setInvoiceMsg(""), 10000);
+          return;
+        }
+        if (
+          !confirm(
+            `Email ${facilityName}'s ${monthLabel(month)} invoice to:\n\n${rec
+              .map((e) => `• ${e}`)
+              .join("\n")}\n\n(Facilities are never included.)\n\nSend now?`
+          )
+        ) {
+          setInvoiceMsg("Cancelled — nothing was sent.");
+          setInvoiceBusy(false);
+          setTimeout(() => setInvoiceMsg(""), 5000);
+          return;
+        }
+      } catch {
+        setInvoiceMsg("Error: could not check recipients");
+        setInvoiceBusy(false);
+        return;
+      }
+    }
     setInvoiceBusy(true);
     setInvoiceMsg("Sending…");
     try {
