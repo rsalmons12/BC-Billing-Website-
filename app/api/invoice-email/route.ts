@@ -5,6 +5,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
 import { sendResend } from "@/lib/report/eodSummary";
 import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
+import { createSquarePaymentLink } from "@/lib/square";
 import { money } from "@/lib/format";
 import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
 
@@ -214,6 +215,23 @@ export async function POST(request: Request) {
       { status: 400 }
     );
 
+  // Payment link: prefer an EXACT-amount Square link (needs the Square token);
+  // otherwise fall back to the facility's static Square link.
+  const staticUrl =
+    typeof fac.square_pay_url === "string" && /^https?:\/\//i.test(fac.square_pay_url.trim())
+      ? fac.square_pay_url.trim()
+      : null;
+  let payUrl: string | null = staticUrl;
+  let payExact = false;
+  const exactLink = await createSquarePaymentLink({
+    amount: fee,
+    name: `${facilityName} — ${label} Invoice`,
+  });
+  if (exactLink) {
+    payUrl = exactLink;
+    payExact = true;
+  }
+
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6">
     <h2 style="margin:0 0 2px">Invoice — ${facilityName}</h2>
     <p style="margin:0 0 14px;color:#555">Service period: ${label}</p>
@@ -229,11 +247,11 @@ export async function POST(request: Request) {
     </table>
     <p style="font-size:12px;color:#777;margin-top:12px">Fee is ${rate}% of collections received in ${label}.</p>
     ${
-      typeof fac.square_pay_url === "string" && /^https?:\/\//i.test(fac.square_pay_url.trim())
+      payUrl
         ? `<p style="margin:16px 0 4px">
-             <a href="${fac.square_pay_url.trim()}" style="display:inline-block;background:#006aff;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Pay via Square</a>
+             <a href="${payUrl}" style="display:inline-block;background:#006aff;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Pay ${payExact ? money(fee) + " " : ""}via Square</a>
            </p>
-           <p style="font-size:11px;color:#999;margin:0">Secure payment through Square.</p>`
+           <p style="font-size:11px;color:#999;margin:0">${payExact ? `Secure Square checkout for ${money(fee)}.` : "Secure payment through Square."}</p>`
         : ""
     }
     ${
