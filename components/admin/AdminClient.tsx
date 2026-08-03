@@ -293,20 +293,24 @@ function UsersTab({
                 </label>
               </div>
 
-              <div>
-                <span className="label">Invoices</span>
-                <label className="mt-1 flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={p.receives_invoices === true}
-                    onChange={(e) => setInvoices(p, e.target.checked)}
-                    className="h-4 w-4"
-                  />
-                  <span className="text-surface-muted">
-                    {p.receives_invoices === true ? "Gets invoices" : "Off"}
-                  </span>
-                </label>
-              </div>
+              {/* Invoices go only to INTERNAL users — never facilities — so the
+                  toggle only appears for management/staff. */}
+              {p.role !== "facility" && (
+                <div>
+                  <span className="label">Invoices</span>
+                  <label className="mt-1 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={p.receives_invoices === true}
+                      onChange={(e) => setInvoices(p, e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-surface-muted">
+                      {p.receives_invoices === true ? "Gets invoices" : "Off"}
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {p.role === "staff" && (
                 <div>
