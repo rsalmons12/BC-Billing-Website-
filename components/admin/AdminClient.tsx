@@ -535,6 +535,7 @@ function FacilitiesTab({
               <th className="th">Short name</th>
               <th className="th">State</th>
               <th className="th">Bill %</th>
+              <th className="th">Square pay link</th>
               <th className="th">Email (for Messages)</th>
               <th className="th"></th>
             </tr>
@@ -584,6 +585,18 @@ function FacilitiesTab({
                     }}
                     className="cell-input w-20"
                     placeholder="%"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="text"
+                    defaultValue={f.square_pay_url ?? ""}
+                    onBlur={(e) =>
+                      e.target.value !== (f.square_pay_url ?? "") &&
+                      save(f, { square_pay_url: e.target.value.trim() || null })
+                    }
+                    className="cell-input min-w-[16rem]"
+                    placeholder="https://square.link/…"
                   />
                 </td>
                 <td className="td">

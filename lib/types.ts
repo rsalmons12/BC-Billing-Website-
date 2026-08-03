@@ -9,6 +9,7 @@ export interface Facility {
   state: string | null;
   email: string | null;
   billing_rate: number | null; // % of monthly collections billed to this facility
+  square_pay_url: string | null; // Square payment link shown on the invoice
   created_at: string;
 }
 
