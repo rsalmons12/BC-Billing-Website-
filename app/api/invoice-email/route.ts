@@ -139,7 +139,14 @@ export async function POST(request: Request) {
   if (body.test) {
     to = [user.email ?? ""].filter((e) => e.includes("@"));
   } else {
-    const { data: flagged } = await admin.from("profiles").select("id").eq("receives_invoices", true);
+    // ONLY internal users (management/staff) flagged "Invoices" — never a
+    // facility login. An invoice must never reach a facility, even if someone
+    // checks the box on a facility account by mistake.
+    const { data: flagged } = await admin
+      .from("profiles")
+      .select("id, role")
+      .eq("receives_invoices", true)
+      .neq("role", "facility");
     const ids = (flagged ?? []).map((p: { id: string }) => p.id);
     const emails: string[] = [];
     for (const id of ids) {
@@ -196,5 +203,12 @@ export async function POST(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
   }
-  return NextResponse.json({ ok: true, recipients: to.length, fee, collected, test: !!body.test });
+  return NextResponse.json({
+    ok: true,
+    recipients: to.length,
+    sentTo: to,
+    fee,
+    collected,
+    test: !!body.test,
+  });
 }

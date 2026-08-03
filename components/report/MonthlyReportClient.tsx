@@ -124,6 +124,8 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const [invoiceMsg, setInvoiceMsg] = useState("");
   const [invoiceBusy, setInvoiceBusy] = useState(false);
   const emailInvoice = async (test: boolean) => {
+    if (!test && !confirm(`Email ${facilityName}'s ${monthLabel(month)} invoice to the users marked "Invoices" in Admin? (Facilities never receive invoices.)`))
+      return;
     setInvoiceBusy(true);
     setInvoiceMsg("Sending…");
     try {
@@ -133,18 +135,19 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         body: JSON.stringify({ facilityId, month, test }),
       });
       const data = await res.json().catch(() => ({}));
+      const who = Array.isArray(data.sentTo) && data.sentTo.length ? ` → ${data.sentTo.join(", ")}` : "";
       setInvoiceMsg(
         res.ok
           ? test
-            ? "✓ Test invoice sent to you."
-            : `✓ Invoice emailed to ${data.recipients ?? 0} recipient(s).`
+            ? `✓ Test invoice sent to you${who}.`
+            : `✓ Invoice emailed to ${data.recipients ?? 0} recipient(s)${who}.`
           : `Error: ${data.error || "could not send"}`
       );
     } catch {
       setInvoiceMsg("Error: could not send");
     } finally {
       setInvoiceBusy(false);
-      setTimeout(() => setInvoiceMsg(""), 10000);
+      setTimeout(() => setInvoiceMsg(""), 15000);
     }
   };
 
