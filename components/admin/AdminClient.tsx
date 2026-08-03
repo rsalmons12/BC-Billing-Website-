@@ -61,6 +61,17 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : receives_daily_emails ? "Daily emails on" : "Daily emails off");
   };
 
+  const setInvoices = async (p: Profile, receives_invoices: boolean) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, receives_invoices } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ receives_invoices })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : receives_invoices ? "Gets invoices" : "No invoices");
+  };
+
   const setJobTitle = async (p: Profile, job_title: string) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, job_title } : x))
@@ -179,6 +190,7 @@ export default function AdminClient({
           selfId={selfId}
           setRole={setRole}
           setDailyEmails={setDailyEmails}
+          setInvoices={setInvoices}
           setJobTitle={setJobTitle}
           setQueueTier={setQueueTier}
           setFacilityId={setFacilityId}
@@ -209,6 +221,7 @@ function UsersTab({
   selfId,
   setRole,
   setDailyEmails,
+  setInvoices,
   setJobTitle,
   setQueueTier,
   setFacilityId,
@@ -221,6 +234,7 @@ function UsersTab({
   selfId: string;
   setRole: (p: Profile, r: Role) => void;
   setDailyEmails: (p: Profile, on: boolean) => void;
+  setInvoices: (p: Profile, on: boolean) => void;
   setJobTitle: (p: Profile, title: string) => void;
   setQueueTier: (p: Profile, tier: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
@@ -275,6 +289,21 @@ function UsersTab({
                   />
                   <span className="text-surface-muted">
                     {p.receives_daily_emails !== false ? "Receives" : "Off"}
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <span className="label">Invoices</span>
+                <label className="mt-1 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={p.receives_invoices === true}
+                    onChange={(e) => setInvoices(p, e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-surface-muted">
+                    {p.receives_invoices === true ? "Gets invoices" : "Off"}
                   </span>
                 </label>
               </div>
