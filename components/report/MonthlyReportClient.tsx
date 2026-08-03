@@ -140,22 +140,20 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
           setInvoiceBusy(false);
           return;
         }
-        const rec = (d.recipients ?? []) as string[];
-        if (rec.length === 0) {
+        const toList = (d.to ?? []) as string[];
+        const bccList = (d.bcc ?? []) as string[];
+        if (toList.length === 0 && bccList.length === 0) {
           setInvoiceMsg(
-            d.diag || 'No one is set to receive invoices. Check "Invoices" for a user in Admin → Users.'
+            d.diag || `${facilityName} has no login and no internal user is marked "Invoices".`
           );
           setInvoiceBusy(false);
           setTimeout(() => setInvoiceMsg(""), 15000);
           return;
         }
-        if (
-          !confirm(
-            `Email ${facilityName}'s ${monthLabel(month)} invoice to:\n\n${rec
-              .map((e) => `• ${e}`)
-              .join("\n")}\n\n(Facilities are never included.)\n\nSend now?`
-          )
-        ) {
+        const lines =
+          `To (${facilityName}): ${toList.length ? toList.join(", ") : "— no facility login —"}` +
+          (bccList.length ? `\nBCC (management): ${bccList.join(", ")}` : "");
+        if (!confirm(`Send ${facilityName}'s ${monthLabel(month)} invoice?\n\n${lines}\n\nSend now?`)) {
           setInvoiceMsg("Cancelled — nothing was sent.");
           setInvoiceBusy(false);
           setTimeout(() => setInvoiceMsg(""), 5000);

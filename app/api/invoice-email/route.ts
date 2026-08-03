@@ -64,87 +64,65 @@ export async function POST(request: Request) {
       { status: 400 }
     );
 
-  // Who WOULD receive this — internal users flagged "Invoices", never a
-  // facility. Resolve once; used by both the dry run and the real send.
-  const resolveRecipients = async (): Promise<string[]> => {
+  // Recipients: THIS facility's own login(s) get the invoice (To), and the
+  // internal users marked "Invoices" (management/staff) are BCC'd on it. A
+  // facility can therefore only ever receive its OWN invoice — never another's.
+  const resolveRecipients = async (): Promise<{ to: string[]; bcc: string[] }> => {
     const admin = createAdminClient();
-    if (body.test) return [user.email ?? ""].filter((e) => e.includes("@"));
-    const { data: flagged } = await admin
-      .from("profiles")
-      .select("id, role")
-      .eq("receives_invoices", true)
-      .neq("role", "facility");
-    const ids = (flagged ?? []).map((p: { id: string }) => p.id);
-    const emails: string[] = [];
-    for (const id of ids) {
-      try {
-        const { data } = await admin.auth.admin.getUserById(id);
-        if (data?.user?.email) emails.push(data.user.email);
-      } catch {
-        /* skip */
+    if (body.test) return { to: [user.email ?? ""].filter((e) => e.includes("@")), bcc: [] };
+
+    const emailsOf = async (ids: string[]): Promise<string[]> => {
+      const out: string[] = [];
+      for (const id of ids) {
+        try {
+          const { data } = await admin.auth.admin.getUserById(id);
+          if (data?.user?.email) out.push(data.user.email);
+        } catch {
+          /* skip */
+        }
       }
-    }
-    return Array.from(new Set(emails));
+      return Array.from(new Set(out));
+    };
+
+    const [{ data: facProfs }, { data: asgs }, { data: internal }] = await Promise.all([
+      admin.from("profiles").select("id, facility_id").eq("role", "facility"),
+      admin.from("assignments").select("profile_id, facility_id"),
+      // Internal (non-facility) users marked "Invoices" → BCC copies. If the
+      // column isn't migrated yet this errors → no BCC, but the facility To
+      // still works.
+      admin.from("profiles").select("id").eq("receives_invoices", true).neq("role", "facility"),
+    ]);
+
+    // This facility's logins: primary facility_id, or granted via assignment.
+    const facIds = new Set((facProfs ?? []).map((p: { id: string }) => p.id));
+    const facLogins = new Set<string>();
+    for (const p of (facProfs ?? []) as { id: string; facility_id: string | null }[])
+      if (p.facility_id === body.facilityId) facLogins.add(p.id);
+    for (const a of (asgs ?? []) as { profile_id: string; facility_id: string | null }[])
+      if (a.facility_id === body.facilityId && facIds.has(a.profile_id)) facLogins.add(a.profile_id);
+
+    const to = await emailsOf(Array.from(facLogins));
+    const bccAll = await emailsOf(((internal ?? []) as { id: string }[]).map((p) => p.id));
+    const bcc = bccAll.filter((e) => !to.includes(e));
+    return { to, bcc };
   };
 
-  // DRY RUN: return exactly who would receive it — no email, no report built —
-  // so the button can show the recipient list and confirm first. Includes a
-  // diagnostic when it's empty so we know WHY (migration not run / all flagged
-  // users are facilities / no email on file).
+  // DRY RUN: return exactly who would receive it (To + BCC) — no email sent — so
+  // the button shows the recipient list and confirms first.
   if (body.dryRun) {
-    let admin;
+    let rcpt: { to: string[]; bcc: string[] };
     try {
-      admin = createAdminClient();
+      rcpt = await resolveRecipients();
     } catch {
       return NextResponse.json(
         { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
         { status: 503 }
       );
     }
-    if (body.test)
-      return NextResponse.json({
-        ok: true,
-        dryRun: true,
-        recipients: [user.email ?? ""].filter((e) => e.includes("@")),
-      });
-
-    const { data: allFlagged, error } = await admin
-      .from("profiles")
-      .select("id, role, full_name")
-      .eq("receives_invoices", true);
-    if (error)
-      return NextResponse.json({
-        ok: true,
-        dryRun: true,
-        recipients: [],
-        diag: `The "Invoices" setting isn't saved in the database yet — run the receives_invoices migration in Supabase. (${error.message})`,
-      });
-
-    const flaggedCount = (allFlagged ?? []).length;
-    const internal = (allFlagged ?? []).filter(
-      (p: { role: string | null }) => p.role !== "facility"
-    );
-    const emails: string[] = [];
-    for (const p of internal as { id: string }[]) {
-      try {
-        const { data } = await admin.auth.admin.getUserById(p.id);
-        if (data?.user?.email) emails.push(data.user.email);
-      } catch {
-        /* skip */
-      }
-    }
-    const recipients = Array.from(new Set(emails));
-
     let diag = "";
-    if (recipients.length === 0) {
-      if (flaggedCount === 0)
-        diag = 'No user has "Invoices" checked. Open Admin → Users, check "Invoices" for the person, and make sure it saves.';
-      else if (internal.length === 0)
-        diag = `${flaggedCount} account(s) have "Invoices" checked, but they are all FACILITY logins — invoices are never sent to facilities. Mark an internal (management or staff) user instead.`;
-      else
-        diag = `${internal.length} internal user(s) have "Invoices" checked, but none has a login email on file.`;
-    }
-    return NextResponse.json({ ok: true, dryRun: true, recipients, flaggedCount, diag });
+    if (rcpt.to.length === 0 && rcpt.bcc.length === 0)
+      diag = `${fac.short_name || fac.name} has no login on file, and no management/staff user is marked "Invoices" to copy. Give the facility a login (Admin → Users) or mark an internal user.`;
+    return NextResponse.json({ ok: true, dryRun: true, to: rcpt.to, bcc: rcpt.bcc, diag });
   }
 
   // Pull the facility's data for the report bundle (attached to the email).
@@ -207,23 +185,28 @@ export async function POST(request: Request) {
     /* if the bundle fails, still send the invoice email without the attachment */
   }
 
-  // Recipients: a test goes to the caller; otherwise the internal users flagged
-  // "Invoices" in Admin (never a facility). Same resolver as the dry run above.
+  // Recipients: this facility's login(s) as To, internal "Invoices" users as BCC.
   let to: string[];
+  let bcc: string[];
   try {
-    to = await resolveRecipients();
+    ({ to, bcc } = await resolveRecipients());
   } catch {
     return NextResponse.json(
       { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
       { status: 503 }
     );
   }
+  // If the facility has no login, send to the internal copies as To instead.
+  if (to.length === 0 && bcc.length) {
+    to = bcc;
+    bcc = [];
+  }
   if (to.length === 0)
     return NextResponse.json(
       {
         error: body.test
           ? "Your account has no email."
-          : "No users are marked to receive invoices. Check 'Invoices' for someone in Admin → Users.",
+          : `${facilityName} has no login, and no internal user is marked "Invoices" to send to.`,
       },
       { status: 400 }
     );
@@ -256,7 +239,7 @@ export async function POST(request: Request) {
       to,
       `${body.test ? "[TEST] " : ""}${monthFull(body.month)} Monthly Reporting and Invoice — ${facilityName}`,
       html,
-      undefined,
+      bcc,
       attachment ? [attachment] : undefined
     );
   } catch (e) {
@@ -264,8 +247,9 @@ export async function POST(request: Request) {
   }
   return NextResponse.json({
     ok: true,
-    recipients: to.length,
+    recipients: to.length + bcc.length,
     sentTo: to,
+    bcc,
     fee,
     collected,
     test: !!body.test,
