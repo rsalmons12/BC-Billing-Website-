@@ -85,15 +85,18 @@ export async function POST(request: Request) {
     };
 
     const [{ data: facProfs }, { data: asgs }, { data: internal }] = await Promise.all([
-      admin.from("profiles").select("id, facility_id").eq("role", "facility"),
+      // Facility users marked "Invoices" → each gets ITS OWN facility's invoice.
+      admin
+        .from("profiles")
+        .select("id, facility_id")
+        .eq("role", "facility")
+        .eq("receives_invoices", true),
       admin.from("assignments").select("profile_id, facility_id"),
-      // Internal (non-facility) users marked "Invoices" → BCC copies. If the
-      // column isn't migrated yet this errors → no BCC, but the facility To
-      // still works.
+      // Internal (non-facility) users marked "Invoices" → BCC copies on all.
       admin.from("profiles").select("id").eq("receives_invoices", true).neq("role", "facility"),
     ]);
 
-    // This facility's logins: primary facility_id, or granted via assignment.
+    // Marked facility users for THIS facility (primary facility_id or assignment).
     const facIds = new Set((facProfs ?? []).map((p: { id: string }) => p.id));
     const facLogins = new Set<string>();
     for (const p of (facProfs ?? []) as { id: string; facility_id: string | null }[])
@@ -121,7 +124,7 @@ export async function POST(request: Request) {
     }
     let diag = "";
     if (rcpt.to.length === 0 && rcpt.bcc.length === 0)
-      diag = `${fac.short_name || fac.name} has no login on file, and no management/staff user is marked "Invoices" to copy. Give the facility a login (Admin → Users) or mark an internal user.`;
+      diag = `No one is marked "Invoices" for ${fac.short_name || fac.name}. In Admin → Users, check "Invoices" on ${fac.short_name || fac.name}'s login (and any management to copy). If you did check it, run the receives_invoices migration in Supabase so it saves.`;
     return NextResponse.json({ ok: true, dryRun: true, to: rcpt.to, bcc: rcpt.bcc, diag });
   }
 
