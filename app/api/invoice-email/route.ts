@@ -12,9 +12,18 @@ import { money } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 function monthLabel(ym: string): string {
   const m = ym.match(/^(\d{4})-(\d{2})$/);
   return m ? `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : ym;
+}
+// Full month name (e.g. "July 2026") for the subject line.
+function monthFull(ym: string): string {
+  const m = ym.match(/^(\d{4})-(\d{2})$/);
+  return m ? `${MONTHS_FULL[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : ym;
 }
 
 export async function POST(request: Request) {
@@ -130,7 +139,11 @@ export async function POST(request: Request) {
   </div>`;
 
   try {
-    await sendResend(to, `${body.test ? "[TEST] " : ""}Invoice — ${facilityName} · ${label} · ${money(fee)}`, html);
+    await sendResend(
+      to,
+      `${body.test ? "[TEST] " : ""}${monthFull(body.month)} Monthly Reporting and Invoice — ${facilityName}`,
+      html
+    );
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
   }
