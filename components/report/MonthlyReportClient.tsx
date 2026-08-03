@@ -142,9 +142,11 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         }
         const rec = (d.recipients ?? []) as string[];
         if (rec.length === 0) {
-          setInvoiceMsg('No one is set to receive invoices. Check "Invoices" for a user in Admin → Users.');
+          setInvoiceMsg(
+            d.diag || 'No one is set to receive invoices. Check "Invoices" for a user in Admin → Users.'
+          );
           setInvoiceBusy(false);
-          setTimeout(() => setInvoiceMsg(""), 10000);
+          setTimeout(() => setInvoiceMsg(""), 15000);
           return;
         }
         if (

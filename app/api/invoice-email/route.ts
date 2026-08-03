@@ -88,18 +88,63 @@ export async function POST(request: Request) {
   };
 
   // DRY RUN: return exactly who would receive it — no email, no report built —
-  // so the button can show the recipient list and confirm first.
+  // so the button can show the recipient list and confirm first. Includes a
+  // diagnostic when it's empty so we know WHY (migration not run / all flagged
+  // users are facilities / no email on file).
   if (body.dryRun) {
-    let recipients: string[];
+    let admin;
     try {
-      recipients = await resolveRecipients();
+      admin = createAdminClient();
     } catch {
       return NextResponse.json(
         { error: "Notifications need SUPABASE_SERVICE_ROLE_KEY set on the server." },
         { status: 503 }
       );
     }
-    return NextResponse.json({ ok: true, dryRun: true, recipients });
+    if (body.test)
+      return NextResponse.json({
+        ok: true,
+        dryRun: true,
+        recipients: [user.email ?? ""].filter((e) => e.includes("@")),
+      });
+
+    const { data: allFlagged, error } = await admin
+      .from("profiles")
+      .select("id, role, full_name")
+      .eq("receives_invoices", true);
+    if (error)
+      return NextResponse.json({
+        ok: true,
+        dryRun: true,
+        recipients: [],
+        diag: `The "Invoices" setting isn't saved in the database yet — run the receives_invoices migration in Supabase. (${error.message})`,
+      });
+
+    const flaggedCount = (allFlagged ?? []).length;
+    const internal = (allFlagged ?? []).filter(
+      (p: { role: string | null }) => p.role !== "facility"
+    );
+    const emails: string[] = [];
+    for (const p of internal as { id: string }[]) {
+      try {
+        const { data } = await admin.auth.admin.getUserById(p.id);
+        if (data?.user?.email) emails.push(data.user.email);
+      } catch {
+        /* skip */
+      }
+    }
+    const recipients = Array.from(new Set(emails));
+
+    let diag = "";
+    if (recipients.length === 0) {
+      if (flaggedCount === 0)
+        diag = 'No user has "Invoices" checked. Open Admin → Users, check "Invoices" for the person, and make sure it saves.';
+      else if (internal.length === 0)
+        diag = `${flaggedCount} account(s) have "Invoices" checked, but they are all FACILITY logins — invoices are never sent to facilities. Mark an internal (management or staff) user instead.`;
+      else
+        diag = `${internal.length} internal user(s) have "Invoices" checked, but none has a login email on file.`;
+    }
+    return NextResponse.json({ ok: true, dryRun: true, recipients, flaggedCount, diag });
   }
 
   // Pull the facility's data for the report bundle (attached to the email).
