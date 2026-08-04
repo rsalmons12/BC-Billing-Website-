@@ -296,6 +296,51 @@ export default function CollectionsClient({
     patchRow(row.claim_id, { auth_flag: value });
   };
 
+  // Med Rec = "Y" rolls the claim over to the Medical Records department (a new
+  // medical_records row), deduped by patient + DOS. The claim stays on the board.
+  const raiseMedRecord = useCallback(
+    async (row: ClaimRow) => {
+      patchRow(row.claim_id, { med_rec: "Y" });
+      setSaveState("Sending to Medical Records…");
+      const { data: existing } = await supabase
+        .from("medical_records")
+        .select("id")
+        .eq("facility_id", row.facility_id)
+        .eq("patient_name", row.patient_name ?? "")
+        .eq("dos_from", row.dos_from ?? "")
+        .limit(1);
+      if (!existing || existing.length === 0) {
+        const { error } = await supabase.from("medical_records").insert({
+          facility_id: row.facility_id,
+          patient_name: row.patient_name,
+          dos_from: row.dos_from,
+          dos_to: row.dos_to,
+          charge_amount: row.balance ?? row.charge_amount,
+          payer: row.claim_status,
+          claim_status: row.claim_status,
+          record_status: "Requested",
+          notes: row.work?.notes ?? "",
+          updated_by: userId,
+        });
+        if (error) {
+          setSaveState(`Error: ${error.message}`);
+          return;
+        }
+      }
+      setSaveState("Sent to Medical Records");
+      setTimeout(() => setSaveState(""), 1500);
+    },
+    [patchRow, supabase, userId]
+  );
+
+  const onMedRecChange = (row: ClaimRow, value: string) => {
+    if (value === "Y" && row.work?.med_rec !== "Y") {
+      raiseMedRecord(row);
+      return;
+    }
+    patchRow(row.claim_id, { med_rec: value });
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -789,7 +834,7 @@ export default function CollectionsClient({
                     </td>
                     <FlagCell
                       value={w.med_rec}
-                      onChange={(v) => patchRow(r.claim_id, { med_rec: v })}
+                      onChange={(v) => onMedRecChange(r, v)}
                     />
                     <td className="td">
                       <select
