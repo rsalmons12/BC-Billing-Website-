@@ -389,11 +389,6 @@ const NEG = "#b00020"; // red for risk / drops
 const HAIR = "#eee"; // thin row rules
 const NUM = "font-variant-numeric:tabular-nums";
 
-const dirArrow = (d: string) =>
-  d === "up" ? "▲" : d === "down" ? "▼" : d === "risk" ? "⚠" : "▬";
-const dirColor = (d: string) =>
-  d === "up" ? POS : d === "down" || d === "risk" ? NEG : "#666";
-
 // A key figure: small uppercase label above a large value. No border/box.
 function statTile(label: string, value: string, color: string, sub?: string): string {
   return `<td style="padding:0 16px 0 0;vertical-align:top;width:25%">
@@ -436,27 +431,29 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     day: "numeric",
     year: "numeric",
   });
-  const o = r.outlook;
-
-  const drivers = (o?.drivers ?? [])
-    .map(
-      (d) => `<div style="margin:6px 0">
-        <span style="color:${dirColor(d.direction)}">${dirArrow(d.direction)}</span>
-        <b>${d.label}</b> — <span style="color:#555">${d.detail}</span>
-      </div>`
-    )
-    .join("");
-
-  const locRows = (o?.locBilling ?? [])
-    .map(
-      (l) => `<tr>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee">${l.loc}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curServices}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${l.priorServices}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curClients} / ${l.priorClients}</td>
-      </tr>`
-    )
-    .join("");
+  // Money Outlook — one plain-English, forward-looking sentence (no RCM jargon,
+  // no aging/auth/repricing internals, no misleading month-to-date percentages).
+  // Insurers pay ~a month after a claim is billed, so this month's billing trend
+  // previews next month's collections. Leads with the biggest level-of-care mover.
+  const topMover = (() => {
+    const want = r.billedDelta < 0 ? -1 : 1;
+    const movers = r.locRows
+      .filter((l) => Math.sign(l.delta) === want && l.delta !== 0)
+      .sort((a, b) => (want < 0 ? a.delta - b.delta : b.delta - a.delta));
+    const t = movers[0];
+    return t ? ` — led by ${t.loc} sessions (${t.cur} vs ${t.prior} last month)` : "";
+  })();
+  const collectedSoFar = `You've collected ${money(r.collectedThisMonth)} so far in ${r.monthLabel}.`;
+  let ahead: string;
+  if (r.billedThisMonth <= 0 && r.billedLastMonth <= 0) {
+    ahead = collectedSoFar;
+  } else if (r.billedDelta > 0) {
+    ahead = `${collectedSoFar} Billing is running ahead of ${r.priorMonthLabel}${topMover}, so collections should pick up over the next month or so as those claims get paid.`;
+  } else if (r.billedDelta < 0) {
+    ahead = `${collectedSoFar} Billing is running behind ${r.priorMonthLabel}${topMover}, so collections may be a little lighter over the next month or so.`;
+  } else {
+    ahead = `${collectedSoFar} Billing is about the same as ${r.priorMonthLabel}, so collections should hold steady over the next month or so.`;
+  }
 
   // "Billing vs last month" — accurate, data-only (no generic text).
   const billLocRows = r.locRows
@@ -514,31 +511,8 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
 
     ${billingBlock}
 
-    ${
-      o
-        ? `${sectionHead(`Money Outlook — ${o.curLabel} vs ${o.priorLabel}`)}
-            <div style="margin:0 0 8px">
-              <span style="color:${dirColor(o.direction)};font-weight:700">${dirArrow(o.direction)} ${
-                o.pct != null ? `${o.pct > 0 ? "+" : ""}${o.pct.toFixed(0)}%` : ""
-              }</span>
-              &nbsp;${o.headline}
-            </div>
-            <div style="color:${MUTE};margin-bottom:6px">${o.reason}</div>
-            ${drivers}
-            ${
-              locRows
-                ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:10px">
-                    <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
-                      <th style="padding:4px 0">Level of care</th>
-                      <th style="padding:4px 0;text-align:right">Services (now)</th>
-                      <th style="padding:4px 0;text-align:right">Prior</th>
-                      <th style="padding:4px 0;text-align:right">Clients (now / prior)</th>
-                    </tr></thead><tbody>${locRows}</tbody></table>`
-                : ""
-            }
-            <div style="color:${MUTE};margin-top:8px">🔮 ${o.forecast}</div>`
-        : ""
-    }
+    ${sectionHead("Money Outlook")}
+    <div style="color:${INK}">${ahead}</div>
 
     ${
       r.census
