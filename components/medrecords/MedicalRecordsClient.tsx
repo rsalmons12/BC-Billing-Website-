@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import TrackerModule, { SumCard, type TrackerConfig } from "@/components/trackers/TrackerModule";
 import { parseMedicalRecords } from "@/lib/import/parseTrackers";
 import { money } from "@/lib/format";
@@ -108,13 +109,61 @@ export default function MedicalRecordsClient({
   isManagement: boolean;
   readOnly?: boolean;
 }) {
+  const [pulling, setPulling] = useState(false);
+  const [pullMsg, setPullMsg] = useState<string | null>(null);
+
+  // One-time sweep: every claim currently marked Med Rec = "Y" in the queue that
+  // isn't already here gets pulled into Medical Records.
+  const pullFlagged = async () => {
+    if (
+      !window.confirm(
+        "Pull every claim currently marked Med Rec = \"Y\" into Medical Records? Claims already here are skipped."
+      )
+    )
+      return;
+    setPulling(true);
+    setPullMsg(null);
+    try {
+      const res = await fetch("/api/medrec-backfill", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPullMsg(`Error: ${data.error || "could not pull flagged claims"}`);
+        return;
+      }
+      setPullMsg(
+        `Added ${data.added ?? 0} record${(data.added ?? 0) === 1 ? "" : "s"}` +
+          (data.alreadyThere ? ` — ${data.alreadyThere} already here.` : ".")
+      );
+      if ((data.added ?? 0) > 0) setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      setPullMsg(`Error: ${e instanceof Error ? e.message : "request failed"}`);
+    } finally {
+      setPulling(false);
+    }
+  };
+
   return (
-    <TrackerModule
-      facilities={facilities}
-      userId={userId}
-      config={config}
-      isManagement={isManagement}
-      readOnly={readOnly}
-    />
+    <div className="space-y-3">
+      {isManagement && !readOnly && (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={pullFlagged}
+            disabled={pulling}
+            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+          >
+            {pulling ? "Pulling…" : "Pull in flagged claims"}
+          </button>
+          {pullMsg && <span className="text-sm text-slate-600">{pullMsg}</span>}
+        </div>
+      )}
+      <TrackerModule
+        facilities={facilities}
+        userId={userId}
+        config={config}
+        isManagement={isManagement}
+        readOnly={readOnly}
+      />
+    </div>
   );
 }
