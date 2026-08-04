@@ -375,38 +375,52 @@ export async function facilityRecipients(admin: Admin): Promise<Map<string, stri
   return out;
 }
 
-// ---- HTML rendering (mirrors the /facility dashboard) ---------------------
+// ---- HTML rendering -------------------------------------------------------
+// Navy "brief" look, matched to the monthly reporting & invoice email: Arial,
+// navy headings/section rules, green for dollars, red only for risk. No boxes —
+// each section is a label + a thin navy rule + the content beneath it.
 
-const dirArrow = (d: string) =>
-  d === "up" ? "▲" : d === "down" ? "▼" : d === "risk" ? "⚠" : "▬";
-const dirColor = (d: string) =>
-  d === "up" ? "#137333" : d === "down" || d === "risk" ? "#b00020" : "#666";
+const NAVY = "#1b3a5b"; // headings, section labels, rules — matches the brand
+const INK = "#222"; // body text (same as the monthly invoice email)
+const MUTE = "#555";
+const FAINT = "#888";
+const POS = "#137333"; // green for money collected (same as invoice "Amount Due")
+const NEG = "#b00020"; // red for risk / drops
+const HAIR = "#eee"; // thin row rules
+const NUM = "font-variant-numeric:tabular-nums";
 
+// A key figure: small uppercase label above a large value. No border/box.
 function statTile(label: string, value: string, color: string, sub?: string): string {
-  return `<td style="padding:12px 14px;border:1px solid #eee;border-radius:10px;vertical-align:top;width:25%">
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888">${label}</div>
-    <div style="font-size:21px;font-weight:700;color:${color}">${value}</div>
-    ${sub ? `<div style="font-size:11px;color:#999">${sub}</div>` : ""}
+  return `<td style="padding:0 16px 0 0;vertical-align:top;width:25%">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:${MUTE}">${label}</div>
+    <div style="font-size:22px;font-weight:700;color:${color};margin-top:4px;${NUM}">${value}</div>
+    ${sub ? `<div style="font-size:11px;color:${FAINT};margin-top:2px">${sub}</div>` : ""}
   </td>`;
+}
+
+// A boxless section header: a thin navy rule with an uppercase navy label.
+function sectionHead(title: string): string {
+  return `<div style="border-top:1px solid ${NAVY};margin:26px 0 0"></div>
+    <div style="font-weight:700;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:${NAVY};padding:9px 0 12px">${title}</div>`;
 }
 
 function breakdown(title: string, total: number, rows: [string, number][], accent: string, empty: string): string {
   const body = rows
     .map(([label, val]) => {
       const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-      const flag = isRiskPayer(label) ? ' <span style="color:#b00020">⚠</span>' : "";
+      const risk = isRiskPayer(label);
       return `<tr>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee">${label}${flag}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;font-weight:600;color:${accent}">${money(val)}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${pct}%</td>
+        <td style="padding:8px 0;border-bottom:1px solid ${HAIR};color:${risk ? NEG : INK}">${label}${risk ? " ⚠" : ""}</td>
+        <td style="padding:8px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:600;color:${accent};${NUM}">${money(val)}</td>
+        <td style="padding:8px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${FAINT};width:46px;font-size:12px;${NUM}">${pct}%</td>
       </tr>`;
     })
     .join("");
-  return `<h3 style="margin:18px 0 6px">${title} <span style="color:#888;font-weight:400">${money(total)}</span></h3>
+  return `${sectionHead(`${title} — ${money(total)}`)}
     ${
       rows.length
         ? `<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>${body}</tbody></table>`
-        : `<p style="color:#888;margin:0">${empty}</p>`
+        : `<p style="color:${FAINT};margin:0">${empty}</p>`
     }`;
 }
 
@@ -417,157 +431,130 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     day: "numeric",
     year: "numeric",
   });
-  const o = r.outlook;
-
-  const drivers = (o?.drivers ?? [])
-    .map(
-      (d) => `<div style="margin:6px 0">
-        <span style="color:${dirColor(d.direction)}">${dirArrow(d.direction)}</span>
-        <b>${d.label}</b> — <span style="color:#555">${d.detail}</span>
-      </div>`
-    )
-    .join("");
-
-  const locRows = (o?.locBilling ?? [])
-    .map(
-      (l) => `<tr>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee">${l.loc}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curServices}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${l.priorServices}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.curClients} / ${l.priorClients}</td>
-      </tr>`
-    )
-    .join("");
+  // Money Outlook — one plain-English, forward-looking sentence (no RCM jargon,
+  // no aging/auth/repricing internals, no misleading month-to-date percentages).
+  // Insurers pay ~a month after a claim is billed, so this month's billing trend
+  // previews next month's collections. Leads with the biggest level-of-care mover.
+  const topMover = (() => {
+    const want = r.billedDelta < 0 ? -1 : 1;
+    const movers = r.locRows
+      .filter((l) => Math.sign(l.delta) === want && l.delta !== 0)
+      .sort((a, b) => (want < 0 ? a.delta - b.delta : b.delta - a.delta));
+    const t = movers[0];
+    return t ? ` — led by ${t.loc} sessions (${t.cur} vs ${t.prior} last month)` : "";
+  })();
+  const collectedSoFar = `You've collected ${money(r.collectedThisMonth)} so far in ${r.monthLabel}.`;
+  let ahead: string;
+  if (r.billedThisMonth <= 0 && r.billedLastMonth <= 0) {
+    ahead = collectedSoFar;
+  } else if (r.billedDelta > 0) {
+    ahead = `${collectedSoFar} Billing is running ahead of ${r.priorMonthLabel}${topMover}, so collections should pick up over the next month or so as those claims get paid.`;
+  } else if (r.billedDelta < 0) {
+    ahead = `${collectedSoFar} Billing is running behind ${r.priorMonthLabel}${topMover}, so collections may be a little lighter over the next month or so.`;
+  } else {
+    ahead = `${collectedSoFar} Billing is about the same as ${r.priorMonthLabel}, so collections should hold steady over the next month or so.`;
+  }
 
   // "Billing vs last month" — accurate, data-only (no generic text).
   const billLocRows = r.locRows
     .map((l) => {
-      const c = l.delta < 0 ? "#b00020" : l.delta > 0 ? "#137333" : "#888";
+      const c = l.delta < 0 ? NEG : l.delta > 0 ? POS : FAINT;
       return `<tr>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee">${l.loc}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right">${l.cur}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:#888">${l.prior}</td>
-        <td style="padding:3px 8px;border-bottom:1px solid #eee;text-align:right;color:${c}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
+        <td style="padding:7px 0;border-bottom:1px solid ${HAIR}">${l.loc}</td>
+        <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${l.cur}</td>
+        <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${FAINT};${NUM}">${l.prior}</td>
+        <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${c};font-weight:600;${NUM}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
       </tr>`;
     })
     .join("");
   const billingBlock =
     r.billedThisMonth > 0 || r.billedLastMonth > 0
-      ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px">
-          <div style="font-weight:700;margin-bottom:6px">Billing vs last month</div>
-          <table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
-            ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), "#222")}
-            ${statTile(`Billed · ${r.priorMonthLabel}`, money(r.billedLastMonth), "#222")}
+      ? `${sectionHead("Billing vs last month")}
+          <table style="border-collapse:collapse;width:100%;margin-bottom:2px"><tr>
+            ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), INK)}
+            ${statTile(`Billed · ${r.priorMonthLabel}`, money(r.billedLastMonth), INK)}
             ${statTile(
               "Change",
               `${r.billedDelta < 0 ? "−" : "+"}${money(Math.abs(r.billedDelta))}`,
-              r.billedDelta < 0 ? "#b00020" : "#137333",
+              r.billedDelta < 0 ? NEG : POS,
               r.billedPct != null ? `${r.billedPct > 0 ? "+" : ""}${r.billedPct}%` : undefined
             )}
+            <td style="width:25%"></td>
           </tr></table>
           ${
             billLocRows
-              ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:6px">
-                  <thead><tr style="text-align:left;color:#888">
-                    <th style="padding:3px 8px">Level of care</th>
-                    <th style="padding:3px 8px;text-align:right">Sessions · ${r.monthLabel}</th>
-                    <th style="padding:3px 8px;text-align:right">Sessions · ${r.priorMonthLabel}</th>
-                    <th style="padding:3px 8px;text-align:right">Change</th>
+              ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:12px">
+                  <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+                    <th style="padding:4px 0">Level of care</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.monthLabel}</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.priorMonthLabel}</th>
+                    <th style="padding:4px 0;text-align:right">Change</th>
                   </tr></thead><tbody>${billLocRows}</tbody></table>`
               : ""
           }
-          ${r.billingNote ? `<div style="margin-top:8px;color:#333">${r.billingNote}</div>` : ""}
-        </div>`
+          ${r.billingNote ? `<div style="margin-top:10px;color:${INK}">${r.billingNote}</div>` : ""}`
       : "";
 
-  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6">
-    <h2 style="margin:0 0 2px">${r.name} — Daily Recap</h2>
-    <p style="margin:0 0 16px;color:#555">${nice}</p>
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:${INK};line-height:1.6;background:#fff;padding:30px 28px 24px">
+    <div style="font-weight:700;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:${NAVY}">BC Billing</div>
+    <div style="font-size:26px;font-weight:800;color:${NAVY};margin:8px 0 2px;letter-spacing:-.01em">${r.name}</div>
+    <div style="color:${MUTE};border-bottom:2px solid ${NAVY};padding-bottom:14px">Daily Recap — ${nice}</div>
 
-    <table style="border-collapse:separate;border-spacing:6px;width:100%">
+    <table style="border-collapse:collapse;width:100%;margin-top:20px">
       <tr>
-        ${statTile("Total AR (Outstanding)", money(r.totalAR), "#a8730b")}
-        ${statTile("Expected Revenue", money(r.expectedRevenue), "#1a56db", `${Math.round(EXPECTED_RATE * 100)}% of AR`)}
-        ${statTile(`Collected · ${r.monthLabel}`, money(r.collectedThisMonth), "#137333")}
-        ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), "#222")}
+        ${statTile("Total AR (Outstanding)", money(r.totalAR), NAVY)}
+        ${statTile("Expected Revenue", money(r.expectedRevenue), NAVY, `${Math.round(EXPECTED_RATE * 100)}% of AR`)}
+        ${statTile(`Collected · ${r.monthLabel}`, money(r.collectedThisMonth), POS)}
+        ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), INK)}
       </tr>
     </table>
 
     ${billingBlock}
 
-    ${
-      o
-        ? `<div style="margin:18px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px;background:#fafafa">
-            <div style="font-weight:700;margin-bottom:2px">Money Outlook — ${o.curLabel} vs ${o.priorLabel}</div>
-            <div style="margin:2px 0 8px">
-              <span style="color:${dirColor(o.direction)};font-weight:700">${dirArrow(o.direction)} ${
-                o.pct != null ? `${o.pct > 0 ? "+" : ""}${o.pct.toFixed(0)}%` : ""
-              }</span>
-              &nbsp;${o.headline}
-            </div>
-            <div style="color:#444;margin-bottom:6px">${o.reason}</div>
-            ${drivers}
-            ${
-              locRows
-                ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:10px">
-                    <thead><tr style="text-align:left;color:#888">
-                      <th style="padding:3px 8px">Level of care</th>
-                      <th style="padding:3px 8px;text-align:right">Services (now)</th>
-                      <th style="padding:3px 8px;text-align:right">Prior</th>
-                      <th style="padding:3px 8px;text-align:right">Clients (now / prior)</th>
-                    </tr></thead><tbody>${locRows}</tbody></table>`
-                : ""
-            }
-            <div style="color:#666;margin-top:8px">🔮 ${o.forecast}</div>
-          </div>`
-        : ""
-    }
+    ${sectionHead("Money Outlook")}
+    <div style="color:${INK}">${ahead}</div>
 
     ${
       r.census
-        ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #eee;border-radius:10px">
-            <div style="font-weight:700;margin-bottom:6px">Census · ${r.census.weekLabel} (prior week)</div>
-            <table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
-              ${statTile("Census (Patients)", String(r.census.patients), "#222")}
-              ${statTile("Missed Groups", String(r.census.missedGroups), r.census.missedGroups > 0 ? "#b00020" : "#137333")}
-              ${statTile("Missed Revenue", money(r.census.missedRev), r.census.missedRev > 0 ? "#b00020" : "#137333")}
-            </tr></table>
-          </div>`
+        ? `${sectionHead(`Census · ${r.census.weekLabel} (prior week)`)}
+            <table style="border-collapse:collapse;width:100%"><tr>
+              ${statTile("Census (Patients)", String(r.census.patients), INK)}
+              ${statTile("Missed Groups", String(r.census.missedGroups), r.census.missedGroups > 0 ? NEG : POS)}
+              ${statTile("Missed Revenue", money(r.census.missedRev), r.census.missedRev > 0 ? NEG : POS)}
+              <td style="width:25%"></td>
+            </tr></table>`
         : ""
     }
 
     ${
       r.riskAR > 0
-        ? `<div style="margin:16px 0;padding:12px 14px;border:1px solid #f2c2c2;border-radius:10px;background:#fdf3f3">
-            <div style="display:flex;justify-content:space-between;gap:12px">
-              <div>
-                <div style="font-weight:700;color:#b00020">⚠ Risk of non-reimbursement</div>
-                <div style="font-size:12px;color:#777">Marketplace / exchange plans — Highmark, Capital Blue Cross, Independence Blue Cross. Prioritize before these age out.</div>
-              </div>
-              <div style="text-align:right;white-space:nowrap">
-                <div style="font-size:20px;font-weight:700;color:#b00020">${money(r.riskAR)}</div>
-                <div style="font-size:12px;color:#777">${r.totalAR > 0 ? Math.round((r.riskAR / r.totalAR) * 100) : 0}% of AR</div>
-              </div>
-            </div>
-          </div>`
+        ? `${sectionHead("Risk of non-reimbursement")}
+            <table style="width:100%"><tr>
+              <td style="width:68%;vertical-align:top;color:#7a2b26">Marketplace / exchange plans — Highmark, Capital Blue Cross, Independence Blue Cross. Prioritize before these age out.</td>
+              <td style="text-align:right;white-space:nowrap;vertical-align:top">
+                <div style="font-size:22px;font-weight:700;color:${NEG};${NUM}">${money(r.riskAR)}</div>
+                <div style="font-size:12px;color:${FAINT}">${r.totalAR > 0 ? Math.round((r.riskAR / r.totalAR) * 100) : 0}% of AR</div>
+              </td>
+            </tr></table>`
         : ""
     }
 
-    ${breakdown("Outstanding AR by payer", r.totalAR, r.arRows, "#a8730b", "No outstanding balance on file.")}
-    ${breakdown(`Payments collected · ${r.monthLabel} — by payer`, r.collectedThisMonth, r.payRows, "#137333", `No payments recorded yet for ${r.monthLabel}.`)}
+    ${breakdown("Outstanding AR by payer", r.totalAR, r.arRows, NAVY, "No outstanding balance on file.")}
+    ${breakdown(`Payments collected · ${r.monthLabel} — by payer`, r.collectedThisMonth, r.payRows, POS, `No payments recorded yet for ${r.monthLabel}.`)}
 
-    <h3 style="margin:18px 0 6px">Negotiations — expected revenue</h3>
+    ${sectionHead("Negotiations — expected revenue")}
     ${
       r.approvedNegCount === 0
-        ? `<p style="color:#888;margin:0">No approved negotiations on file.</p>`
-        : `<table style="border-collapse:separate;border-spacing:6px;width:100%"><tr>
-            ${statTile("Awaiting payment", String(r.negOpen), "#222", `${r.approvedNegCount} approved on file`)}
-            ${statTile("Expected revenue", money(r.negExpected), "#1a56db", "not yet landed")}
-            ${statTile("Landing within 14 days", money(r.negDueSoon), "#137333", `paid ~${NEG_PAY_LAG_DAYS} days after approval`)}
+        ? `<p style="color:${FAINT};margin:0">No approved negotiations on file.</p>`
+        : `<table style="border-collapse:collapse;width:100%"><tr>
+            ${statTile("Awaiting payment", String(r.negOpen), INK, `${r.approvedNegCount} approved on file`)}
+            ${statTile("Expected revenue", money(r.negExpected), NAVY, "not yet landed")}
+            ${statTile("Landing within 14 days", money(r.negDueSoon), POS, `paid ~${NEG_PAY_LAG_DAYS} days after approval`)}
+            <td style="width:25%"></td>
           </tr></table>`
     }
 
-    <hr style="border:none;border-top:1px solid #ddd;margin-top:22px" />
-    <p style="font-size:11px;color:#888">Automated daily recap from BC Billing. Contains PHI — handle per HIPAA.</p>
+    <hr style="border:none;border-top:1px solid #ddd;margin-top:24px" />
+    <p style="font-size:11px;color:${FAINT}">Automated daily recap from BC Billing. Contains PHI — handle per HIPAA.</p>
   </div>`;
 }
