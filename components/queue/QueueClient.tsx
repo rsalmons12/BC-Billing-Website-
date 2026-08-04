@@ -887,6 +887,51 @@ export default function QueueClient({
     patchRow(row.claim_id, { auth_flag: value });
   };
 
+  // Med Rec = "Y" rolls the claim over to the Medical Records department (a new
+  // medical_records row), deduped by patient + DOS. The claim stays in the queue.
+  const raiseMedRecord = useCallback(
+    async (row: ClaimRow) => {
+      patchRow(row.claim_id, { med_rec: "Y" });
+      setSaveState("Sending to Medical Records…");
+      const { data: existing } = await supabase
+        .from("medical_records")
+        .select("id")
+        .eq("facility_id", row.facility_id)
+        .eq("patient_name", row.patient_name ?? "")
+        .eq("dos_from", row.dos_from ?? "")
+        .limit(1);
+      if (!existing || existing.length === 0) {
+        const { error } = await supabase.from("medical_records").insert({
+          facility_id: row.facility_id,
+          patient_name: row.patient_name,
+          dos_from: row.dos_from,
+          dos_to: row.dos_to,
+          charge_amount: row.balance ?? row.charge_amount,
+          payer: row.claim_status,
+          claim_status: row.claim_status,
+          record_status: "Requested",
+          notes: row.work?.notes ?? "",
+          updated_by: collector.id,
+        });
+        if (error) {
+          setSaveState(`Error: ${error.message}`);
+          return;
+        }
+      }
+      setSaveState("Sent to Medical Records");
+      setTimeout(() => setSaveState(""), 1500);
+    },
+    [patchRow, supabase, collector.id]
+  );
+
+  const onMedRecChange = (row: ClaimRow, value: string) => {
+    if (value === "Y" && row.work?.med_rec !== "Y") {
+      raiseMedRecord(row);
+      return;
+    }
+    patchRow(row.claim_id, { med_rec: value });
+  };
+
   // Hide claims parked with the auth team.
   const visible = shown.filter((r) => r.work?.auth_issue_status !== "open");
 
@@ -1340,7 +1385,7 @@ export default function QueueClient({
 
                             {/* Flags */}
                             <div className="flex flex-wrap items-end gap-3">
-                              <FlagField label="Med Rec" value={w.med_rec} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { med_rec: v })} />
+                              <FlagField label="Med Rec" value={w.med_rec} options={FLAG_OPTIONS} onChange={(v) => onMedRecChange(r, v)} />
                               <FlagField label="Auth" value={w.auth_flag} options={AUTH_FLAG_OPTIONS} highlight={w.auth_flag === "Y"} onChange={(v) => onAuthFlagChange(r, v)} />
                               <FlagField label="Billing" value={w.billing} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { billing: v })} />
                               <FlagField label="Cap Blue" value={w.cap_blue} options={FLAG_OPTIONS} onChange={(v) => patchRow(r.claim_id, { cap_blue: v })} />
