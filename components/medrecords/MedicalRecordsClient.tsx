@@ -143,9 +143,11 @@ export default function MedicalRecordsClient({
   };
 
   return (
-    <div className="space-y-3">
+    // Fill the page height and let TrackerModule own the scroll — the button bar
+    // is a fixed row, the tracker takes the rest (min-h-0 so it can scroll).
+    <div className="flex h-full flex-col">
       {isManagement && !readOnly && (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-surface-card px-6 py-2">
           <button
             type="button"
             onClick={pullFlagged}
@@ -157,13 +159,15 @@ export default function MedicalRecordsClient({
           {pullMsg && <span className="text-sm text-slate-600">{pullMsg}</span>}
         </div>
       )}
-      <TrackerModule
-        facilities={facilities}
-        userId={userId}
-        config={config}
-        isManagement={isManagement}
-        readOnly={readOnly}
-      />
+      <div className="min-h-0 flex-1">
+        <TrackerModule
+          facilities={facilities}
+          userId={userId}
+          config={config}
+          isManagement={isManagement}
+          readOnly={readOnly}
+        />
+      </div>
     </div>
   );
 }
