@@ -300,6 +300,146 @@ export function parseHistorical(data: ArrayBuffer): HistoricalRow[] {
   return out;
 }
 
+// Which services count. Only these level-of-care codes build the reference:
+//   • CPT (preferred): S0201, H0035 (PHP), H0015, S9480 (IOP)
+//   • Rev code (only when the line has NO CPT): 0905, 0906, 0907, 0912, 0913
+const ALLOWED_CPT = new Set(["S0201", "H0035", "H0015", "S9480"]);
+const ALLOWED_REV = new Set(["0905", "0906", "0907", "0912", "0913"]);
+// Only keep claims from this service year onward; older history is ignored.
+const MIN_YEAR = 2024;
+// Rev codes come in as "912" / "0912" / "0912.0" — normalize to a 4-digit string.
+function normRev(v: unknown): string {
+  const d = toStr(v).replace(/\D/g, "");
+  return d ? d.padStart(4, "0") : "";
+}
+
+// Raw "Prefix Data" claims export → collapsed reference rows.
+// Each claim line carries a full member ID, CPT/Rev, units, and amount paid. We
+// turn this into the historical_data reference by:
+//   • prefix   = first 3 characters of the member ID (payer-specific, e.g. W27)
+//   • service  = an allowed CPT, or (when the line has no CPT) an allowed Rev code
+//   • per-day  = amount paid ÷ charge units (round to whole dollars)
+//   • one row per (prefix + service), using the MOST COMMON per-day amount
+//     (ties → the lower amount) — the reimbursement that recurs, not the outlier.
+// Denied / $0-paid lines and any non-allowed service are ignored. Returns [] if
+// the sheet isn't this raw format (so the caller can fall back to parseHistorical).
+export function parsePrefixData(data: ArrayBuffer): HistoricalRow[] {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+
+  type Rep = { payer: string; desc: string; state: string; year: string; rev: string; billed: number | null };
+  // key = "PREFIX|SERVICE" → the vote (per-day $ → count) plus a sample row per amount
+  const groups = new Map<
+    string,
+    {
+      prefix: string;
+      codeType: "CPT" | "REV";
+      codeUsed: string;
+      counts: Map<number, number>;
+      reps: Map<number, Rep>;
+      maxYear: string;
+    }
+  >();
+
+  for (const name of wb.SheetNames) {
+    const rows = rowsOf(wb.Sheets[name]);
+    const hr = findHeaderRow(rows, /member id/, 8);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      state: findCol(h, [/office state/, /^state$/, /state/]),
+      payer: findCol(h, [/payer name/, /payer/]),
+      mid: findCol(h, [/member id/]),
+      cpt: findCol(h, [/cpt code/, /^cpt$/]),
+      rev: findCol(h, [/rev code/]),
+      desc: findCol(h, [/full description/, /description/]),
+      from: findCol(h, [/from date/, /service date/, /claim.*date/]),
+      billed: findCol(h, [/unit price/, /billed/]),
+      units: findCol(h, [/units/]),
+      paid: findCol(h, [/amount paid/, /paid/]),
+    };
+    if (col.mid < 0 || col.cpt < 0 || col.paid < 0) continue; // not this format
+
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const prefix = toStr(r[col.mid]).trim().slice(0, 3).toUpperCase();
+      if (prefix.length < 3) continue;
+
+      // Pick the service: an allowed CPT, else (no CPT) an allowed Rev code.
+      const cptRaw = toStr(r[col.cpt]).trim().toUpperCase();
+      const revRaw = normRev(col.rev >= 0 ? r[col.rev] : "");
+      let codeType: "CPT" | "REV";
+      let codeUsed: string;
+      if (cptRaw && ALLOWED_CPT.has(cptRaw)) {
+        codeType = "CPT";
+        codeUsed = cptRaw;
+      } else if (!cptRaw && ALLOWED_REV.has(revRaw)) {
+        codeType = "REV";
+        codeUsed = revRaw;
+      } else {
+        continue; // not a level-of-care service we track
+      }
+
+      // Only recent history counts — keep 2024 and newer, drop older/undated lines.
+      const year = (toStr(r[col.from]).match(/(19|20)\d{2}/) ?? [""])[0];
+      if (!year || Number(year) < MIN_YEAR) continue;
+
+      const paid = toNum(r[col.paid]) ?? 0;
+      if (paid <= 0) continue; // denials / unpaid aren't reimbursements
+      const units = col.units >= 0 ? toNum(r[col.units]) ?? 1 : 1;
+      const perDay = Math.round(paid / (units > 0 ? units : 1)); // whole dollars
+
+      const key = `${prefix}|${codeType}|${codeUsed}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { prefix, codeType, codeUsed, counts: new Map(), reps: new Map(), maxYear: "" };
+        groups.set(key, g);
+      }
+      g.counts.set(perDay, (g.counts.get(perDay) ?? 0) + 1);
+      if (year > g.maxYear) g.maxYear = year;
+      if (!g.reps.has(perDay)) {
+        g.reps.set(perDay, {
+          payer: col.payer >= 0 ? toStr(r[col.payer]).trim() : "",
+          desc: col.desc >= 0 ? toStr(r[col.desc]).trim() : "",
+          state: col.state >= 0 ? toStr(r[col.state]).trim() : "",
+          year,
+          rev: col.rev >= 0 ? toStr(r[col.rev]).trim() : "",
+          billed: col.billed >= 0 ? toNum(r[col.billed]) : null,
+        });
+      }
+    }
+  }
+
+  const out: HistoricalRow[] = [];
+  for (const g of groups.values()) {
+    // Most common per-day amount; ties broken toward the LOWER amount.
+    let bestAmt = 0;
+    let bestN = -1;
+    for (const [amt, n] of g.counts) {
+      if (n > bestN || (n === bestN && amt < bestAmt)) {
+        bestAmt = amt;
+        bestN = n;
+      }
+    }
+    const rep = g.reps.get(bestAmt);
+    const isCpt = g.codeType === "CPT";
+    out.push({
+      state: rep?.state ?? "",
+      year: g.maxYear || rep?.year || "",
+      prefix: g.prefix,
+      prefix_length: "3",
+      payer: rep?.payer ?? "",
+      code_type: g.codeType,
+      code_used: g.codeUsed,
+      cpt_code: isCpt ? g.codeUsed : "",
+      rev_code: isCpt ? rep?.rev ?? "" : g.codeUsed,
+      description: rep?.desc ?? "",
+      billed_per_day: rep?.billed ?? null,
+      paid_per_day: bestAmt,
+    });
+  }
+  return out;
+}
+
 // Weekly Assignments — from the COLLECTOR ASSIGNMENTS sheet -----------------
 export interface AssignmentRow {
   collectors: string;

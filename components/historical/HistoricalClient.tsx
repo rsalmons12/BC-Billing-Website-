@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { moneyCents } from "@/lib/format";
-import { parseHistorical, type HistoricalRow } from "@/lib/import/parseTrackers";
+import { parseHistorical, parsePrefixData, type HistoricalRow } from "@/lib/import/parseTrackers";
 import { payerBucket, matchesPayer } from "@/lib/payer";
 
 type Row = HistoricalRow & { id: string };
@@ -71,33 +71,85 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
     });
   }, [rows, search, stateF, yearF, payerF]);
 
+  // key for de-duping a reference row: prefix + the service code (a CPT, or a Rev
+  // code when the line had no CPT). Falls back across columns so both new and
+  // existing rows key consistently.
+  const keyOf = (r: { prefix?: string; code_used?: string; cpt_code?: string; rev_code?: string }) => {
+    const service = (r.code_used || r.cpt_code || r.rev_code || "").trim().toUpperCase();
+    return `${(r.prefix || "").trim().toUpperCase()}|${service}`;
+  };
+
+  const clearFile = () => {
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
     setBusy("Parsing…");
+
+    // Auto-detect: a raw "Prefix Data" claims export collapses to reference rows
+    // (most-common paid per prefix+CPT); otherwise it's a pre-built reference sheet.
     const parsed: HistoricalRow[] = [];
-    for (const f of files) parsed.push(...parseHistorical(await f.arrayBuffer()));
+    for (const f of files) {
+      const buf = await f.arrayBuffer();
+      const claims = parsePrefixData(buf);
+      const chunkRows = claims.length ? claims : parseHistorical(buf);
+      parsed.push(...chunkRows);
+    }
     if (!parsed.length) {
       setBusy("No rows found in file.");
+      clearFile();
       return;
     }
-    setBusy(`Replacing with ${parsed.length} rows…`);
-    // Reference data is replaced wholesale.
-    await supabase.from("historical_data").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // Collapse the file to one row per prefix+CPT (in case multiple files overlap),
+    // keeping the first — parsePrefixData already picked the most-common amount.
+    const fileMap = new Map<string, HistoricalRow>();
+    for (const row of parsed) {
+      const k = keyOf(row);
+      if (!fileMap.has(k)) fileMap.set(k, row);
+    }
+
+    // Never erase, never duplicate: skip any prefix+service already in the table.
+    const existing = new Set(rows.map((r) => keyOf(r)));
+    const toAdd = Array.from(fileMap.values()).filter((r) => !existing.has(keyOf(r)));
+    const skipped = fileMap.size - toAdd.length;
+
+    if (toAdd.length === 0) {
+      setBusy(`Nothing new — all ${fileMap.size} rows are already in your data.`);
+      clearFile();
+      setTimeout(() => setBusy(""), 2500);
+      return;
+    }
+
+    const ok = window.confirm(
+      `This file has ${fileMap.size.toLocaleString()} reference rows (prefix + CPT).\n\n` +
+        `• ${toAdd.length.toLocaleString()} are NEW and will be added\n` +
+        `• ${skipped.toLocaleString()} already exist and will be kept as-is (skipped)\n\n` +
+        `Nothing already in your data is erased or changed. Add the ${toAdd.length.toLocaleString()} new rows?`
+    );
+    if (!ok) {
+      setBusy("Cancelled — nothing changed.");
+      clearFile();
+      setTimeout(() => setBusy(""), 2000);
+      return;
+    }
+
     let n = 0;
-    for (const batch of chunk(parsed, 500)) {
+    for (const batch of chunk(toAdd, 500)) {
       const { error } = await supabase.from("historical_data").insert(batch);
       if (error) {
         setBusy(`Error: ${error.message}`);
         return;
       }
       n += batch.length;
-      setBusy(`Loaded ${n}/${parsed.length}…`);
+      setBusy(`Added ${n}/${toAdd.length}…`);
     }
-    setBusy("✓ Imported");
-    if (fileRef.current) fileRef.current.value = "";
+    setBusy(`✓ Added ${toAdd.length} new · kept ${skipped} existing`);
+    clearFile();
     load();
-    setTimeout(() => setBusy(""), 1500);
+    setTimeout(() => setBusy(""), 2500);
   };
 
   const RENDER_CAP = 500;
@@ -174,7 +226,7 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
                 id="hist-file"
               />
               <label htmlFor="hist-file" className="btn-gold cursor-pointer">
-                ↥ Import reference
+                ↥ Upload data
               </label>
             </>
           )}
@@ -231,7 +283,7 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
               <tr>
                 <td colSpan={11} className="td py-10 text-center text-surface-muted">
                   {rows.length === 0
-                    ? "No reference data yet. Import the BCBS prefix sheet."
+                    ? "No reference data yet. Upload a Prefix Data export to build it."
                     : "No matches."}
                 </td>
               </tr>
