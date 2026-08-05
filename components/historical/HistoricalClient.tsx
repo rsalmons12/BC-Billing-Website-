@@ -71,9 +71,13 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
     });
   }, [rows, search, stateF, yearF, payerF]);
 
-  // key for de-duping a reference row: prefix + CPT, normalized.
-  const keyOf = (prefix: string, cpt: string) =>
-    `${(prefix || "").trim().toUpperCase()}|${(cpt || "").trim().toUpperCase()}`;
+  // key for de-duping a reference row: prefix + the service code (a CPT, or a Rev
+  // code when the line had no CPT). Falls back across columns so both new and
+  // existing rows key consistently.
+  const keyOf = (r: { prefix?: string; code_used?: string; cpt_code?: string; rev_code?: string }) => {
+    const service = (r.code_used || r.cpt_code || r.rev_code || "").trim().toUpperCase();
+    return `${(r.prefix || "").trim().toUpperCase()}|${service}`;
+  };
 
   const clearFile = () => {
     if (fileRef.current) fileRef.current.value = "";
@@ -103,13 +107,13 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
     // keeping the first — parsePrefixData already picked the most-common amount.
     const fileMap = new Map<string, HistoricalRow>();
     for (const row of parsed) {
-      const k = keyOf(row.prefix, row.cpt_code);
+      const k = keyOf(row);
       if (!fileMap.has(k)) fileMap.set(k, row);
     }
 
-    // Never erase, never duplicate: skip any prefix+CPT already in the table.
-    const existing = new Set(rows.map((r) => keyOf(r.prefix, r.cpt_code)));
-    const toAdd = Array.from(fileMap.values()).filter((r) => !existing.has(keyOf(r.prefix, r.cpt_code)));
+    // Never erase, never duplicate: skip any prefix+service already in the table.
+    const existing = new Set(rows.map((r) => keyOf(r)));
+    const toAdd = Array.from(fileMap.values()).filter((r) => !existing.has(keyOf(r)));
     const skipped = fileMap.size - toAdd.length;
 
     if (toAdd.length === 0) {
