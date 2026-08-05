@@ -305,6 +305,8 @@ export function parseHistorical(data: ArrayBuffer): HistoricalRow[] {
 //   • Rev code (only when the line has NO CPT): 0905, 0906, 0907, 0912, 0913
 const ALLOWED_CPT = new Set(["S0201", "H0035", "H0015", "S9480"]);
 const ALLOWED_REV = new Set(["0905", "0906", "0907", "0912", "0913"]);
+// Only keep claims from this service year onward; older history is ignored.
+const MIN_YEAR = 2024;
 // Rev codes come in as "912" / "0912" / "0912.0" — normalize to a 4-digit string.
 function normRev(v: unknown): string {
   const d = toStr(v).replace(/\D/g, "");
@@ -377,6 +379,10 @@ export function parsePrefixData(data: ArrayBuffer): HistoricalRow[] {
         continue; // not a level-of-care service we track
       }
 
+      // Only recent history counts — keep 2024 and newer, drop older/undated lines.
+      const year = (toStr(r[col.from]).match(/(19|20)\d{2}/) ?? [""])[0];
+      if (!year || Number(year) < MIN_YEAR) continue;
+
       const paid = toNum(r[col.paid]) ?? 0;
       if (paid <= 0) continue; // denials / unpaid aren't reimbursements
       const units = col.units >= 0 ? toNum(r[col.units]) ?? 1 : 1;
@@ -389,7 +395,6 @@ export function parsePrefixData(data: ArrayBuffer): HistoricalRow[] {
         groups.set(key, g);
       }
       g.counts.set(perDay, (g.counts.get(perDay) ?? 0) + 1);
-      const year = (toStr(r[col.from]).match(/(19|20)\d{2}/) ?? [""])[0];
       if (year > g.maxYear) g.maxYear = year;
       if (!g.reps.has(perDay)) {
         g.reps.set(perDay, {
