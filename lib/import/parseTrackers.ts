@@ -300,6 +300,106 @@ export function parseHistorical(data: ArrayBuffer): HistoricalRow[] {
   return out;
 }
 
+// Raw "Prefix Data" claims export → collapsed reference rows.
+// Each claim line carries a full member ID, CPT, units, and amount paid. We turn
+// this into the historical_data reference by:
+//   • prefix   = first 3 characters of the member ID (payer-specific, e.g. W27)
+//   • per-day  = amount paid ÷ charge units (round to whole dollars)
+//   • one row per (prefix + CPT), using the MOST COMMON per-day amount
+//     (ties → the lower amount) — the reimbursement that recurs, not the outlier.
+// Denied / $0-paid lines are ignored (they aren't reimbursements). Returns [] if
+// the sheet isn't this raw format (so the caller can fall back to parseHistorical).
+export function parsePrefixData(data: ArrayBuffer): HistoricalRow[] {
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+
+  type Rep = { payer: string; desc: string; state: string; year: string; rev: string; billed: number | null };
+  // key = "PREFIX|CPT" → { counts of each per-day $, a representative row per amount }
+  const groups = new Map<
+    string,
+    { prefix: string; cpt: string; counts: Map<number, number>; reps: Map<number, Rep>; maxYear: string }
+  >();
+
+  for (const name of wb.SheetNames) {
+    const rows = rowsOf(wb.Sheets[name]);
+    const hr = findHeaderRow(rows, /member id/, 8);
+    if (hr < 0) continue;
+    const h = rows[hr].map(norm);
+    const col = {
+      state: findCol(h, [/office state/, /^state$/, /state/]),
+      payer: findCol(h, [/payer name/, /payer/]),
+      mid: findCol(h, [/member id/]),
+      cpt: findCol(h, [/cpt code/, /^cpt$/]),
+      rev: findCol(h, [/rev code/]),
+      desc: findCol(h, [/full description/, /description/]),
+      from: findCol(h, [/from date/, /service date/, /claim.*date/]),
+      billed: findCol(h, [/unit price/, /billed/]),
+      units: findCol(h, [/units/]),
+      paid: findCol(h, [/amount paid/, /paid/]),
+    };
+    if (col.mid < 0 || col.cpt < 0 || col.paid < 0) continue; // not this format
+
+    for (let i = hr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const prefix = toStr(r[col.mid]).trim().slice(0, 3).toUpperCase();
+      const cpt = toStr(r[col.cpt]).trim().toUpperCase();
+      if (prefix.length < 3 || !cpt) continue;
+      const paid = toNum(r[col.paid]) ?? 0;
+      if (paid <= 0) continue; // denials / unpaid aren't reimbursements
+      const units = col.units >= 0 ? toNum(r[col.units]) ?? 1 : 1;
+      const perDay = Math.round(paid / (units > 0 ? units : 1)); // whole dollars
+
+      const key = `${prefix}|${cpt}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { prefix, cpt, counts: new Map(), reps: new Map(), maxYear: "" };
+        groups.set(key, g);
+      }
+      g.counts.set(perDay, (g.counts.get(perDay) ?? 0) + 1);
+      const year = (toStr(r[col.from]).match(/(19|20)\d{2}/) ?? [""])[0];
+      if (year > g.maxYear) g.maxYear = year;
+      if (!g.reps.has(perDay)) {
+        g.reps.set(perDay, {
+          payer: col.payer >= 0 ? toStr(r[col.payer]).trim() : "",
+          desc: col.desc >= 0 ? toStr(r[col.desc]).trim() : "",
+          state: col.state >= 0 ? toStr(r[col.state]).trim() : "",
+          year,
+          rev: col.rev >= 0 ? toStr(r[col.rev]).trim() : "",
+          billed: col.billed >= 0 ? toNum(r[col.billed]) : null,
+        });
+      }
+    }
+  }
+
+  const out: HistoricalRow[] = [];
+  for (const g of groups.values()) {
+    // Most common per-day amount; ties broken toward the LOWER amount.
+    let bestAmt = 0;
+    let bestN = -1;
+    for (const [amt, n] of g.counts) {
+      if (n > bestN || (n === bestN && amt < bestAmt)) {
+        bestAmt = amt;
+        bestN = n;
+      }
+    }
+    const rep = g.reps.get(bestAmt);
+    out.push({
+      state: rep?.state ?? "",
+      year: g.maxYear || rep?.year || "",
+      prefix: g.prefix,
+      prefix_length: "3",
+      payer: rep?.payer ?? "",
+      code_type: "CPT",
+      code_used: g.cpt,
+      cpt_code: g.cpt,
+      rev_code: rep?.rev ?? "",
+      description: rep?.desc ?? "",
+      billed_per_day: rep?.billed ?? null,
+      paid_per_day: bestAmt,
+    });
+  }
+  return out;
+}
+
 // Weekly Assignments — from the COLLECTOR ASSIGNMENTS sheet -----------------
 export interface AssignmentRow {
   collectors: string;
