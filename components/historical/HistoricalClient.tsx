@@ -71,12 +71,23 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
     });
   }, [rows, search, stateF, yearF, payerF]);
 
-  // key for de-duping a reference row: prefix + the service code (a CPT, or a Rev
-  // code when the line had no CPT). Falls back across columns so both new and
-  // existing rows key consistently.
-  const keyOf = (r: { prefix?: string; code_used?: string; cpt_code?: string; rev_code?: string }) => {
-    const service = (r.code_used || r.cpt_code || r.rev_code || "").trim().toUpperCase();
-    return `${(r.prefix || "").trim().toUpperCase()}|${service}`;
+  // Key for de-duping a reference row. The same prefix legitimately appears for
+  // different states, years, and payers (e.g. a BCBS prefix across CA and NJ with
+  // different reimbursements), so the identity is state + year + prefix + service
+  // (a CPT, or a Rev code when there's no CPT) + payer — not prefix + code alone,
+  // which would wrongly collapse those distinct rows.
+  const keyOf = (r: {
+    state?: string;
+    year?: string;
+    prefix?: string;
+    payer?: string;
+    code_used?: string;
+    cpt_code?: string;
+    rev_code?: string;
+  }) => {
+    const up = (v: unknown) => String(v ?? "").trim().toUpperCase();
+    const service = up(r.code_used || r.cpt_code || r.rev_code);
+    return [up(r.state), up(r.year), up(r.prefix), service, up(r.payer)].join("|");
   };
 
   const clearFile = () => {
