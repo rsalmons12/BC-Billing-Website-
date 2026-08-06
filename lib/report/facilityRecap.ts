@@ -234,15 +234,8 @@ export async function computeFacilityRecaps(
 
   const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing] =
     await Promise.all([
-      pageAll<{
-        id: string;
-        name: string;
-        short_name: string | null;
-        php_floor: number | null;
-        iop_floor: number | null;
-        op_floor: number | null;
-      }>(client, (a) =>
-        a.from("facilities").select("id,name,short_name,php_floor,iop_floor,op_floor").order("name")
+      pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
+        a.from("facilities").select("id,name,short_name").order("name")
       ),
       pageAll<ClaimRow>(client, (a) =>
         scopeIn(
@@ -292,6 +285,28 @@ export async function computeFacilityRecaps(
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
   const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
+
+  // Per-facility reimbursement floors. These columns are optional — if the
+  // migration hasn't been run yet the query errors, and we treat every floor as
+  // unset (the below-floor section just doesn't appear). Crucially this must NOT
+  // take the whole recap down, so it's fetched separately from the facility list.
+  const floorsByFac = new Map<string, ReimbursementFloors>();
+  {
+    const pos = (n: number | null | undefined) => (n != null && n > 0 ? n : null);
+    const { data: floorRows, error: floorErr } = await client
+      .from("facilities")
+      .select("id,php_floor,iop_floor,op_floor");
+    if (!floorErr) {
+      for (const r of (floorRows ?? []) as {
+        id: string;
+        php_floor: number | null;
+        iop_floor: number | null;
+        op_floor: number | null;
+      }[]) {
+        floorsByFac.set(r.id, { PHP: pos(r.php_floor), IOP: pos(r.iop_floor), OP: pos(r.op_floor) });
+      }
+    }
+  }
 
   const outlooks = computeOutlooks({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
@@ -438,11 +453,12 @@ export async function computeFacilityRecaps(
       approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
       census: facilityCensusWeek(f.id, census),
-      belowFloor: computeBelowFloor(f.id, payments, census, {
-        PHP: f.php_floor != null && f.php_floor > 0 ? f.php_floor : null,
-        IOP: f.iop_floor != null && f.iop_floor > 0 ? f.iop_floor : null,
-        OP: f.op_floor != null && f.op_floor > 0 ? f.op_floor : null,
-      }),
+      belowFloor: computeBelowFloor(
+        f.id,
+        payments,
+        census,
+        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
+      ),
     };
   });
 }
