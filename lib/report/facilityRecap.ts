@@ -187,22 +187,6 @@ function computeBelowFloor(
   return out;
 }
 
-// Read the management-set reimbursement floors ({php, iop}) from app_settings.
-async function readFloors(client: Admin): Promise<ReimbursementFloors> {
-  try {
-    const { data } = await client
-      .from("app_settings")
-      .select("value")
-      .eq("key", "reimbursement_floor")
-      .maybeSingle();
-    const v = (data?.value ?? {}) as { php?: unknown; iop?: unknown };
-    const num = (x: unknown) => (typeof x === "number" && isFinite(x) && x > 0 ? x : null);
-    return { PHP: num(v.php), IOP: num(v.iop) };
-  } catch {
-    return { PHP: null, IOP: null };
-  }
-}
-
 // Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
 function payerFromStatus(status: unknown): string {
   const t = String(status ?? "").trim();
@@ -241,8 +225,14 @@ export async function computeFacilityRecaps(
 
   const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing] =
     await Promise.all([
-      pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
-        a.from("facilities").select("id,name,short_name").order("name")
+      pageAll<{
+        id: string;
+        name: string;
+        short_name: string | null;
+        php_floor: number | null;
+        iop_floor: number | null;
+      }>(client, (a) =>
+        a.from("facilities").select("id,name,short_name,php_floor,iop_floor").order("name")
       ),
       pageAll<ClaimRow>(client, (a) =>
         scopeIn(
@@ -292,7 +282,6 @@ export async function computeFacilityRecaps(
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
   const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
-  const floors = await readFloors(client);
 
   const outlooks = computeOutlooks({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
@@ -439,7 +428,10 @@ export async function computeFacilityRecaps(
       approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
       census: facilityCensusWeek(f.id, census),
-      belowFloor: computeBelowFloor(f.id, payments, census, floors),
+      belowFloor: computeBelowFloor(f.id, payments, census, {
+        PHP: f.php_floor != null && f.php_floor > 0 ? f.php_floor : null,
+        IOP: f.iop_floor != null && f.iop_floor > 0 ? f.iop_floor : null,
+      }),
     };
   });
 }

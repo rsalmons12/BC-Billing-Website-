@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { TABS } from "@/lib/nav";
 import BackupButton from "@/components/admin/BackupButton";
@@ -31,35 +31,6 @@ export default function AdminClient({
   const flash = (m: string) => {
     setMsg(m);
     setTimeout(() => setMsg(""), 2000);
-  };
-
-  // ---- reimbursement floors (global, per level of care) ----
-  const [phpFloor, setPhpFloor] = useState("");
-  const [iopFloor, setIopFloor] = useState("");
-  const [savingFloors, setSavingFloors] = useState(false);
-  useEffect(() => {
-    supabase
-      .from("app_settings")
-      .select("value")
-      .eq("key", "reimbursement_floor")
-      .maybeSingle()
-      .then(({ data }) => {
-        const v = (data?.value ?? {}) as { php?: number; iop?: number };
-        if (typeof v.php === "number") setPhpFloor(String(v.php));
-        if (typeof v.iop === "number") setIopFloor(String(v.iop));
-      });
-  }, [supabase]);
-  const saveFloors = async () => {
-    setSavingFloors(true);
-    const toNum = (s: string) => (s.trim() === "" ? null : Number(s.replace(/[^0-9.]/g, "")));
-    const { error } = await supabase.from("app_settings").upsert({
-      key: "reimbursement_floor",
-      value: { php: toNum(phpFloor), iop: toNum(iopFloor) },
-      updated_by: selfId,
-      updated_at: new Date().toISOString(),
-    });
-    setSavingFloors(false);
-    flash(error ? `Error: ${error.message}` : "Reimbursement floors saved");
   };
 
   const reloadProfiles = useCallback(async () => {
@@ -208,44 +179,6 @@ export default function AdminClient({
         <div className="ml-auto flex items-center gap-3">
           {msg && <span className="text-sm font-medium text-secured">{msg}</span>}
           <BackupButton />
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-        <div className="text-sm font-semibold text-surface-ink">Reimbursement floors (per day)</div>
-        <div className="mt-1 max-w-2xl text-xs text-surface-muted">
-          Current census patients in PHP or IOP whose most-recent payment pays below these
-          amounts per day are listed on each facility&apos;s daily recap. Leave a level blank to
-          turn it off.
-        </div>
-        <div className="mt-3 flex flex-wrap items-end gap-4">
-          <label className="text-xs font-medium text-surface-muted">
-            PHP $/day
-            <input
-              value={phpFloor}
-              onChange={(e) => setPhpFloor(e.target.value)}
-              inputMode="decimal"
-              placeholder="e.g. 1000"
-              className="input mt-1 block w-32"
-            />
-          </label>
-          <label className="text-xs font-medium text-surface-muted">
-            IOP $/day
-            <input
-              value={iopFloor}
-              onChange={(e) => setIopFloor(e.target.value)}
-              inputMode="decimal"
-              placeholder="e.g. 800"
-              className="input mt-1 block w-32"
-            />
-          </label>
-          <button
-            onClick={saveFloors}
-            disabled={savingFloors}
-            className="rounded-lg bg-command px-4 py-2 text-sm font-semibold text-command-text disabled:opacity-50"
-          >
-            {savingFloors ? "Saving…" : "Save floors"}
-          </button>
         </div>
       </div>
 
@@ -602,6 +535,8 @@ function FacilitiesTab({
               <th className="th">Short name</th>
               <th className="th">State</th>
               <th className="th">Bill %</th>
+              <th className="th">PHP floor</th>
+              <th className="th">IOP floor</th>
               <th className="th">Square pay link</th>
               <th className="th">Email (for Messages)</th>
               <th className="th"></th>
@@ -652,6 +587,36 @@ function FacilitiesTab({
                     }}
                     className="cell-input w-20"
                     placeholder="%"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    defaultValue={f.php_floor ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                      const next = v == null || isNaN(v) ? null : v;
+                      if (next !== (f.php_floor ?? null)) save(f, { php_floor: next });
+                    }}
+                    className="cell-input w-24"
+                    placeholder="$/day"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    defaultValue={f.iop_floor ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                      const next = v == null || isNaN(v) ? null : v;
+                      if (next !== (f.iop_floor ?? null)) save(f, { iop_floor: next });
+                    }}
+                    className="cell-input w-24"
+                    placeholder="$/day"
                   />
                 </td>
                 <td className="td">

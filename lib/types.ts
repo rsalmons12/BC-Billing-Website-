@@ -10,6 +10,8 @@ export interface Facility {
   email: string | null;
   billing_rate: number | null; // % of monthly collections billed to this facility
   square_pay_url: string | null; // Square payment link shown on the invoice
+  php_floor: number | null; // per-day reimbursement floor for PHP (recap flag)
+  iop_floor: number | null; // per-day reimbursement floor for IOP (recap flag)
   created_at: string;
 }
 
