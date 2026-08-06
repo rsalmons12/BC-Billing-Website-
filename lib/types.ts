@@ -12,6 +12,7 @@ export interface Facility {
   square_pay_url: string | null; // Square payment link shown on the invoice
   php_floor: number | null; // per-day reimbursement floor for PHP (recap flag)
   iop_floor: number | null; // per-day reimbursement floor for IOP (recap flag)
+  op_floor: number | null; // per-day reimbursement floor for OP (recap flag)
   created_at: string;
 }
 

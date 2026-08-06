@@ -5,3 +5,4 @@
 -- ============================================================================
 alter table facilities add column if not exists php_floor numeric;
 alter table facilities add column if not exists iop_floor numeric;
+alter table facilities add column if not exists op_floor numeric;
