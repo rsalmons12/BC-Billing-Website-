@@ -50,7 +50,9 @@ type PayRow = {
   period: string | null;
   cpt_description: string | null;
   dos_from: string | null;
+  dos_to: string | null;
   patient_name: string | null;
+  member_id: string | null;
 };
 type BilledRow = {
   facility_id: string | null;
@@ -91,6 +93,114 @@ export interface FacilityRecap {
   approvedNegCount: number;
   outlook: FacilityOutlook | null;
   census: CensusWeekSummary | null; // prior week: patients, missed groups, missed rev
+  // Current census patients (PHP/IOP) whose most-recent payment pays less per day
+  // than the management-set floor for that level of care.
+  belowFloor: BelowFloorRow[];
+}
+
+export interface BelowFloorRow {
+  patient: string;
+  loc: "PHP" | "IOP";
+  perDay: number; // most-recent paid ÷ days
+  floor: number; // the threshold it fell under
+}
+
+export interface ReimbursementFloors {
+  PHP: number | null;
+  IOP: number | null;
+}
+
+// Level of care of a census row / a payment's CPT, reduced to PHP or IOP.
+function locFamily2(loc: unknown): "PHP" | "IOP" | null {
+  const u = String(loc ?? "").toUpperCase();
+  if (/\bIOP\b/.test(u) || /H0015|S9480/.test(u)) return "IOP";
+  if (/\bPHP\b/.test(u) || /PARTIAL/.test(u) || /S0201|H0035/.test(u)) return "PHP";
+  return null;
+}
+// Normalize a name so "Doe, Jane" and "Jane Doe" match.
+function normName(s: unknown): string {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+function inclusiveDays(from: unknown, to: unknown): number {
+  const a = Date.parse(String(from ?? ""));
+  const b = Date.parse(String(to ?? ""));
+  if (isNaN(a)) return 1;
+  if (isNaN(b) || b < a) return 1;
+  return Math.round((b - a) / 86400000) + 1;
+}
+const payDate = (p: PayRow): number =>
+  Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
+
+// For one facility: current census patients (latest week) in PHP/IOP whose MOST
+// RECENT payment for that level of care pays less per day than the floor.
+function computeBelowFloor(
+  facilityId: string,
+  payments: PayRow[],
+  census: { facility_id: string | null; level_of_care: string | null; week_start: string | null; patient_name: string | null; member_id: string | null }[],
+  floors: ReimbursementFloors
+): BelowFloorRow[] {
+  if (floors.PHP == null && floors.IOP == null) return [];
+  const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
+  if (fCensus.length === 0) return [];
+  const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
+  const current = fCensus.filter((c) => c.week_start === latestWeek);
+  const fPays = payments.filter((p) => p.facility_id === facilityId);
+
+  const out: BelowFloorRow[] = [];
+  const seen = new Set<string>();
+  for (const c of current) {
+    const fam = locFamily2(c.level_of_care);
+    if (!fam) continue;
+    const floor = floors[fam];
+    if (floor == null || floor <= 0) continue;
+
+    const cid = String(c.member_id ?? "").trim().toLowerCase();
+    const cnm = normName(c.patient_name);
+    const dedupe = `${cid || cnm}|${fam}`;
+    if (seen.has(dedupe)) continue;
+
+    // That patient's payments for THIS level of care (match by member id, else name).
+    const matches = fPays.filter((p) => {
+      if (locFamily2(p.cpt_description) !== fam) return false;
+      const pid = String(p.member_id ?? "").trim().toLowerCase();
+      if (cid && pid) return cid === pid;
+      return normName(p.patient_name) === cnm && cnm !== "";
+    });
+    if (matches.length === 0) continue;
+
+    matches.sort((a, b) => payDate(b) - payDate(a));
+    const p = matches[0];
+    const days = inclusiveDays(p.dos_from, p.dos_to);
+    const perDay = (p.paid_amount ?? 0) / (days > 0 ? days : 1);
+    if (perDay > 0 && perDay < floor) {
+      out.push({ patient: String(c.patient_name ?? "").trim() || "—", loc: fam, perDay: Math.round(perDay), floor });
+      seen.add(dedupe);
+    }
+  }
+  out.sort((a, b) => a.perDay - b.perDay);
+  return out;
+}
+
+// Read the management-set reimbursement floors ({php, iop}) from app_settings.
+async function readFloors(client: Admin): Promise<ReimbursementFloors> {
+  try {
+    const { data } = await client
+      .from("app_settings")
+      .select("value")
+      .eq("key", "reimbursement_floor")
+      .maybeSingle();
+    const v = (data?.value ?? {}) as { php?: unknown; iop?: unknown };
+    const num = (x: unknown) => (typeof x === "number" && isFinite(x) && x > 0 ? x : null);
+    return { PHP: num(v.php), IOP: num(v.iop) };
+  } catch {
+    return { PHP: null, IOP: null };
+  }
 }
 
 // Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
@@ -147,7 +257,7 @@ export async function computeFacilityRecaps(
           a
             .from("payments")
             .select(
-              "facility_id,paid_amount,payment_source,deposit_date,payment_entered,period,cpt_description,dos_from,patient_name"
+              "facility_id,paid_amount,payment_source,deposit_date,payment_entered,period,cpt_description,dos_from,dos_to,patient_name,member_id"
             )
         )
       ).catch(() => []),
@@ -170,7 +280,9 @@ export async function computeFacilityRecaps(
       ).catch(() => []),
       pageAll<any>(client, (a) =>
         scopeIn(
-          a.from("census").select("facility_id,level_of_care,week_start,gn_rate,patient_name,days")
+          a
+            .from("census")
+            .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,member_id")
         )
       ).catch(() => []),
       pageAll<any>(client, (a) =>
@@ -180,6 +292,7 @@ export async function computeFacilityRecaps(
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
   const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
+  const floors = await readFloors(client);
 
   const outlooks = computeOutlooks({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
@@ -326,6 +439,7 @@ export async function computeFacilityRecaps(
       approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
       census: facilityCensusWeek(f.id, census),
+      belowFloor: computeBelowFloor(f.id, payments, census, floors),
     };
   });
 }
@@ -523,6 +637,33 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
               ${statTile("Missed Revenue", money(r.census.missedRev), r.census.missedRev > 0 ? NEG : POS)}
               <td style="width:25%"></td>
             </tr></table>`
+        : ""
+    }
+
+    ${
+      r.belowFloor.length
+        ? `${sectionHead("Patients below reimbursement floor")}
+            <table style="border-collapse:collapse;width:100%;font-size:13px">
+              <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+                <th style="padding:4px 0">Patient</th>
+                <th style="padding:4px 0">Level</th>
+                <th style="padding:4px 0;text-align:right">Paid / day</th>
+                <th style="padding:4px 0;text-align:right">Floor</th>
+              </tr></thead>
+              <tbody>
+                ${r.belowFloor
+                  .map(
+                    (b) => `<tr>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR}">${b.patient}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR}">${b.loc}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:700;color:${NEG};${NUM}">${money(b.perDay)}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${FAINT};${NUM}">${money(b.floor)}</td>
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+            <div style="margin-top:8px;color:${MUTE};font-size:12px">Current patients whose most recent payment comes in under the per-day floor for their level of care.</div>`
         : ""
     }
 
