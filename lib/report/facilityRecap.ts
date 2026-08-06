@@ -170,8 +170,12 @@ function computeBelowFloor(
     const dedupe = `${cid || cnm}|${fam}`;
     if (seen.has(dedupe)) continue;
 
-    // That patient's payments for THIS level of care (match by member id, else name).
+    // That patient's REAL payments for THIS level of care (match by member id,
+    // else name). Only payments with money actually received count — a patient
+    // with no payment yet (or only $0 lines) is never listed; they appear only
+    // once payment comes in.
     const matches = fPays.filter((p) => {
+      if ((p.paid_amount ?? 0) <= 0) return false;
       if (locFamily2(p.cpt_description) !== fam) return false;
       const pid = String(p.member_id ?? "").trim().toLowerCase();
       if (cid && pid) return cid === pid;
