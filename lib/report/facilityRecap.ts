@@ -98,9 +98,11 @@ export interface FacilityRecap {
   belowFloor: BelowFloorRow[];
 }
 
+type LocFamily = "PHP" | "IOP" | "OP";
+
 export interface BelowFloorRow {
   patient: string;
-  loc: "PHP" | "IOP";
+  loc: LocFamily;
   perDay: number; // most-recent paid ÷ days
   floor: number; // the threshold it fell under
 }
@@ -108,13 +110,16 @@ export interface BelowFloorRow {
 export interface ReimbursementFloors {
   PHP: number | null;
   IOP: number | null;
+  OP: number | null;
 }
 
-// Level of care of a census row / a payment's CPT, reduced to PHP or IOP.
-function locFamily2(loc: unknown): "PHP" | "IOP" | null {
+// Level of care of a census row / a payment's CPT, reduced to PHP / IOP / OP.
+// Order matters: IOP is checked before OP so "IOP" never falls through to OP.
+function locFamily2(loc: unknown): LocFamily | null {
   const u = String(loc ?? "").toUpperCase();
   if (/\bIOP\b/.test(u) || /H0015|S9480/.test(u)) return "IOP";
   if (/\bPHP\b/.test(u) || /PARTIAL/.test(u) || /S0201|H0035/.test(u)) return "PHP";
+  if (/\bOP\b/.test(u) || /OUTPATIENT/.test(u) || /90853/.test(u)) return "OP";
   return null;
 }
 // Normalize a name so "Doe, Jane" and "Jane Doe" match.
@@ -145,7 +150,7 @@ function computeBelowFloor(
   census: { facility_id: string | null; level_of_care: string | null; week_start: string | null; patient_name: string | null; member_id: string | null }[],
   floors: ReimbursementFloors
 ): BelowFloorRow[] {
-  if (floors.PHP == null && floors.IOP == null) return [];
+  if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
   const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
@@ -231,8 +236,9 @@ export async function computeFacilityRecaps(
         short_name: string | null;
         php_floor: number | null;
         iop_floor: number | null;
+        op_floor: number | null;
       }>(client, (a) =>
-        a.from("facilities").select("id,name,short_name,php_floor,iop_floor").order("name")
+        a.from("facilities").select("id,name,short_name,php_floor,iop_floor,op_floor").order("name")
       ),
       pageAll<ClaimRow>(client, (a) =>
         scopeIn(
@@ -431,6 +437,7 @@ export async function computeFacilityRecaps(
       belowFloor: computeBelowFloor(f.id, payments, census, {
         PHP: f.php_floor != null && f.php_floor > 0 ? f.php_floor : null,
         IOP: f.iop_floor != null && f.iop_floor > 0 ? f.iop_floor : null,
+        OP: f.op_floor != null && f.op_floor > 0 ? f.op_floor : null,
       }),
     };
   });

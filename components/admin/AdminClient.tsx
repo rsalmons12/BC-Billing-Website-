@@ -537,6 +537,7 @@ function FacilitiesTab({
               <th className="th">Bill %</th>
               <th className="th">PHP floor</th>
               <th className="th">IOP floor</th>
+              <th className="th">OP floor</th>
               <th className="th">Square pay link</th>
               <th className="th">Email (for Messages)</th>
               <th className="th"></th>
@@ -614,6 +615,21 @@ function FacilitiesTab({
                       const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
                       const next = v == null || isNaN(v) ? null : v;
                       if (next !== (f.iop_floor ?? null)) save(f, { iop_floor: next });
+                    }}
+                    className="cell-input w-24"
+                    placeholder="$/day"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    defaultValue={f.op_floor ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                      const next = v == null || isNaN(v) ? null : v;
+                      if (next !== (f.op_floor ?? null)) save(f, { op_floor: next });
                     }}
                     className="cell-input w-24"
                     placeholder="$/day"
