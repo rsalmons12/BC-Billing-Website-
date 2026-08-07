@@ -3,10 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { selectAll } from "@/lib/supabase/page";
 
-// Diagnostic for the recap's "patients below reimbursement floor" list. Shows,
-// per facility, the exact funnel: floors set → current census patients in
-// PHP/IOP/OP → how many matched a real payment → how many came in below floor.
-// Management only. Open /api/facility-recap/debug in the browser while logged in.
+// Diagnostic for the recap's "patients below reimbursement floor" list, which
+// reads straight from the PAYMENT UPLOADS. Per facility it shows: floors set →
+// paid PHP/IOP/OP payments → distinct patients → how many came in below floor,
+// with samples. Management only. Open /api/facility-recap/debug while logged in.
 export const dynamic = "force-dynamic";
 
 type LocFamily = "PHP" | "IOP" | "OP";
@@ -39,13 +39,6 @@ type Pay = {
   deposit_date: string | null;
   payment_entered: string | null;
 };
-type Cen = {
-  facility_id: string | null;
-  level_of_care: string | null;
-  week_start: string | null;
-  patient_name: string | null;
-  member_id: string | null;
-};
 
 export async function GET() {
   const supabase = createClient();
@@ -64,7 +57,6 @@ export async function GET() {
     return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY not set." }, { status: 503 });
   }
 
-  // Facilities + floors (tolerate the columns not existing).
   const { data: facs, error: facErr } = await admin
     .from("facilities")
     .select("id,name,short_name,php_floor,iop_floor,op_floor");
@@ -73,9 +65,6 @@ export async function GET() {
       error: `Floor columns not found — run the 0040 migration. (${facErr.message})`,
     });
 
-  const census = await selectAll<Cen>((f, t) =>
-    admin.from("census").select("facility_id,level_of_care,week_start,patient_name,member_id").range(f, t)
-  ).catch(() => []);
   const payments = await selectAll<Pay>((f, t) =>
     admin
       .from("payments")
@@ -94,66 +83,46 @@ export async function GET() {
       IOP: f.iop_floor ?? null,
       OP: f.op_floor ?? null,
     };
-    const fCensus = census.filter((c) => c.facility_id === f.id && c.week_start);
-    const latestWeek = fCensus.length
-      ? fCensus.map((c) => c.week_start!).sort().slice(-1)[0]
-      : null;
-    const current = fCensus.filter((c) => c.week_start === latestWeek);
     const fPays = payments.filter((p) => p.facility_id === f.id);
 
-    let inScope = 0;
-    let matched = 0;
+    // Most recent paid PHP/IOP/OP payment per (patient + level of care).
+    const latest = new Map<string, { patient: string; loc: LocFamily; pay: Pay }>();
+    let paidLocPayments = 0;
+    for (const p of fPays) {
+      if ((p.paid_amount ?? 0) <= 0) continue;
+      const fam = locFamily(p.cpt_description);
+      if (!fam) continue;
+      paidLocPayments++;
+      const idKey = String(p.member_id ?? "").trim().toLowerCase() || normName(p.patient_name);
+      if (!idKey) continue;
+      const key = `${idKey}|${fam}`;
+      const prev = latest.get(key);
+      if (!prev || payDate(p) > payDate(prev.pay))
+        latest.set(key, { patient: String(p.patient_name ?? "").trim() || "—", loc: fam, pay: p });
+    }
+
     let below = 0;
     const samples: unknown[] = [];
-    for (const c of current) {
-      const fam = locFamily(c.level_of_care);
-      if (!fam) continue;
-      inScope++;
-      const floor = floors[fam];
-      const cid = String(c.member_id ?? "").trim().toLowerCase();
-      const cnm = normName(c.patient_name);
-      const ms = fPays.filter((p) => {
-        if ((p.paid_amount ?? 0) <= 0) return false;
-        if (locFamily(p.cpt_description) !== fam) return false;
-        const pid = String(p.member_id ?? "").trim().toLowerCase();
-        if (cid && pid) return cid === pid;
-        return normName(p.patient_name) === cnm && cnm !== "";
-      });
-      const hasMatch = ms.length > 0;
-      if (hasMatch) matched++;
-      let perDay: number | null = null;
-      if (hasMatch) {
-        ms.sort((a, b) => payDate(b) - payDate(a));
-        const p = ms[0];
-        perDay = Math.round((p.paid_amount ?? 0) / inclusiveDays(p.dos_from, p.dos_to));
-        if (floor != null && floor > 0 && perDay < floor) below++;
-      }
-      if (samples.length < 8)
-        samples.push({
-          patient: c.patient_name,
-          loc: fam,
-          floor,
-          hasMemberId: !!cid,
-          matchedPayment: hasMatch,
-          perDay,
-          belowFloor: hasMatch && floor != null && perDay != null && perDay < floor,
-        });
+    for (const { patient, loc, pay } of latest.values()) {
+      const floor = floors[loc];
+      const perDay = Math.round((pay.paid_amount ?? 0) / inclusiveDays(pay.dos_from, pay.dos_to));
+      const isBelow = floor != null && floor > 0 && perDay > 0 && perDay < floor;
+      if (isBelow) below++;
+      if (samples.length < 10) samples.push({ patient, loc, floor, perDay, belowFloor: isBelow });
     }
 
     return {
       facility: f.short_name || f.name,
       floors,
-      latestCensusWeek: latestWeek,
-      currentCensusPatients: current.length,
-      inPhpIopOp: inScope,
-      matchedToPayment: matched,
+      paidLocPayments,
+      distinctPatients: latest.size,
       belowFloor: below,
       samples,
     };
   });
 
   return NextResponse.json({
-    note: "For each facility: floors set, current census patients, how many are PHP/IOP/OP, how many matched a paid claim, and how many came in below the floor. If 'inPhpIopOp' is 0 the census has no current PHP/IOP/OP patients; if 'matchedToPayment' is 0 the census patients aren't linking to payments (member id / name mismatch).",
+    note: "Reads straight from payment uploads. Per facility: floors set, count of paid PHP/IOP/OP payments, distinct patients, and how many came in below floor. If paidLocPayments is 0, there are no paid PHP/IOP/OP payments for that facility (check the CPT on the uploads: S0201/H0035=PHP, H0015/S9480=IOP, 90853=OP). If floors are null, set them in Admin.",
     facilities: out,
   });
 }
