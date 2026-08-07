@@ -7,7 +7,7 @@ import { CENSUS_LOC_GN, censusLocRate } from "@/lib/types";
 // drives missed revenue. Expected reimbursement = 30% of billed.
 // ---------------------------------------------------------------------------
 
-const WEEKLY_RULES: Record<string, number> = { CM: 2, ID: 1 };
+const WEEKLY_RULES: Record<string, number> = { CM: 1, ID: 1 };
 export const CENSUS_REQ_CODES = ["GN", "CM", "ID"] as const;
 const EXPECTED_PCT = 0.3;
 
