@@ -142,23 +142,30 @@ function inclusiveDays(from: unknown, to: unknown): number {
 const payDate = (p: PayRow): number =>
   Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
 
+// Only payments dated within this many days count toward the floor list, so it
+// reflects currently-active patients rather than all-time history.
+const FLOOR_WINDOW_DAYS = 60;
+
 // For one facility: read straight from the PAYMENT UPLOADS. Group the facility's
-// paid PHP/IOP/OP payments by patient (member id, else name) + level of care,
-// take each patient's MOST RECENT payment, compute paid-per-day (paid ÷ days),
-// and list anyone under the floor for that level. No census dependency — a
-// patient appears purely because their payment came in below the floor.
+// paid PHP/IOP/OP payments FROM THE LAST 60 DAYS by patient (member id, else
+// name) + level of care, take each patient's MOST RECENT payment, compute
+// paid-per-day (paid ÷ days), and list anyone under the floor for that level.
+// No census dependency — a patient appears purely because a recent payment came
+// in below the floor.
 function computeBelowFloor(
   facilityId: string,
   payments: PayRow[],
-  floors: ReimbursementFloors
+  floors: ReimbursementFloors,
+  cutoffMs: number
 ): BelowFloorRow[] {
   if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
 
-  // Most recent paid payment per (patient + level of care).
+  // Most recent paid payment per (patient + level of care), last 60 days only.
   const latest = new Map<string, { patient: string; loc: LocFamily; pay: PayRow }>();
   for (const p of payments) {
     if (p.facility_id !== facilityId) continue;
     if ((p.paid_amount ?? 0) <= 0) continue; // only real money counts
+    if (payDate(p) < cutoffMs) continue; // only the last 60 days
     const fam = locFamily2(p.cpt_description);
     if (!fam) continue;
     if (floors[fam] == null || (floors[fam] ?? 0) <= 0) continue;
@@ -441,7 +448,8 @@ export async function computeFacilityRecaps(
       belowFloor: computeBelowFloor(
         f.id,
         payments,
-        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
+        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null },
+        now.getTime() - FLOOR_WINDOW_DAYS * 86400000
       ),
     };
   });

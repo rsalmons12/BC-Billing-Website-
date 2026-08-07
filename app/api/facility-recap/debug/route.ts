@@ -73,6 +73,7 @@ export async function GET() {
   ).catch(() => []);
 
   const payDate = (p: Pay) => Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
+  const cutoffMs = Date.now() - 60 * 86400000; // last 60 days only
 
   const out = (facs ?? []).map((f: {
     id: string; name: string; short_name: string | null;
@@ -90,6 +91,7 @@ export async function GET() {
     let paidLocPayments = 0;
     for (const p of fPays) {
       if ((p.paid_amount ?? 0) <= 0) continue;
+      if (payDate(p) < cutoffMs) continue; // last 60 days only
       const fam = locFamily(p.cpt_description);
       if (!fam) continue;
       paidLocPayments++;
@@ -122,7 +124,7 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    note: "Reads straight from payment uploads. Per facility: floors set, count of paid PHP/IOP/OP payments, distinct patients, and how many came in below floor. If paidLocPayments is 0, there are no paid PHP/IOP/OP payments for that facility (check the CPT on the uploads: S0201/H0035=PHP, H0015/S9480=IOP, 90853=OP). If floors are null, set them in Admin.",
+    note: "Reads straight from payment uploads, LAST 60 DAYS only. Per facility: floors set, count of paid PHP/IOP/OP payments in the window, distinct patients, and how many came in below floor. If paidLocPayments is 0, there are no paid PHP/IOP/OP payments in the last 60 days for that facility (check the CPT on the uploads: S0201/H0035=PHP, H0015/S9480=IOP, 90853=OP). If floors are null, set them in Admin.",
     facilities: out,
   });
 }
