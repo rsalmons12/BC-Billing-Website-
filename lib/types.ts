@@ -360,6 +360,8 @@ export const CENSUS_LOC_GN: Record<string, number> = {
   "PHP MH 6": 6,
   "PHP 5": 5,
   "PHP MH 5": 5,
+  "IOP 6": 6,
+  "IOP 6 MH": 6,
   "IOP 5": 5,
   "IOP MH 5": 5,
   "IOP 4": 4,
