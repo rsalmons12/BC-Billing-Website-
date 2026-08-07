@@ -91,7 +91,7 @@ function EditMoney({
 // Weekly rules from the census Summary sheet (per client, per week). Missed
 // sessions are tracked per service — GN, CM, and ID each get their own bucket
 // (PF is not counted toward missed).
-const WEEKLY_RULES: Record<string, number> = { CM: 2, ID: 1 };
+const WEEKLY_RULES: Record<string, number> = { CM: 1, ID: 1 };
 const REQ_CODES = ["GN", "CM", "ID"] as const;
 
 // Per-GN billed rate for a client: a per-row override if set, else the standard
