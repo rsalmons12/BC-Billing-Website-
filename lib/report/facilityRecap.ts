@@ -144,10 +144,10 @@ const payDate = (p: PayRow): number =>
 
 // Only payments dated within this many days count toward the floor list, so it
 // reflects currently-active patients rather than all-time history.
-const FLOOR_WINDOW_DAYS = 60;
+const FLOOR_WINDOW_DAYS = 30;
 
 // For one facility: read straight from the PAYMENT UPLOADS. Group the facility's
-// paid PHP/IOP/OP payments FROM THE LAST 60 DAYS by patient (member id, else
+// paid PHP/IOP/OP payments FROM THE LAST 30 DAYS by patient (member id, else
 // name) + level of care, take each patient's MOST RECENT payment, compute
 // paid-per-day (paid ÷ days), and list anyone under the floor for that level.
 // No census dependency — a patient appears purely because a recent payment came
@@ -160,12 +160,12 @@ function computeBelowFloor(
 ): BelowFloorRow[] {
   if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
 
-  // Most recent paid payment per (patient + level of care), last 60 days only.
+  // Most recent paid payment per (patient + level of care), last 30 days only.
   const latest = new Map<string, { patient: string; loc: LocFamily; pay: PayRow }>();
   for (const p of payments) {
     if (p.facility_id !== facilityId) continue;
     if ((p.paid_amount ?? 0) <= 0) continue; // only real money counts
-    if (payDate(p) < cutoffMs) continue; // only the last 60 days
+    if (payDate(p) < cutoffMs) continue; // only the last 30 days
     const fam = locFamily2(p.cpt_description);
     if (!fam) continue;
     if (floors[fam] == null || (floors[fam] ?? 0) <= 0) continue;
