@@ -8,6 +8,14 @@ export default function NotificationsClient() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Section
+        title="Chief of Staff — morning brief"
+        subtitle="What needs attention today across every facility: aging AR (100+ / 65–99), open auth issues, and census misses. Emailed to management automatically at 7:00 AM ET."
+        actions={[
+          { label: "✉ Email now to management", url: "/api/chief-of-staff", body: {}, primary: true },
+          { label: "Send test to me", url: "/api/chief-of-staff", body: { test: true } },
+        ]}
+      />
+      <Section
         title="End-of-day production summary"
         subtitle="Every collector's day, emailed to management. Runs automatically at 5:00 PM ET."
         actions={[
