@@ -142,47 +142,60 @@ function inclusiveDays(from: unknown, to: unknown): number {
 const payDate = (p: PayRow): number =>
   Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
 
-// Only payments dated within this many days count toward the floor list, so it
-// reflects currently-active patients rather than all-time history.
-const FLOOR_WINDOW_DAYS = 30;
-
-// For one facility: read straight from the PAYMENT UPLOADS. Group the facility's
-// paid PHP/IOP/OP payments FROM THE LAST 30 DAYS by patient (member id, else
-// name) + level of care, take each patient's MOST RECENT payment, compute
-// paid-per-day (paid ÷ days), and list anyone under the floor for that level.
-// No census dependency — a patient appears purely because a recent payment came
-// in below the floor.
+// For one facility: the CURRENT CENSUS patients (latest census week) in
+// PHP/IOP/OP whose most recent payment for that level of care comes in under the
+// floor. Census-driven — only patients currently on the census are considered
+// (no day-window on payments).
 function computeBelowFloor(
   facilityId: string,
   payments: PayRow[],
-  floors: ReimbursementFloors,
-  cutoffMs: number
+  census: {
+    facility_id: string | null;
+    level_of_care: string | null;
+    week_start: string | null;
+    patient_name: string | null;
+    member_id: string | null;
+  }[],
+  floors: ReimbursementFloors
 ): BelowFloorRow[] {
   if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
-
-  // Most recent paid payment per (patient + level of care), last 30 days only.
-  const latest = new Map<string, { patient: string; loc: LocFamily; pay: PayRow }>();
-  for (const p of payments) {
-    if (p.facility_id !== facilityId) continue;
-    if ((p.paid_amount ?? 0) <= 0) continue; // only real money counts
-    if (payDate(p) < cutoffMs) continue; // only the last 30 days
-    const fam = locFamily2(p.cpt_description);
-    if (!fam) continue;
-    if (floors[fam] == null || (floors[fam] ?? 0) <= 0) continue;
-    const idKey = String(p.member_id ?? "").trim().toLowerCase() || normName(p.patient_name);
-    if (!idKey) continue;
-    const key = `${idKey}|${fam}`;
-    const prev = latest.get(key);
-    if (!prev || payDate(p) > payDate(prev.pay))
-      latest.set(key, { patient: String(p.patient_name ?? "").trim() || "—", loc: fam, pay: p });
-  }
+  const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
+  if (fCensus.length === 0) return [];
+  const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
+  const current = fCensus.filter((c) => c.week_start === latestWeek);
+  const fPays = payments.filter((p) => p.facility_id === facilityId);
 
   const out: BelowFloorRow[] = [];
-  for (const { patient, loc, pay } of latest.values()) {
-    const floor = floors[loc]!;
-    const days = inclusiveDays(pay.dos_from, pay.dos_to);
-    const perDay = Math.round((pay.paid_amount ?? 0) / (days > 0 ? days : 1));
-    if (perDay > 0 && perDay < floor) out.push({ patient, loc, perDay, floor });
+  const seen = new Set<string>();
+  for (const c of current) {
+    const fam = locFamily2(c.level_of_care);
+    if (!fam) continue;
+    const floor = floors[fam];
+    if (floor == null || floor <= 0) continue;
+
+    const cid = String(c.member_id ?? "").trim().toLowerCase();
+    const cnm = normName(c.patient_name);
+    const dedupe = `${cid || cnm}|${fam}`;
+    if (seen.has(dedupe)) continue;
+
+    // That census patient's real payments for THIS level of care (member id, else name).
+    const matches = fPays.filter((p) => {
+      if ((p.paid_amount ?? 0) <= 0) return false;
+      if (locFamily2(p.cpt_description) !== fam) return false;
+      const pid = String(p.member_id ?? "").trim().toLowerCase();
+      if (cid && pid) return cid === pid;
+      return normName(p.patient_name) === cnm && cnm !== "";
+    });
+    if (matches.length === 0) continue;
+
+    matches.sort((a, b) => payDate(b) - payDate(a));
+    const p = matches[0];
+    const days = inclusiveDays(p.dos_from, p.dos_to);
+    const perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
+    if (perDay > 0 && perDay < floor) {
+      out.push({ patient: String(c.patient_name ?? "").trim() || "—", loc: fam, perDay, floor });
+      seen.add(dedupe);
+    }
   }
   out.sort((a, b) => a.perDay - b.perDay);
   return out;
@@ -448,8 +461,8 @@ export async function computeFacilityRecaps(
       belowFloor: computeBelowFloor(
         f.id,
         payments,
-        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null },
-        now.getTime() - FLOOR_WINDOW_DAYS * 86400000
+        census,
+        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
       ),
     };
   });
@@ -674,7 +687,7 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
                   .join("")}
               </tbody>
             </table>
-            <div style="margin-top:8px;color:${MUTE};font-size:12px">Current patients whose most recent payment comes in under the per-day floor for their level of care.</div>`
+            <div style="margin-top:8px;color:${MUTE};font-size:12px">Current census patients whose most recent payment for their level of care comes in under the per-day floor.</div>`
         : ""
     }
 
