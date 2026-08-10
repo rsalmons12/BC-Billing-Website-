@@ -5,11 +5,7 @@
       "schedule": "0 11,12 * * *"
     },
     {
-      "path": "/api/cron/eod-summary",
-      "schedule": "0 21,22 * * *"
-    },
-    {
-      "path": "/api/cron/facility-recap",
+      "path": "/api/cron/evening",
       "schedule": "0 21,22 * * *"
     }
   ]
