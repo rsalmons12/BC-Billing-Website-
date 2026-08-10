@@ -3,9 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { selectAll } from "@/lib/supabase/page";
 
-// Diagnostic for the recap's "patients below reimbursement floor" list, which
-// reads straight from the PAYMENT UPLOADS. Per facility it shows: floors set →
-// paid PHP/IOP/OP payments → distinct patients → how many came in below floor,
+// Diagnostic for the recap's "patients below reimbursement floor" list, which is
+// CURRENT-CENSUS driven. Per facility it shows: floors set → current census
+// patients in PHP/IOP/OP → how many matched a paid claim → how many below floor,
 // with samples. Management only. Open /api/facility-recap/debug while logged in.
 export const dynamic = "force-dynamic";
 
@@ -39,6 +39,13 @@ type Pay = {
   deposit_date: string | null;
   payment_entered: string | null;
 };
+type Cen = {
+  facility_id: string | null;
+  level_of_care: string | null;
+  week_start: string | null;
+  patient_name: string | null;
+  member_id: string | null;
+};
 
 export async function GET() {
   const supabase = createClient();
@@ -65,6 +72,9 @@ export async function GET() {
       error: `Floor columns not found — run the 0040 migration. (${facErr.message})`,
     });
 
+  const census = await selectAll<Cen>((f, t) =>
+    admin.from("census").select("facility_id,level_of_care,week_start,patient_name,member_id").range(f, t)
+  ).catch(() => []);
   const payments = await selectAll<Pay>((f, t) =>
     admin
       .from("payments")
@@ -73,7 +83,6 @@ export async function GET() {
   ).catch(() => []);
 
   const payDate = (p: Pay) => Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
-  const cutoffMs = Date.now() - 30 * 86400000; // last 30 days only
 
   const out = (facs ?? []).map((f: {
     id: string; name: string; short_name: string | null;
@@ -84,47 +93,56 @@ export async function GET() {
       IOP: f.iop_floor ?? null,
       OP: f.op_floor ?? null,
     };
+    const fCensus = census.filter((c) => c.facility_id === f.id && c.week_start);
+    const latestWeek = fCensus.length ? fCensus.map((c) => c.week_start!).sort().slice(-1)[0] : null;
+    const current = fCensus.filter((c) => c.week_start === latestWeek);
     const fPays = payments.filter((p) => p.facility_id === f.id);
 
-    // Most recent paid PHP/IOP/OP payment per (patient + level of care).
-    const latest = new Map<string, { patient: string; loc: LocFamily; pay: Pay }>();
-    let paidLocPayments = 0;
-    for (const p of fPays) {
-      if ((p.paid_amount ?? 0) <= 0) continue;
-      if (payDate(p) < cutoffMs) continue; // last 30 days only
-      const fam = locFamily(p.cpt_description);
-      if (!fam) continue;
-      paidLocPayments++;
-      const idKey = String(p.member_id ?? "").trim().toLowerCase() || normName(p.patient_name);
-      if (!idKey) continue;
-      const key = `${idKey}|${fam}`;
-      const prev = latest.get(key);
-      if (!prev || payDate(p) > payDate(prev.pay))
-        latest.set(key, { patient: String(p.patient_name ?? "").trim() || "—", loc: fam, pay: p });
-    }
-
+    let inScope = 0;
+    let matched = 0;
     let below = 0;
     const samples: unknown[] = [];
-    for (const { patient, loc, pay } of latest.values()) {
-      const floor = floors[loc];
-      const perDay = Math.round((pay.paid_amount ?? 0) / inclusiveDays(pay.dos_from, pay.dos_to));
-      const isBelow = floor != null && floor > 0 && perDay > 0 && perDay < floor;
-      if (isBelow) below++;
-      if (samples.length < 10) samples.push({ patient, loc, floor, perDay, belowFloor: isBelow });
+    for (const c of current) {
+      const fam = locFamily(c.level_of_care);
+      if (!fam) continue;
+      inScope++;
+      const floor = floors[fam];
+      const cid = String(c.member_id ?? "").trim().toLowerCase();
+      const cnm = normName(c.patient_name);
+      const ms = fPays.filter((p) => {
+        if ((p.paid_amount ?? 0) <= 0) return false;
+        if (locFamily(p.cpt_description) !== fam) return false;
+        const pid = String(p.member_id ?? "").trim().toLowerCase();
+        if (cid && pid) return cid === pid;
+        return normName(p.patient_name) === cnm && cnm !== "";
+      });
+      const hasMatch = ms.length > 0;
+      if (hasMatch) matched++;
+      let perDay: number | null = null;
+      if (hasMatch) {
+        ms.sort((a, b) => payDate(b) - payDate(a));
+        const p = ms[0];
+        perDay = Math.round((p.paid_amount ?? 0) / inclusiveDays(p.dos_from, p.dos_to));
+        if (floor != null && floor > 0 && perDay < floor) below++;
+      }
+      if (samples.length < 10)
+        samples.push({ patient: c.patient_name, loc: fam, floor, matchedPayment: hasMatch, perDay });
     }
 
     return {
       facility: f.short_name || f.name,
       floors,
-      paidLocPayments,
-      distinctPatients: latest.size,
+      latestCensusWeek: latestWeek,
+      currentCensusPatients: current.length,
+      inPhpIopOp: inScope,
+      matchedToPayment: matched,
       belowFloor: below,
       samples,
     };
   });
 
   return NextResponse.json({
-    note: "Reads straight from payment uploads, LAST 30 DAYS only. Per facility: floors set, count of paid PHP/IOP/OP payments in the window, distinct patients, and how many came in below floor. If paidLocPayments is 0, there are no paid PHP/IOP/OP payments in the last 30 days for that facility (check the CPT on the uploads: S0201/H0035=PHP, H0015/S9480=IOP, 90853=OP). If floors are null, set them in Admin.",
+    note: "Census-driven. Per facility: floors set, current census week + patient count, how many are PHP/IOP/OP, how many matched a paid claim, and how many came in below floor. If inPhpIopOp is 0 the current census has no PHP/IOP/OP patients; if matchedToPayment is 0 the census patients aren't linking to payments (member id / name mismatch).",
     facilities: out,
   });
 }
