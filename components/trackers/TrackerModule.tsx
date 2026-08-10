@@ -1028,16 +1028,31 @@ export function ImportPanel({
       // Delete just the touched facilities' rows for these month(s), then insert.
       // Also sweep any pre-tagged rows (period is null) left from before months
       // were tracked, so old data doesn't linger as duplicates.
+      // Clear in small batches by primary key. A single delete over all matching
+      // rows can run past the database statement timeout once a table is large;
+      // repeatedly grabbing the first 500 matching ids and deleting those keeps
+      // every statement short (and offset always 0, so it can't slow down).
       for (const fids of chunk(touched, 50)) {
-        const { error } = await supabase
-          .from(config.table)
-          .delete()
-          .in("facility_id", fids)
-          .or(`period.in.(${periods.join(",")}),period.is.null`);
-        if (error) {
-          add(`Error clearing month(s): ${error.message}`);
-          setBusy(false);
-          return;
+        for (;;) {
+          const { data: idRows, error: findErr } = await supabase
+            .from(config.table)
+            .select("id")
+            .in("facility_id", fids)
+            .or(`period.in.(${periods.join(",")}),period.is.null`)
+            .limit(500);
+          if (findErr) {
+            add(`Error clearing month(s): ${findErr.message}`);
+            setBusy(false);
+            return;
+          }
+          if (!idRows || idRows.length === 0) break;
+          const ids = (idRows as { id: string }[]).map((r) => r.id);
+          const { error: delErr } = await supabase.from(config.table).delete().in("id", ids);
+          if (delErr) {
+            add(`Error clearing month(s): ${delErr.message}`);
+            setBusy(false);
+            return;
+          }
         }
       }
       let inserted = 0;
