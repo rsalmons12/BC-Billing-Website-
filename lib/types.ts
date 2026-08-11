@@ -139,6 +139,8 @@ export interface ClaimWork {
   mgmt_needed: boolean;
   auth_issue_status: string; // '', 'open', 'completed'
   auth_notes: string;
+  assigned_to: string | null; // sticky collector owner (survives daily roster re-hash)
+  follow_up_date: string | null; // date the claim should resurface for follow-up
   resolved: boolean;
   resolved_at: string | null;
   resolved_by: string | null;
