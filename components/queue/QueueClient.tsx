@@ -1456,6 +1456,26 @@ export default function QueueClient({
                               <span>DOS: <b className="text-surface-ink">{r.dos_from || "—"}{r.dos_to ? `–${r.dos_to}` : ""}</b></span>
                             </div>
 
+                            {/* Claim # (payer claim number) + optional Reference # */}
+                            <div className="flex flex-wrap items-end gap-3">
+                              <label className="flex flex-col gap-0.5">
+                                <span className="label">Claim #</span>
+                                <TextCell
+                                  value={w.claim_number}
+                                  className="w-40 font-mono"
+                                  onSave={(v) => patchRow(r.claim_id, { claim_number: v })}
+                                />
+                              </label>
+                              <label className="flex flex-col gap-0.5">
+                                <span className="label">Ref # (optional)</span>
+                                <TextCell
+                                  value={w.reference_number}
+                                  className="w-40 font-mono"
+                                  onSave={(v) => patchRow(r.claim_id, { reference_number: v })}
+                                />
+                              </label>
+                            </div>
+
                             {/* Flags */}
                             <div className="flex flex-wrap items-end gap-3">
                               <FlagField label="Med Rec" value={w.med_rec} options={FLAG_OPTIONS} onChange={(v) => onMedRecChange(r, v)} />
