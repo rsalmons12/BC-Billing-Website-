@@ -92,19 +92,20 @@ export async function POST(request: Request) {
   // DRY RUN: return exactly who a real send would reach — no email sent — so the
   // button can show the recipient list and confirm before anything goes out.
   if (body.dryRun) {
-    const [recipients, mgmt, { data: facs }] = await Promise.all([
+    const [recipients, mgmt, extraBcc, { data: facs }] = await Promise.all([
       facilityRecipients(admin),
       managementEmails(admin),
+      recapBccByFacility(admin),
       admin.from("facilities").select("id,name,short_name"),
     ]);
     const nameOf = (id: string) => {
       const f = (facs ?? []).find((x: { id: string }) => x.id === id);
       return f?.short_name || f?.name || id;
     };
-    const willSend: { name: string; emails: string[] }[] = [];
+    const willSend: { name: string; emails: string[]; bcc: string[] }[] = [];
     const withRecip = new Set<string>();
     for (const [fid, emails] of recipients) {
-      willSend.push({ name: nameOf(fid), emails });
+      willSend.push({ name: nameOf(fid), emails, bcc: extraBcc.get(fid) ?? [] });
       withRecip.add(fid);
     }
     willSend.sort((a, b) => a.name.localeCompare(b.name));

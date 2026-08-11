@@ -73,20 +73,27 @@ function Section({
           setBusy(false);
           return;
         }
-        const facs = (d.facilities ?? []) as { name: string; emails: string[] }[];
+        const facs = (d.facilities ?? []) as { name: string; emails: string[]; bcc?: string[] }[];
         if (facs.length === 0) {
           setMsg("No facility has a login email — nothing would send.");
           setBusy(false);
           setTimeout(() => setMsg(""), 10000);
           return;
         }
-        const lines = facs.map((f) => `• ${f.name} → ${f.emails.join(", ")}`).join("\n");
+        const lines = facs
+          .map((f) => {
+            const bcc = (f.bcc ?? []).filter(Boolean);
+            return `• ${f.name} → ${f.emails.join(", ")}${
+              bcc.length ? `   (BCC: ${bcc.join(", ")})` : ""
+            }`;
+          })
+          .join("\n");
         const skipped = (d.skipped ?? []) as string[];
         if (
           !confirm(
             `This will email each facility ITS OWN recap to:\n\n${lines}\n\n${
               d.managementCopied ?? 0
-            } manager(s) BCC'd.${skipped.length ? `\n\nNo login (skipped): ${skipped.join(", ")}` : ""}\n\nSend now?`
+            } manager(s) BCC'd on every one.${skipped.length ? `\n\nNo login (skipped): ${skipped.join(", ")}` : ""}\n\nSend now?`
           )
         ) {
           setMsg("Cancelled — nothing was sent.");
