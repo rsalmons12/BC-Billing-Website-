@@ -30,6 +30,24 @@ function todayStamp(): string {
     "0"
   )}/${String(d.getFullYear()).slice(2)}`;
 }
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+// Split a notes field into its dated entries. Each line is "MM/DD/YY (INIT): text".
+export function parseNoteEntries(value: string): { head: string; text: string }[] {
+  return String(value ?? "")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .map((line) => {
+      const m = line.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\(([^)]*)\):\s*([\s\S]*)$/);
+      return m ? { head: `${m[1]} · ${m[2]}`, text: m[3] } : { head: "", text: line };
+    });
+}
 
 // Best-guess initials from a full name (e.g. "Amanda Ruiz" -> "AR").
 function deriveInitials(name: string): string {
@@ -880,7 +898,14 @@ export default function CollectionsClient({
                     <td className="td">
                       <NotesCell
                         value={w.notes}
-                        onSave={(v) => patchRow(r.claim_id, { notes: v })}
+                        initials={(w.initials && w.initials.trim()) || deriveInitials(userName)}
+                        onAppend={(full, init) =>
+                          patchRow(r.claim_id, {
+                            notes: full,
+                            initials: init,
+                            date_worked: todayISO(),
+                          })
+                        }
                       />
                     </td>
                     <td className="td">
@@ -987,23 +1012,67 @@ function StatusCell({
   );
 }
 
+// Notes as an add-only, date-separated timeline: each existing entry is its own
+// read-only bordered box (newest on top); a box at the bottom adds a new stamped
+// entry. onAppend receives the full new notes string plus the initials used.
 function NotesCell({
   value,
-  onSave,
+  initials,
+  onAppend,
 }: {
   value: string;
-  onSave: (v: string) => void;
+  initials: string;
+  onAppend: (full: string, init: string) => void;
 }) {
-  const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
+  const [draft, setDraft] = useState("");
+  const entries = parseNoteEntries(value);
+  const add = () => {
+    const t = draft.trim();
+    const init = (initials || "").trim().toUpperCase();
+    if (!t) return;
+    if (!init) {
+      alert("Add your initials on this row first, then add the note.");
+      return;
+    }
+    const entry = `${todayStamp()} (${init}): ${t}`;
+    onAppend(value.trim() ? `${entry}\n${value}` : entry, init);
+    setDraft("");
+  };
   return (
-    <AutoTextarea
-      value={v}
-      onChange={setV}
-      onBlur={() => v !== value && onSave(v)}
-      className="min-w-[18rem] max-w-[28rem]"
-      placeholder="Add a note…"
-    />
+    <div className="min-w-[18rem] max-w-[28rem] space-y-1.5">
+      {entries.map((e, i) => (
+        <div
+          key={i}
+          className="rounded-md border border-surface-border bg-surface px-2 py-1 text-xs leading-snug"
+        >
+          {e.head && <div className="mb-0.5 font-semibold text-surface-muted">{e.head}</div>}
+          <div className="whitespace-pre-wrap break-words">{e.text}</div>
+        </div>
+      ))}
+      <div className="flex items-start gap-1">
+        <textarea
+          value={draft}
+          rows={1}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add a note…"
+          className="cell-input flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug"
+        />
+        <button
+          type="button"
+          onClick={add}
+          disabled={!draft.trim()}
+          className="shrink-0 rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-surface-muted hover:bg-surface disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
+    </div>
   );
 }
 
