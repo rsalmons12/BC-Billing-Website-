@@ -512,8 +512,8 @@ function FacilitiesTab({
         </div>
       </div>
 
-      <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="card overflow-x-auto">
+        <table className="w-full min-w-[64rem] text-sm">
           <thead className="bg-surface">
             <tr>
               <th className="th">Legal name</th>
