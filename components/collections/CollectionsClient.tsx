@@ -63,6 +63,8 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
   notes: "",
   collab_note: "",
+  claim_number: "",
+  reference_number: "",
   initials: "",
   date_worked: "",
   med_rec: "",
@@ -458,6 +460,8 @@ export default function CollectionsClient({
       return {
         Patient: r.patient_name ?? "",
         "Member ID": r.member_id ?? "",
+        "Claim #": w.claim_number,
+        "Ref #": w.reference_number,
         "Age (Days)": r.age_days ?? 0,
         "DOS From": r.dos_from ?? "",
         "DOS To": r.dos_to ?? "",
@@ -632,6 +636,8 @@ export default function CollectionsClient({
             <tr>
               <th className="th sticky left-0 bg-surface">Patient</th>
               <th className="th">Member ID</th>
+              <th className="th">Claim #</th>
+              <th className="th">Ref #</th>
               <th className="th">Age</th>
               <th className="th">DOS</th>
               <th className="th text-right">Charge</th>
@@ -652,14 +658,14 @@ export default function CollectionsClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={17} className="td py-10 text-center text-surface-muted">
+                <td colSpan={19} className="td py-10 text-center text-surface-muted">
                   Loading claims…
                 </td>
               </tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={17} className="td py-10 text-center text-surface-muted">
+                <td colSpan={19} className="td py-10 text-center text-surface-muted">
                   No claims match the current filters.
                 </td>
               </tr>
@@ -673,7 +679,7 @@ export default function CollectionsClient({
                   return (
                     <Fragment key={`g-${g.key}`}>
                       <tr className="bg-command/[0.04]">
-                        <td colSpan={17} className="td">
+                        <td colSpan={19} className="td">
                           <div className="flex w-full items-center gap-3">
                             <button
                               onClick={() => toggleGroup(g.key)}
@@ -706,7 +712,7 @@ export default function CollectionsClient({
                       </tr>
                       {panelOpen && (
                         <tr className="bg-command/[0.06]">
-                          <td colSpan={17} className="td">
+                          <td colSpan={19} className="td">
                             <div className="space-y-2 p-1">
                               <div className="text-xs font-semibold">
                                 Attach one note to the selected dates of service — {g.key}
@@ -820,6 +826,22 @@ export default function CollectionsClient({
                       {r.member_id || "—"}
                     </td>
                     <td className="td">
+                      <TextCell
+                        value={w.claim_number}
+                        className="w-28 font-mono text-xs"
+                        onSave={(v) => patchRow(r.claim_id, { claim_number: v })}
+                      />
+                    </td>
+                    <td className="td">
+                      <TextCell
+                        value={w.reference_number}
+                        className="w-28 font-mono text-xs"
+                        onSave={(v) =>
+                          patchRow(r.claim_id, { reference_number: v })
+                        }
+                      />
+                    </td>
+                    <td className="td">
                       <AgeBadge age={r.age_days} />
                     </td>
                     <td className="td text-xs text-surface-muted">
@@ -899,6 +921,10 @@ export default function CollectionsClient({
                       <NotesCell
                         value={w.notes}
                         initials={(w.initials && w.initials.trim()) || deriveInitials(userName)}
+                        claimNumber={w.claim_number}
+                        onClaimNumber={(v) =>
+                          patchRow(r.claim_id, { claim_number: v })
+                        }
                         onAppend={(full, init) =>
                           patchRow(r.claim_id, {
                             notes: full,
@@ -928,7 +954,7 @@ export default function CollectionsClient({
               })}
             {!loading && hiddenCount > 0 && (
               <tr>
-                <td colSpan={17} className="td py-3 text-center text-xs text-surface-muted">
+                <td colSpan={19} className="td py-3 text-center text-xs text-surface-muted">
                   Showing the first {RENDER_CAP} of {displayItems.length} —
                   narrow with a bucket, search, or collapse patient groups to see
                   the rest.
@@ -1018,10 +1044,14 @@ function StatusCell({
 function NotesCell({
   value,
   initials,
+  claimNumber,
+  onClaimNumber,
   onAppend,
 }: {
   value: string;
   initials: string;
+  claimNumber: string;
+  onClaimNumber: (v: string) => void;
   onAppend: (full: string, init: string) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -1033,6 +1063,15 @@ function NotesCell({
     if (!init) {
       alert("Add your initials on this row first, then add the note.");
       return;
+    }
+    // Prompt (but don't block) for the claim number when it's still empty, so
+    // the payer claim number gets its own field instead of living in notes.
+    if (!claimNumber.trim()) {
+      const entered = window.prompt(
+        "Claim # for this account? (Enter it here or leave blank to skip.)",
+        ""
+      );
+      if (entered && entered.trim()) onClaimNumber(entered.trim());
     }
     const entry = `${todayStamp()} (${init}): ${t}`;
     onAppend(value.trim() ? `${entry}\n${value}` : entry, init);
