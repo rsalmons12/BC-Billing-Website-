@@ -71,18 +71,12 @@ export interface CensusWeekSummary {
   expected: number; // expected revenue for the week
 }
 
-// Summarize ONE facility's PRIOR census week (the last completed week — the
-// current week is usually still in progress). Falls back to the only week when
-// there's no prior week yet.
-export function facilityCensusWeek(facilityId: string, rows: CensusLike[]): CensusWeekSummary | null {
-  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
-  if (fRows.length === 0) return null;
-  // Distinct weeks, oldest→newest. Prior week = the one before the most recent;
-  // if only one week exists, use it (nothing prior to fall back to).
-  const distinctWeeks = Array.from(new Set(fRows.map((r) => r.week_start!))).sort();
-  const week = distinctWeeks[distinctWeeks.length - 2] ?? distinctWeeks[distinctWeeks.length - 1];
-  const weekRows = fRows.filter((r) => r.week_start === week);
-
+// Summarize the census rows for one specific week of one facility.
+function summarizeWeek(
+  facilityId: string,
+  weekRows: CensusLike[],
+  week: string | null
+): CensusWeekSummary {
   const missed: Record<string, number> = {};
   for (const c of CENSUS_REQ_CODES) missed[c] = 0;
   let missedRev = 0;
@@ -106,6 +100,39 @@ export function facilityCensusWeek(facilityId: string, rows: CensusLike[]): Cens
     missedGroups: missed.GN,
     missedRev,
     expected,
+  };
+}
+
+// Summarize ONE facility's PRIOR census week (the last completed week — the
+// current week is usually still in progress). Falls back to the only week when
+// there's no prior week yet.
+export function facilityCensusWeek(facilityId: string, rows: CensusLike[]): CensusWeekSummary | null {
+  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
+  if (fRows.length === 0) return null;
+  // Distinct weeks, oldest→newest. Prior week = the one before the most recent;
+  // if only one week exists, use it (nothing prior to fall back to).
+  const distinctWeeks = Array.from(new Set(fRows.map((r) => r.week_start!))).sort();
+  const week = distinctWeeks[distinctWeeks.length - 2] ?? distinctWeeks[distinctWeeks.length - 1];
+  return summarizeWeek(facilityId, fRows.filter((r) => r.week_start === week), week);
+}
+
+// The CURRENT census week and the week before it, for a side-by-side "this week
+// vs last week" comparison. current = the most recent week on file; prior = the
+// week before it (null when there's only one week of census yet).
+export function facilityCensusCompare(
+  facilityId: string,
+  rows: CensusLike[]
+): { current: CensusWeekSummary | null; prior: CensusWeekSummary | null } {
+  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
+  if (fRows.length === 0) return { current: null, prior: null };
+  const distinctWeeks = Array.from(new Set(fRows.map((r) => r.week_start!))).sort();
+  const curWeek = distinctWeeks[distinctWeeks.length - 1];
+  const priWeek = distinctWeeks[distinctWeeks.length - 2] ?? null;
+  return {
+    current: summarizeWeek(facilityId, fRows.filter((r) => r.week_start === curWeek), curWeek),
+    prior: priWeek
+      ? summarizeWeek(facilityId, fRows.filter((r) => r.week_start === priWeek), priWeek)
+      : null,
   };
 }
 
