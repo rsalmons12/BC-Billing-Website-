@@ -525,6 +525,7 @@ function FacilitiesTab({
               <th className="th">OP floor</th>
               <th className="th">Square pay link</th>
               <th className="th">Email (for Messages)</th>
+              <th className="th">Recap BCC</th>
               <th className="th"></th>
             </tr>
           </thead>
@@ -642,6 +643,19 @@ function FacilitiesTab({
                     }
                     className="cell-input min-w-[18rem]"
                     placeholder="billing@facility.com, ar@facility.com"
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="text"
+                    defaultValue={f.recap_bcc ?? ""}
+                    onBlur={(e) =>
+                      e.target.value !== (f.recap_bcc ?? "") &&
+                      save(f, { recap_bcc: e.target.value.trim() || null })
+                    }
+                    className="cell-input min-w-[16rem]"
+                    placeholder="bcc@example.com (blank = none)"
+                    title="Extra address(es) BCC'd on THIS facility's daily recap only. Comma-separated. Leave blank for no extra BCC."
                   />
                 </td>
                 <td className="td text-right">

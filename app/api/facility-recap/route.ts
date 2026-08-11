@@ -5,6 +5,7 @@ import { easternToday, sendResend, managementEmails } from "@/lib/report/eodSumm
 import {
   computeFacilityRecaps,
   facilityRecipients,
+  recapBccByFacility,
   renderFacilityRecap,
 } from "@/lib/report/facilityRecap";
 
@@ -144,9 +145,10 @@ export async function POST(request: Request) {
 
   // REAL: each facility gets its own recap to its own login email, with
   // management BCC'd on every one.
-  const [recipients, mgmt] = await Promise.all([
+  const [recipients, mgmt, extraBcc] = await Promise.all([
     facilityRecipients(admin),
     managementEmails(admin),
+    recapBccByFacility(admin),
   ]);
   let sent = 0;
   const skipped: string[] = [];
@@ -156,8 +158,10 @@ export async function POST(request: Request) {
       skipped.push(r.name);
       continue;
     }
+    // Management BCC + this facility's own extra BCC(s), if any.
+    const bcc = Array.from(new Set([...mgmt, ...(extraBcc.get(r.facilityId) ?? [])]));
     try {
-      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), mgmt);
+      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), bcc);
       sent++;
     } catch {
       skipped.push(r.name);

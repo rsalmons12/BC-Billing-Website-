@@ -513,6 +513,28 @@ export async function facilityRecipients(admin: Admin): Promise<Map<string, stri
   return out;
 }
 
+// Per-facility extra BCC for the daily recap (facilities.recap_bcc, a comma-
+// separated address list). Fetched on its own and error-tolerant, so a missing
+// column (migration not yet applied) never breaks the recap send.
+export async function recapBccByFacility(
+  admin: Admin
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  try {
+    const { data } = await admin.from("facilities").select("id,recap_bcc");
+    for (const f of (data ?? []) as { id: string; recap_bcc: string | null }[]) {
+      const emails = String(f.recap_bcc ?? "")
+        .split(/[,;\s]+/)
+        .map((e) => e.trim())
+        .filter((e) => e.includes("@"));
+      if (emails.length) out.set(f.id, Array.from(new Set(emails)));
+    }
+  } catch {
+    /* column not migrated yet — no extra BCCs */
+  }
+  return out;
+}
+
 // ---- HTML rendering -------------------------------------------------------
 // Navy "brief" look, matched to the monthly reporting & invoice email: Arial,
 // navy headings/section rules, green for dollars, red only for risk. No boxes —
