@@ -42,6 +42,8 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   mgmt_needed: false,
   auth_issue_status: "",
   auth_notes: "",
+  assigned_to: null,
+  follow_up_date: null,
   resolved: false,
   resolved_at: null,
   resolved_by: null,
@@ -331,12 +333,33 @@ export default function QueueClient({
       for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
       return Math.abs(h);
     };
+    // STICKY OWNERSHIP — once a collector works any of a patient's claims, that
+    // patient stays theirs even as the roster changes, instead of being re-hashed
+    // to someone else every day. The owner is persisted on claim_work.assigned_to;
+    // if a patient has it on more than one claim (legacy split), the most recently
+    // updated one wins. A sticky owner only holds if they're still on the facility
+    // roster — if they've left, the patient falls back to the hash so it never
+    // strands. (Reassignment = a manager clearing/changing assigned_to.)
+    const stickyByPatient = new Map<string, { owner: string; at: string }>();
+    for (const c of claims) {
+      const w = workMap[c.claim_id];
+      if (!w?.assigned_to) continue;
+      const k = pkeyOf(c);
+      const at = w.updated_at || "";
+      const prevS = stickyByPatient.get(k);
+      if (!prevS || at > prevS.at) stickyByPatient.set(k, { owner: w.assigned_to, at });
+    }
     const ownerByPatient = new Map<string, string>();
     for (const c of claims) {
       const k = pkeyOf(c);
       if (ownerByPatient.has(k)) continue;
       const roster = rosterByFacility.get(c.facility_id ?? "") ?? [];
       if (roster.length === 0) continue; // no roster yet -> falls to shared pool
+      const sticky = stickyByPatient.get(k);
+      if (sticky && roster.includes(sticky.owner)) {
+        ownerByPatient.set(k, sticky.owner); // keep the patient with their owner
+        continue;
+      }
       ownerByPatient.set(k, roster[hashKey(k) % roster.length]);
     }
 
@@ -474,7 +497,24 @@ export default function QueueClient({
     d.setDate(d.getDate() - REWORK_DAYS);
     return d.getTime();
   })();
+  const todayMidnightMs = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  })();
   const needsWork = (r: ClaimRow) => {
+    // A collector-set follow-up date overrides the flat rework cycle: the claim
+    // rests until that date, then resurfaces on/after it regardless of when it
+    // was last worked.
+    const fu = (r.work?.follow_up_date || "").trim();
+    if (fu) {
+      const ft = Date.parse(fu);
+      if (!isNaN(ft)) {
+        const fd = new Date(ft);
+        fd.setHours(0, 0, 0, 0);
+        return fd.getTime() <= todayMidnightMs; // due today or overdue
+      }
+    }
     const dw = (r.work?.date_worked || "").trim();
     if (!dw) return true; // never worked
     const t = Date.parse(dw);
@@ -676,20 +716,36 @@ export default function QueueClient({
       const prev = rows.find((r) => r.claim_id === claimId);
       const prevWorked = (prev?.work?.date_worked || "") === today;
 
+      // Sticky assignment: the first collector to work a patient's claim takes
+      // ownership (assigned_to) so it stops re-hashing to someone else daily.
+      // Only stamp when it's still unowned — later helpers don't steal it.
+      const patch: Partial<ClaimWork> = { ...partial };
+      const isWorkAction =
+        (patch.date_worked || "") === today ||
+        Boolean(patch.follow_up_date); // scheduling a follow-up claims it too
+      if (isWorkAction && !prev?.work?.assigned_to) {
+        patch.assigned_to = collectorId;
+      }
+
       setRows((cur) =>
         cur.map((r) =>
           r.claim_id === claimId
-            ? { ...r, work: { ...(r.work ?? EMPTY_WORK(claimId)), ...partial } }
+            ? { ...r, work: { ...(r.work ?? EMPTY_WORK(claimId)), ...patch } }
             : r
         )
       );
       setSaveState("Saving…");
+      // The sticky-assignment columns (assigned_to, follow_up_date) may not be
+      // migrated yet. Keep them OUT of the main upsert so a missing column can
+      // never fail the core save (date_worked, notes, flags); persist them in a
+      // separate, error-tolerant write that just no-ops until the migration runs.
+      const { assigned_to, follow_up_date, ...core } = patch;
       supabase
         .from("claim_work")
         .upsert(
           {
             claim_id: claimId,
-            ...partial,
+            ...core,
             updated_by: self.id,
             updated_at: new Date().toISOString(),
           },
@@ -698,6 +754,19 @@ export default function QueueClient({
         .then(({ error }) => {
           setSaveState(error ? `Error: ${error.message}` : "Saved");
           if (!error) setTimeout(() => setSaveState(""), 1000);
+          // After the core row exists, persist the sticky columns if either is
+          // part of this change. Fire-and-forget; a pre-migration failure is
+          // ignored so the feature simply lies dormant until 0042 is applied.
+          if (
+            !error &&
+            (assigned_to !== undefined || follow_up_date !== undefined)
+          ) {
+            const extra: Record<string, unknown> = {};
+            if (assigned_to !== undefined) extra.assigned_to = assigned_to;
+            if (follow_up_date !== undefined)
+              extra.follow_up_date = follow_up_date;
+            supabase.from("claim_work").update(extra).eq("claim_id", claimId);
+          }
         });
 
       // If date_worked transitioned to/from today, sync the production credit.
@@ -707,7 +776,7 @@ export default function QueueClient({
         if (!nowWorked && prevWorked) unlogProduction(claimId);
       }
     },
-    [rows, supabase, self.id, today, logProduction, unlogProduction]
+    [rows, supabase, self.id, collectorId, today, logProduction, unlogProduction]
   );
 
   // All of a patient's claims in the current data (same patient key).
@@ -1408,6 +1477,22 @@ export default function QueueClient({
                               <label className="flex flex-col gap-0.5">
                                 <span className="label">Initials</span>
                                 <TextCell value={w.initials} className="w-16 uppercase" onSave={(v) => patchRow(r.claim_id, { initials: v })} />
+                              </label>
+                              <label className="flex flex-col gap-0.5">
+                                <span className="label" title="Rest this claim until this date, then it comes back to your queue">
+                                  Follow-up
+                                </span>
+                                <input
+                                  type="date"
+                                  value={w.follow_up_date || ""}
+                                  onChange={(e) =>
+                                    patchRow(r.claim_id, {
+                                      follow_up_date: e.target.value || null,
+                                    })
+                                  }
+                                  className="cell-input w-36"
+                                  title="Rest this claim until this date, then it resurfaces for follow-up"
+                                />
                               </label>
                             </div>
 

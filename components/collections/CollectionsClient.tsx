@@ -76,6 +76,8 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   mgmt_needed: false,
   auth_issue_status: "",
   auth_notes: "",
+  assigned_to: null,
+  follow_up_date: null,
   resolved: false,
   resolved_at: null,
   resolved_by: null,
