@@ -17,11 +17,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fires at 11:00 AND 12:00 UTC; only the one at 7 AM Eastern actually sends,
-  // so it stays at 7 AM ET through daylight-saving changes. ?force=1 bypasses.
+  // Single daily cron at 11:00 UTC (see vercel.json). We accept any invocation
+  // in the MORNING Eastern window (6–10 AM) rather than one exact hour, so the
+  // one guaranteed daily run always sends — 7 AM ET in summer (EDT), 6 AM in
+  // winter (EST) — and small cron delays don't skip the day. ?force=1 bypasses.
   const url = new URL(request.url);
-  if (easternHour() !== 7 && url.searchParams.get("force") !== "1")
-    return NextResponse.json({ ok: true, sent: false, reason: "not 7 AM Eastern" });
+  const h = easternHour();
+  if (!(h >= 6 && h <= 10) && url.searchParams.get("force") !== "1")
+    return NextResponse.json({ ok: true, sent: false, reason: `outside morning window (ET hour ${h})` });
 
   let admin;
   try {
@@ -35,7 +38,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: "no management emails on file" });
 
   const date = easternToday();
-  const brief = await computeChiefBrief(admin);
+  let brief;
+  try {
+    brief = await computeChiefBrief(admin);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "brief compute failed" }, { status: 500 });
+  }
   try {
     await sendResend(to, `Chief of Staff — Morning Brief (${date})`, renderChiefBrief(brief, date));
   } catch (e) {

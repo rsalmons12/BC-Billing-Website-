@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/chief-of-staff",
-      "schedule": "0 11,12 * * *"
+      "schedule": "0 11 * * *"
     },
     {
       "path": "/api/cron/evening",
-      "schedule": "0 21,22 * * *"
+      "schedule": "0 21 * * *"
     }
   ]
 }
