@@ -11,6 +11,19 @@ function todayStamp(): string {
   ).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
 }
 
+// Split a notes field into its dated entries so each shows in its own box.
+// Each line is "MM/DD/YY (INIT): text"; anything unrecognized shows as-is.
+function parseNoteEntries(value: string): { head: string; text: string }[] {
+  return String(value ?? "")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .map((line) => {
+      const m = line.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\(([^)]*)\):\s*([\s\S]*)$/);
+      return m ? { head: `${m[1]} · ${m[2]}`, text: m[3] } : { head: "", text: line };
+    });
+}
+
 // A note entry box that REQUIRES initials and stamps today's date. The note
 // can't be added without both text and initials. New entries are prepended to
 // the existing note history (which shows above, read-only).
@@ -41,11 +54,23 @@ export default function AddNote({
     setText("");
   };
 
+  const entries = parseNoteEntries(value);
+
   return (
     <div className="space-y-2">
-      {value && value.trim() && (
-        <div className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-surface-border bg-surface-card p-2 text-xs leading-snug text-surface-ink">
-          {value}
+      {entries.length > 0 && (
+        <div className="max-h-48 space-y-1.5 overflow-auto">
+          {entries.map((e, i) => (
+            <div
+              key={i}
+              className="rounded-md border border-surface-border bg-surface-card px-2 py-1 text-xs leading-snug text-surface-ink"
+            >
+              {e.head && (
+                <div className="mb-0.5 font-semibold text-surface-muted">{e.head}</div>
+              )}
+              <div className="whitespace-pre-wrap break-words">{e.text}</div>
+            </div>
+          ))}
         </div>
       )}
       <div className="flex items-start gap-2">
