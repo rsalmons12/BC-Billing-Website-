@@ -307,6 +307,19 @@ export default function TrackerModule({
     return Array.from(set).sort().reverse();
   }, [rows, config]);
 
+  // Newest record's created_at = the last time data was imported into this
+  // tracker (imports insert fresh rows; edits only touch updated_at). Shown in
+  // the toolbar so the date of the last import is always visible. Reflects the
+  // selected facility when one is filtered.
+  const lastImportAt = useMemo(() => {
+    let max = "";
+    for (const r of rows) {
+      const c = String(r.created_at ?? "");
+      if (c > max) max = c;
+    }
+    return max;
+  }, [rows]);
+
   // Only render a window of rows so big tabs stay fast (totals/export still
   // use the full filtered set).
   const RENDER_CAP = 200;
@@ -460,6 +473,23 @@ export default function TrackerModule({
 
         <div className="ml-auto flex items-center gap-3 text-xs">
           {saveState && <span className="font-medium text-secured">{saveState}</span>}
+          <span
+            className="whitespace-nowrap rounded-md border border-surface-border bg-surface px-2 py-1 text-surface-muted"
+            title="When data was last imported into this tracker (newest record). Reflects the selected facility."
+          >
+            Last import:{" "}
+            <b className="text-surface-ink">
+              {lastImportAt
+                ? new Date(lastImportAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })
+                : "none yet"}
+            </b>
+          </span>
           <span className="text-surface-muted">
             <b className="text-surface-ink">{filtered.length}</b> rows
           </span>
