@@ -1239,6 +1239,7 @@ export default function QueueClient({
               <th className="th sticky left-0 bg-surface">Patient</th>
               <th className="th">Facility</th>
               <th className="th">Age</th>
+              <th className="th text-right">Billed</th>
               <th className="th text-right">Balance</th>
               <th className="th">Status</th>
               <th className="th">Done</th>
@@ -1247,14 +1248,14 @@ export default function QueueClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="td py-10 text-center text-surface-muted">
+                <td colSpan={8} className="td py-10 text-center text-surface-muted">
                   Building your queue…
                 </td>
               </tr>
             )}
             {!loading && visible.length === 0 && (
               <tr>
-                <td colSpan={7} className="td py-10 text-center text-surface-muted">
+                <td colSpan={8} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
                     "Nothing worked yet today — claims you mark ✓ Worked will show here with your notes."
                   ) : rows.length === 0 ? (
@@ -1328,6 +1329,7 @@ export default function QueueClient({
                       <td className="td">
                         <AgeBadge age={r.age_days} />
                       </td>
+                      <td className="td text-right font-mono">{money(r.charge_amount)}</td>
                       <td className="td text-right font-mono font-semibold">{money(r.balance)}</td>
                       <td className="td">
                         <StatusCell
@@ -1373,7 +1375,7 @@ export default function QueueClient({
                     {isOpen && (
                       <tr className={rowBg}>
                         <td></td>
-                        <td colSpan={7} className="td pb-4">
+                        <td colSpan={8} className="td pb-4">
                           <div className="space-y-3 rounded-lg border border-surface-border bg-surface/40 p-3">
                             {/* Claim facts */}
                             <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-surface-muted">
