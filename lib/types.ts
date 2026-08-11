@@ -13,6 +13,7 @@ export interface Facility {
   php_floor: number | null; // per-day reimbursement floor for PHP (recap flag)
   iop_floor: number | null; // per-day reimbursement floor for IOP (recap flag)
   op_floor: number | null; // per-day reimbursement floor for OP (recap flag)
+  recap_bcc: string | null; // extra BCC(s) on THIS facility's daily recap (comma-separated)
   created_at: string;
 }
 
