@@ -140,6 +140,8 @@ export default function CollectionsClient({
   const [saveState, setSaveState] = useState<string>("");
   const [groupByPatient, setGroupByPatient] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Patient ledger drawer: the patient whose full history is open (or null).
+  const [ledgerKey, setLedgerKey] = useState<string | null>(null);
 
   // Bulk note: attach ONE dated/initialed note to several of a patient's DOS.
   const [noteGroupKey, setNoteGroupKey] = useState<string | null>(null);
@@ -697,6 +699,13 @@ export default function CollectionsClient({
                               </span>
                             </button>
                             <button
+                              onClick={() => setLedgerKey(g.key)}
+                              className="badge whitespace-nowrap border border-command/40 bg-surface px-2.5 py-1 text-[11px] font-semibold text-command"
+                              title="Open this patient's full ledger — every claim and note in one place"
+                            >
+                              📋 Ledger
+                            </button>
+                            <button
                               onClick={() =>
                                 panelOpen
                                   ? setNoteGroupKey(null)
@@ -820,7 +829,15 @@ export default function CollectionsClient({
                     } hover:bg-gold/5`}
                   >
                     <td className="td sticky left-0 bg-inherit font-medium">
-                      {r.patient_name || "—"}
+                      <button
+                        onClick={() =>
+                          setLedgerKey((r.patient_name || "—").trim())
+                        }
+                        className="text-left hover:text-command hover:underline"
+                        title="Open this patient's full ledger — every claim and note in one place"
+                      >
+                        {r.patient_name || "—"}
+                      </button>
                     </td>
                     <td className="td font-mono text-xs text-surface-muted">
                       {r.member_id || "—"}
@@ -963,6 +980,284 @@ export default function CollectionsClient({
             )}
           </tbody>
         </table>
+      </div>
+
+      {ledgerKey && (
+        <PatientLedger
+          patient={ledgerKey}
+          claims={rows.filter(
+            (r) => (r.patient_name || "—").trim() === ledgerKey
+          )}
+          facilityName={
+            facilities.find((f) => f.id === facilityId)?.short_name ||
+            facilities.find((f) => f.id === facilityId)?.name ||
+            ""
+          }
+          defaultInit={deriveInitials(userName)}
+          onClose={() => setLedgerKey(null)}
+          onAddNote={(claimIds, entry, init) => {
+            for (const cid of claimIds) {
+              const existing =
+                rows.find((x) => x.claim_id === cid)?.work?.notes ?? "";
+              patchRow(cid, {
+                notes: existing.trim() ? `${entry}\n${existing}` : entry,
+                initials: init,
+                date_worked: todayISO(),
+              });
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Parse "MM/DD/YY" (optionally 4-digit year) into a sortable YYYYMMDD number so
+// merged notes across a patient's claims sort newest-first regardless of claim.
+function noteDateKey(head: string): number {
+  const m = head.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return 0;
+  const yr = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+  return yr * 10000 + Number(m[1]) * 100 + Number(m[2]);
+}
+
+// Patient Ledger — every claim for one patient, plus a single merged notes
+// timeline pulled from ALL of their claims so any collector sees the full
+// history in one place (not just the one DOS they happen to be working).
+function PatientLedger({
+  patient,
+  claims,
+  facilityName,
+  defaultInit,
+  onClose,
+  onAddNote,
+}: {
+  patient: string;
+  claims: ClaimRow[];
+  facilityName: string;
+  defaultInit: string;
+  onClose: () => void;
+  onAddNote: (claimIds: string[], entry: string, init: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [init, setInit] = useState(defaultInit);
+  const [sel, setSel] = useState<Set<string>>(
+    new Set(claims.map((c) => c.claim_id))
+  );
+  const toggle = (cid: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      next.has(cid) ? next.delete(cid) : next.add(cid);
+      return next;
+    });
+
+  const memberId = claims.find((c) => c.member_id)?.member_id ?? "—";
+  const totalCharge = claims.reduce((s, c) => s + (c.charge_amount ?? 0), 0);
+  const totalBalance = claims.reduce((s, c) => s + (c.balance ?? 0), 0);
+
+  // Merge every note entry across all of this patient's claims into one
+  // timeline, tagged with the DOS it came from, newest first.
+  const timeline = useMemo(() => {
+    const all: { head: string; text: string; dos: string; key: number }[] = [];
+    for (const c of claims) {
+      const dos = `${c.dos_from || "—"}${c.dos_to ? `–${c.dos_to}` : ""}`;
+      for (const e of parseNoteEntries(c.work?.notes ?? "")) {
+        all.push({ ...e, dos, key: noteDateKey(e.head) });
+      }
+    }
+    return all.sort((a, b) => b.key - a.key);
+  }, [claims]);
+
+  const add = () => {
+    const t = draft.trim();
+    const i = init.trim().toUpperCase();
+    if (!t) return;
+    if (!i) {
+      alert("Add your initials before saving the note.");
+      return;
+    }
+    if (sel.size === 0) {
+      alert("Pick at least one date of service for this note.");
+      return;
+    }
+    const entry = `${todayStamp()} (${i}): ${t}`;
+    onAddNote(Array.from(sel), entry, i);
+    setDraft("");
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-xl border border-surface-border bg-surface-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* header */}
+        <div className="flex items-start justify-between gap-4 border-b border-surface-border px-6 py-4">
+          <div>
+            <div className="text-lg font-semibold">{patient}</div>
+            <div className="mt-0.5 text-xs text-surface-muted">
+              {facilityName ? `${facilityName} · ` : ""}Member{" "}
+              <span className="font-mono">{memberId}</span> · {claims.length}{" "}
+              claim{claims.length === 1 ? "" : "s"} · charge{" "}
+              {money(totalCharge)} · balance{" "}
+              <b className="text-surface-ink">{money(totalBalance)}</b>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="btn-ghost px-2 py-1 text-sm"
+            aria-label="Close ledger"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="max-h-[70vh] space-y-5 overflow-y-auto px-6 py-4">
+          {/* claims */}
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              Claims
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-surface-border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-surface text-surface-muted">
+                    <th className="px-2 py-1.5 text-left font-semibold">DOS</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Claim #</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Age</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Charge</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {claims.map((c) => (
+                    <tr
+                      key={c.claim_id}
+                      className="border-t border-surface-border"
+                    >
+                      <td className="px-2 py-1.5 font-medium">
+                        {c.dos_from || "—"}
+                        {c.dos_to ? `–${c.dos_to}` : ""}
+                      </td>
+                      <td className="px-2 py-1.5 text-surface-muted">
+                        {c.claim_status || "—"}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono">
+                        {c.work?.claim_number || "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono">
+                        {c.age_days ?? 0}d
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono">
+                        {money(c.charge_amount)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono font-semibold">
+                        {money(c.balance)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* merged notes timeline */}
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-muted">
+              Notes — all collectors, all dates
+            </div>
+            {timeline.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-surface-border px-3 py-4 text-center text-xs text-surface-muted">
+                No notes yet on any of this patient&apos;s claims.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {timeline.map((e, i) => (
+                  <div
+                    key={i}
+                    className="rounded-md border border-surface-border bg-surface px-2.5 py-1.5 text-xs leading-snug"
+                  >
+                    <div className="mb-0.5 flex flex-wrap items-center gap-2 text-surface-muted">
+                      {e.head && <span className="font-semibold">{e.head}</span>}
+                      <span className="badge bg-surface-card text-[10px]">
+                        DOS {e.dos}
+                      </span>
+                    </div>
+                    <div className="whitespace-pre-wrap break-words">
+                      {e.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* add a patient note */}
+          <div className="rounded-lg border border-command/30 bg-command/[0.04] p-3">
+            <div className="mb-2 text-xs font-semibold">
+              Add a note (visible to every collector on this patient)
+            </div>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {claims.map((c) => {
+                const on = sel.has(c.claim_id);
+                return (
+                  <label
+                    key={c.claim_id}
+                    className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] ${
+                      on
+                        ? "border-command bg-command/10"
+                        : "border-surface-border"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggle(c.claim_id)}
+                      className="h-3 w-3 accent-command"
+                    />
+                    <span className="font-medium">
+                      {c.dos_from || "—"}
+                      {c.dos_to ? `–${c.dos_to}` : ""}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-start gap-2">
+              <textarea
+                rows={2}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Write a note for this patient…"
+                className="cell-input min-h-[2.5rem] flex-1 resize-y leading-snug"
+              />
+              <input
+                value={init}
+                onChange={(e) => setInit(e.target.value)}
+                placeholder="INIT *"
+                title="Your initials (required)"
+                className={`cell-input w-16 uppercase ${
+                  !init.trim() ? "ring-1 ring-risk/40" : ""
+                }`}
+              />
+              <button
+                onClick={add}
+                disabled={!draft.trim() || !init.trim() || sel.size === 0}
+                className="btn-primary whitespace-nowrap px-3 py-1.5 text-xs disabled:opacity-50"
+              >
+                Add to {sel.size}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-surface-muted">
+              Stamped {todayStamp()} with your initials and added to the selected
+              dates of service. Every collector sees it here and on the claim.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
