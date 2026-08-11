@@ -290,9 +290,6 @@ export default function QueueClient({
     );
     const under = live.filter((c) => (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD);
 
-    // A 100+ specialist's queue shows ONLY the top-priority band (age >= 100).
-    const specialist = (collector.queue_tier ?? "standard") === "priority_100";
-
     // Eligible claims for this collector's facilities. Ownership is by daily
     // RESERVATION (claim_work.claimed_by/claimed_at): a claim reserved by
     // someone else today is out of the pool; one reserved by me is mine; the
@@ -314,14 +311,10 @@ export default function QueueClient({
     // no overlap, and it does NOT depend on who logs in first. (Requires that a
     // collector can read co-collector rows in `assignments` — see the asg_read
     // policy in migration 0034; without it a staff roster is just themselves.)
-    // 100+ specialists work only the 100+ band, so they take no share of the 0–99
-    // pool and are left out of the roster.
-    const priorityIds = new Set(
-      collectors.filter((p) => p.queue_tier === "priority_100").map((p) => p.id)
-    );
+    // Every assigned collector works the whole age range (100+ first), so all of
+    // them share in the split.
     const rosterByFacility = new Map<string, string[]>();
     for (const a of asg) {
-      if (priorityIds.has(a.profile_id)) continue;
       if (!rosterByFacility.has(a.facility_id)) rosterByFacility.set(a.facility_id, []);
       const arr = rosterByFacility.get(a.facility_id)!;
       if (!arr.includes(a.profile_id)) arr.push(a.profile_id);
@@ -420,11 +413,9 @@ export default function QueueClient({
         if (isExcludedMember(c.member_id)) return false;
         // Claims shifted to Marketplace / Exchange are out of the queue.
         if (movedIds.has(c.claim_id)) return false;
-        // Scope by tier: a 100+ specialist works ONLY 100+ claims; everyone
-        // else works the 0–99 band. 100+ is Admin-only, never auto-assigned.
-        const age = c.age_days ?? 0;
-        if (specialist ? age < PRIORITY_AGE_THRESHOLD : age >= PRIORITY_AGE_THRESHOLD)
-          return false;
+        // Every collector works the full age range now — 100+ included. Priority
+        // ordering (100+ first, then 65–99) is handled by the sort + risk lock
+        // below, so no age band is scoped out of anyone's queue.
         return true;
       })
       .map((c) => {
@@ -1289,7 +1280,7 @@ export default function QueueClient({
               (worked <b className="text-surface-ink">{diag.workedUnder100}</b>, with auth team{" "}
               <b className="text-surface-ink">{diag.authOpenUnder100}</b>, taken by other collectors{" "}
               <b className="text-surface-ink">{diag.takenByOthers}</b>) ·
-              100+ (Admin-only): <b className="text-surface-ink">{diag.over100}</b> ·
+              100+ (priority, worked first): <b className="text-surface-ink">{diag.over100}</b> ·
               Excluded (VMAH/Marketplace): <b className="text-surface-ink">{diag.excluded}</b>
               {diag.under100 === 0 && (
                 <b className="ml-1 text-risk">
@@ -1336,7 +1327,7 @@ export default function QueueClient({
                         ? "No claims imported for your facilities yet."
                         : diag && diag.takenByOthers > 0
                           ? `Your share is fully worked or resting right now. ${diag.takenByOthers} claim${diag.takenByOthers === 1 ? " is" : "s are"} in your co-collectors' shares — use "➕ Take 25 more" to help clear them.`
-                          : "Nothing left to work in your facilities today — everything's worked, with the auth team, or 100+ (Admin-only)."
+                          : "Nothing left to work in your facilities today — everything's worked or with the auth team."
                   ) : backlog === 0 ? (
                     "🎉 Backlog clear — nice work."
                   ) : todaySet.length === 0 ? (

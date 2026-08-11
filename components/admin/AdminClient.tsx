@@ -331,21 +331,6 @@ function UsersTab({
                 </div>
               )}
 
-              {p.role === "staff" && (
-                <div>
-                  <span className="label">Queue tier</span>
-                  <select
-                    value={p.queue_tier ?? "standard"}
-                    onChange={(e) => setQueueTier(p, e.target.value)}
-                    className="input min-w-[12rem]"
-                    title="100+ specialist only sees 100+ claims, capped at their daily target"
-                  >
-                    <option value="standard">Standard (0–99, 65–99 first)</option>
-                    <option value="priority_100">100+ specialist only</option>
-                  </select>
-                </div>
-              )}
-
               {p.role === "facility" && (
                 <div>
                   <span className="label">Facility</span>
