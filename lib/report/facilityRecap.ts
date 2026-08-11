@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
-import { facilityCensusWeek, type CensusWeekSummary } from "./census";
+import { facilityCensusCompare, type CensusWeekSummary } from "./census";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -92,7 +92,9 @@ export interface FacilityRecap {
   negDueSoon: number;
   approvedNegCount: number;
   outlook: FacilityOutlook | null;
-  census: CensusWeekSummary | null; // prior week: patients, missed groups, missed rev
+  // Current census week + the week before it, for a "this week vs last week"
+  // missed-GN comparison in the recap.
+  census: { current: CensusWeekSummary | null; prior: CensusWeekSummary | null } | null;
   // Current census patients (PHP/IOP) whose most-recent payment pays less per day
   // than the management-set floor for that level of care.
   belowFloor: BelowFloorRow[];
@@ -457,7 +459,10 @@ export async function computeFacilityRecaps(
       negDueSoon,
       approvedNegCount: approved.length,
       outlook: outlookOf.get(f.id) ?? null,
-      census: facilityCensusWeek(f.id, census),
+      census: (() => {
+        const c = facilityCensusCompare(f.id, census);
+        return c.current ? c : null;
+      })(),
       belowFloor: computeBelowFloor(
         f.id,
         payments,
@@ -675,14 +680,32 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     <div style="color:${INK}">${ahead}</div>
 
     ${
-      r.census
-        ? `${sectionHead(`Census · ${r.census.weekLabel} (prior week)`)}
+      r.census && r.census.current
+        ? (() => {
+            const cur = r.census.current;
+            const pri = r.census.prior;
+            // Missed-GN change vs last week (fewer missed = good, shown green).
+            let gnSub: string;
+            let gnColor = cur.missedGroups > 0 ? NEG : POS;
+            if (!pri) {
+              gnSub = "no prior week yet";
+            } else {
+              const d = cur.missedGroups - pri.missedGroups;
+              if (d === 0) gnSub = `same as last wk (${pri.missedGroups})`;
+              else if (d > 0) gnSub = `▲ +${d} vs last wk (${pri.missedGroups})`;
+              else {
+                gnSub = `▼ ${d} vs last wk (${pri.missedGroups})`;
+                gnColor = POS; // improved
+              }
+            }
+            return `${sectionHead(`Census · ${cur.weekLabel} (current week)`)}
             <table style="border-collapse:collapse;width:100%"><tr>
-              ${statTile("Census (Patients)", String(r.census.patients), INK)}
-              ${statTile("Missed Groups", String(r.census.missedGroups), r.census.missedGroups > 0 ? NEG : POS)}
-              ${statTile("Missed Revenue", money(r.census.missedRev), r.census.missedRev > 0 ? NEG : POS)}
+              ${statTile("Census (Patients)", String(cur.patients), INK)}
+              ${statTile("Missed Groups (GN)", String(cur.missedGroups), gnColor, gnSub)}
+              ${statTile("Missed Revenue", money(cur.missedRev), cur.missedRev > 0 ? NEG : POS)}
               <td style="width:25%"></td>
-            </tr></table>`
+            </tr></table>`;
+          })()
         : ""
     }
 
