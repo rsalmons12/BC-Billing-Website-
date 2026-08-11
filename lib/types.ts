@@ -126,6 +126,8 @@ export interface ClaimWork {
   claim_id: string;
   notes: string;
   collab_note: string; // the single note to push into CollaborateMD (required to mark worked)
+  claim_number: string; // payer claim number (its own field, not buried in notes)
+  reference_number: string; // optional reference/call number
   initials: string;
   date_worked: string;
   med_rec: string;

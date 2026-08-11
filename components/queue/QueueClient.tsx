@@ -29,6 +29,8 @@ const EMPTY_WORK = (claim_id: string): ClaimWork => ({
   claim_id,
   notes: "",
   collab_note: "",
+  claim_number: "",
+  reference_number: "",
   initials: "",
   date_worked: "",
   med_rec: "",
