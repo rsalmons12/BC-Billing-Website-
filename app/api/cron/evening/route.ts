@@ -30,10 +30,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fires at 21:00 AND 22:00 UTC; only the 5 PM Eastern one sends (DST-proof).
+  // Single daily cron at 21:00 UTC (see vercel.json). Accept any invocation in
+  // the late-afternoon Eastern window (4–8 PM) so the one guaranteed daily run
+  // always sends — 5 PM ET in summer (EDT), 4 PM in winter (EST) — and small
+  // cron delays don't skip the day. ?force=1 bypasses.
   const url = new URL(request.url);
-  if (easternHour() !== 17 && url.searchParams.get("force") !== "1")
-    return NextResponse.json({ ok: true, sent: false, reason: "not 5 PM Eastern" });
+  const h = easternHour();
+  if (!(h >= 16 && h <= 20) && url.searchParams.get("force") !== "1")
+    return NextResponse.json({ ok: true, sent: false, reason: `outside evening window (ET hour ${h})` });
 
   let admin;
   try {
