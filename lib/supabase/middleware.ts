@@ -27,6 +27,19 @@ export async function updateSession(request: NextRequest) {
     return isPublic ? NextResponse.next({ request }) : toLogin();
   }
 
+  // FAST PATH: with no Supabase auth cookie there is no session to refresh, so
+  // calling getUser() would just do a pointless network round-trip to Supabase
+  // before returning null. Skipping it lets the login page (and the redirect to
+  // it) load instantly instead of waiting on that call — a big win on slow /
+  // high-latency mobile connections, where that round-trip could stall the very
+  // first page load. Logged-in users still have a cookie and take the full path.
+  const hasAuthCookie = request.cookies
+    .getAll()
+    .some((c) => c.name.startsWith("sb-") && c.name.includes("auth-token"));
+  if (!hasAuthCookie) {
+    return isPublic ? NextResponse.next({ request }) : toLogin();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   try {
