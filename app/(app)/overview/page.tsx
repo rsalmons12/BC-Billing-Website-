@@ -19,6 +19,22 @@ import {
   type Facility,
 } from "@/lib/types";
 
+// Allow this data-heavy page more than the default 10s so a slow fetch returns
+// a real page instead of a hard 504 ("can't load") on a mobile connection.
+export const maxDuration = 60;
+
+// First day of the month N months back, as { ym: "YYYY-MM", date: "YYYY-MM-01" }.
+// Used to bound the biggest tables (payments, billed) to recent months — the
+// Money Outlook only compares the current vs prior month, so older rows are dead
+// weight that slows the page (and times it out on phones).
+function monthsBack(n: number): { ym: string; date: string } {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - n);
+  const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return { ym, date: `${ym}-01` };
+}
+
 // Never let one slow/failed query take down the whole overview.
 async function safe<T>(p: Promise<T[]>): Promise<T[]> {
   try {
@@ -78,6 +94,10 @@ export default async function OverviewPage() {
   if (profile.role !== "management") redirect("/");
 
   const supabase = createClient();
+  // Money Outlook only needs the current + prior month; bound the two biggest,
+  // fastest-growing tables to the last 5 months so the page doesn't drag the
+  // whole history (payments alone is ~80k rows) into every load.
+  const recent = monthsBack(5);
   const [
     { data: facData },
     claimsData,
@@ -114,6 +134,10 @@ export default async function OverviewPage() {
           .select(
             "facility_id,paid_amount,payment_source,period,deposit_date,cpt_description,dos_from,patient_name"
           )
+          // Recent months only. A row counts if EITHER its period (YYYY-MM) or
+          // its deposit date is on/after the cutoff; older rows don't affect the
+          // current-vs-prior-month outlook.
+          .or(`period.gte.${recent.ym},deposit_date.gte.${recent.date}`)
           .range(f, t)
       )
     ),
@@ -122,6 +146,7 @@ export default async function OverviewPage() {
         supabase
           .from("billed_claims")
           .select("facility_id,total_amount,period,loc_units,patient_name")
+          .gte("period", recent.ym)
           .range(f, t)
       )
     ),
