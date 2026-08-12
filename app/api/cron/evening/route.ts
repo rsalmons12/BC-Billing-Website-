@@ -14,6 +14,7 @@ import {
   recapBccByFacility,
   renderFacilityRecap,
 } from "@/lib/report/facilityRecap";
+import { logCronRun } from "@/lib/report/cronLog";
 
 // One evening job (~5 PM ET) that does BOTH the end-of-day production summary
 // and the per-facility daily recaps. Combined into a single cron so the app
@@ -23,27 +24,28 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Single daily cron at 21:00 UTC (see vercel.json). Accept any invocation in
-  // the late-afternoon Eastern window (4–8 PM) so the one guaranteed daily run
-  // always sends — 5 PM ET in summer (EDT), 4 PM in winter (EST) — and small
-  // cron delays don't skip the day. ?force=1 bypasses.
-  const url = new URL(request.url);
-  const h = easternHour();
-  if (!(h >= 16 && h <= 20) && url.searchParams.get("force") !== "1")
-    return NextResponse.json({ ok: true, sent: false, reason: `outside evening window (ET hour ${h})` });
-
+  // Admin client first so every invocation heartbeat-logs into cron_log.
   let admin;
   try {
     admin = createAdminClient();
   } catch {
     return NextResponse.json({ error: "Service role not configured." }, { status: 503 });
+  }
+
+  const url = new URL(request.url);
+  const h = easternHour();
+  const secret = process.env.CRON_SECRET;
+  const authOk = !secret || request.headers.get("authorization") === `Bearer ${secret}`;
+  await logCronRun(admin, "evening", `invoked (ET hour ${h}, auth ${authOk ? "ok" : "FAIL"})`);
+  if (!authOk) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Single daily cron at 21:00 UTC (see vercel.json). Accept any invocation in
+  // the late-afternoon Eastern window (4–8 PM) so the one guaranteed daily run
+  // always sends — 5 PM ET in summer (EDT), 4 PM in winter (EST) — and small
+  // cron delays don't skip the day. ?force=1 bypasses.
+  if (!(h >= 16 && h <= 20) && url.searchParams.get("force") !== "1") {
+    await logCronRun(admin, "evening", `skipped: outside evening window (ET hour ${h})`);
+    return NextResponse.json({ ok: true, sent: false, reason: `outside evening window (ET hour ${h})` });
   }
 
   const date = easternToday();
@@ -100,5 +102,6 @@ export async function GET(request: Request) {
     result.recaps = { error: e instanceof Error ? e.message : "recap send failed" };
   }
 
+  await logCronRun(admin, "evening", `done — ${JSON.stringify(result)}`);
   return NextResponse.json({ ok: true, ...result });
 }

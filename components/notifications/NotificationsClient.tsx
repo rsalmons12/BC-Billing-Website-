@@ -4,9 +4,16 @@ import { useState } from "react";
 
 // Lightweight hub for the outgoing emails, so management can send/preview
 // without waiting on a data-heavy page to load. All actions are simple POSTs.
-export default function NotificationsClient() {
+type CronRun = { job: string; ran_at: string; detail: string | null };
+
+export default function NotificationsClient({
+  cronRuns = [],
+}: {
+  cronRuns?: CronRun[];
+}) {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <ScheduledActivity runs={cronRuns} />
       <Section
         title="Chief of Staff — morning brief"
         subtitle="What needs attention today across every facility: aging AR (100+ / 65–99), open auth issues, and census misses. Emailed to management automatically at 7:00 AM ET."
@@ -32,6 +39,49 @@ export default function NotificationsClient() {
         ]}
       />
     </div>
+  );
+}
+
+// Heartbeat panel: shows whether Vercel's scheduler is actually firing the
+// automatic emails, and what happened on each run. Empty = the scheduler hasn't
+// called them (a Vercel-side setting), not a code problem.
+function ScheduledActivity({ runs }: { runs: CronRun[] }) {
+  const label = (job: string) =>
+    job === "chief-of-staff" ? "Chief of Staff (7 AM)" : job === "evening" ? "Evening recap (5 PM)" : job;
+  return (
+    <section className="card p-5">
+      <div className="font-semibold">Scheduled email activity</div>
+      <p className="mt-0.5 text-sm text-surface-muted">
+        A line appears here every time an automatic email job runs. If it stays
+        empty, the scheduler isn&apos;t triggering the jobs (a hosting setting) —
+        not a problem with the emails themselves.
+      </p>
+      {runs.length === 0 ? (
+        <p className="mt-3 rounded-md border border-dashed border-surface-border px-3 py-4 text-center text-xs text-surface-muted">
+          No automatic runs recorded yet.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-1.5">
+          {runs.map((r, i) => (
+            <li
+              key={i}
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border border-surface-border bg-surface px-2.5 py-1.5 text-xs"
+            >
+              <span className="font-semibold text-surface-ink">{label(r.job)}</span>
+              <span className="text-surface-muted">
+                {new Date(r.ran_at).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+              <span className="text-surface-muted">— {r.detail || ""}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
