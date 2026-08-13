@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
@@ -454,7 +453,8 @@ export default function CollectionsClient({
   const visibleItems = displayItems.slice(0, RENDER_CAP);
   const hiddenCount = displayItems.length - visibleItems.length;
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     const facLabel =
       facilities.find((f) => f.id === facilityId)?.short_name ||
       facilities.find((f) => f.id === facilityId)?.name ||

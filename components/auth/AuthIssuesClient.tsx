@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
@@ -128,7 +127,8 @@ export default function AuthIssuesClient({
     return { atRisk, mgmt, count: shown.length };
   }, [shown]);
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     const data = shown.map((i) => ({
       Patient: i.patient_name ?? "",
       Facility: (i.facility_id && facMap[i.facility_id]) || "",

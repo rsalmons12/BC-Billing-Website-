@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { moneyCents } from "@/lib/format";
@@ -166,7 +165,8 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
   const RENDER_CAP = 500;
   const shown = filtered.slice(0, RENDER_CAP);
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     const data = filtered.map((r) => ({
       Prefix: r.prefix,
       State: r.state,

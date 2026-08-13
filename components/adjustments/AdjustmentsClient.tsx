@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -104,7 +103,8 @@ export default function AdjustmentsClient({
     if (!error) setTimeout(() => setMsg(""), 1200);
   };
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     const data = filtered.map((r) => ({
       Date: (r.created_at || "").slice(0, 10),
       Patient: r.patient_name ?? "",

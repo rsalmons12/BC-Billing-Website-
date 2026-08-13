@@ -1,7 +1,5 @@
 "use client";
 
-import * as XLSX from "xlsx";
-
 export type ExportRow = Record<string, string | number>;
 
 export default function ExportButton({
@@ -15,7 +13,8 @@ export default function ExportButton({
   sheet?: string;
   label?: string;
 }) {
-  function onExport() {
+  async function onExport() {
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sheet);
