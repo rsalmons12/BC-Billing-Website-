@@ -1062,6 +1062,7 @@ export function ImportPanel({
       // rows can run past the database statement timeout once a table is large;
       // repeatedly grabbing the first 500 matching ids and deleting those keeps
       // every statement short (and offset always 0, so it can't slow down).
+      add(`Clearing month(s) ${periods.join(", ")}…`);
       for (const fids of chunk(touched, 50)) {
         for (;;) {
           const { data: idRows, error: findErr } = await supabase
@@ -1069,7 +1070,7 @@ export function ImportPanel({
             .select("id")
             .in("facility_id", fids)
             .or(`period.in.(${periods.join(",")}),period.is.null`)
-            .limit(500);
+            .limit(1000);
           if (findErr) {
             add(`Error clearing month(s): ${findErr.message}`);
             setBusy(false);
@@ -1085,15 +1086,24 @@ export function ImportPanel({
           }
         }
       }
+      // Insert in PARALLEL WAVES — several batches at once instead of one at a
+      // time — so a big multi-month file (tens of thousands of rows) loads in a
+      // fraction of the time. Bigger batches (1000) also cut the round-trips.
+      const batches = chunk(prepared, 1000);
       let inserted = 0;
-      for (const batch of chunk(prepared, 400)) {
-        const { error } = await supabase.from(config.table).insert(batch);
-        if (error) {
-          add(`Error inserting: ${error.message}`);
+      const WAVE = 5;
+      for (let i = 0; i < batches.length; i += WAVE) {
+        const wave = batches.slice(i, i + WAVE);
+        const errs = await Promise.all(
+          wave.map((b) => supabase.from(config.table).insert(b).then(({ error }) => error))
+        );
+        const firstErr = errs.find(Boolean);
+        if (firstErr) {
+          add(`Error inserting: ${firstErr.message}`);
           setBusy(false);
           return;
         }
-        inserted += batch.length;
+        inserted += wave.reduce((s, b) => s + b.length, 0);
         add(`Added ${inserted}/${prepared.length}…`);
       }
       add(`✓ Import complete — month(s) ${periods.join(", ")} added; other months untouched.`);
@@ -1104,15 +1114,21 @@ export function ImportPanel({
 
     // ----- Mode 2: append-only (never delete — historical log) -----
     if (config.importMode === "append") {
+      const batches = chunk(prepared, 1000);
       let inserted = 0;
-      for (const batch of chunk(prepared, 400)) {
-        const { error } = await supabase.from(config.table).insert(batch);
-        if (error) {
-          add(`Error inserting: ${error.message}`);
+      const WAVE = 5;
+      for (let i = 0; i < batches.length; i += WAVE) {
+        const wave = batches.slice(i, i + WAVE);
+        const errs = await Promise.all(
+          wave.map((b) => supabase.from(config.table).insert(b).then(({ error }) => error))
+        );
+        const firstErr = errs.find(Boolean);
+        if (firstErr) {
+          add(`Error inserting: ${firstErr.message}`);
           setBusy(false);
           return;
         }
-        inserted += batch.length;
+        inserted += wave.reduce((s, b) => s + b.length, 0);
         add(`Added ${inserted}/${prepared.length}…`);
       }
       add("✓ Import complete (appended, nothing deleted).");
