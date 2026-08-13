@@ -146,21 +146,33 @@ export default function TrackerModule({
   const [showImport, setShowImport] = useState(false);
   const [extraFilter, setExtraFilter] = useState("all");
   const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
+  // Month-based trackers (payments, billed) can hold years of rows. By default
+  // load only the last few months so the page is fast; "Show all months" lifts
+  // the bound when the full history is actually needed. Nothing is hidden — it's
+  // one click away.
+  const monthBounded = config.importMode === "replace_period";
+  const [allMonths, setAllMonths] = useState(false);
   const hasActions = !readOnly && (Boolean(config.archiveKey) || isManagement);
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Cutoff = first day of the month, 3 months back (as "YYYY-MM").
+    const cut = new Date();
+    cut.setDate(1);
+    cut.setMonth(cut.getMonth() - 3);
+    const cutoffYM = `${cut.getFullYear()}-${String(cut.getMonth() + 1).padStart(2, "0")}`;
     const data = await selectAll<Row>((f, t) => {
       let q = supabase
         .from(config.table)
         .select("*")
         .order("created_at", { ascending: false });
       if (facilityFilter !== "all") q = q.eq("facility_id", facilityFilter);
+      if (monthBounded && !allMonths) q = q.gte("period", cutoffYM);
       return q.range(f, t);
     });
     setRows(data);
     setLoading(false);
-  }, [supabase, config.table, facilityFilter]);
+  }, [supabase, config.table, facilityFilter, monthBounded, allMonths]);
 
   useEffect(() => {
     load();
@@ -413,6 +425,24 @@ export default function TrackerModule({
               </option>
             ))}
           </select>
+        )}
+
+        {monthBounded && (
+          <button
+            onClick={() => setAllMonths((v) => !v)}
+            className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
+              allMonths
+                ? "border-command bg-command/10 text-command"
+                : "border-surface-border text-surface-muted hover:bg-surface"
+            }`}
+            title={
+              allMonths
+                ? "Showing the full history — click to go back to the fast recent-months view"
+                : "Only the last few months are loaded for speed. Click to load the full history (slower)."
+            }
+          >
+            {allMonths ? "Showing all months" : "Recent months · Show all"}
+          </button>
         )}
 
         {config.statusKey && config.statusOptions && (
