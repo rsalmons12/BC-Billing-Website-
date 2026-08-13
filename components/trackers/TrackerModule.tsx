@@ -1063,27 +1063,35 @@ export function ImportPanel({
       // repeatedly grabbing the first 500 matching ids and deleting those keeps
       // every statement short (and offset always 0, so it can't slow down).
       add(`Clearing month(s) ${periods.join(", ")}…`);
-      for (const fids of chunk(touched, 50)) {
+      // Delete by primary key in batches of ≤1000 so no statement runs long.
+      // Combining an `in` list with `is null` inside one `.or()` trips
+      // PostgREST's parser (→ "Bad Request"), so clear in two clean passes:
+      // the target months, then any leftover period-null rows.
+      const clearBy = async (
+        fids: string[],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        applyFilter: (q: any) => any
+      ): Promise<string | null> => {
         for (;;) {
-          const { data: idRows, error: findErr } = await supabase
-            .from(config.table)
-            .select("id")
-            .in("facility_id", fids)
-            .or(`period.in.(${periods.join(",")}),period.is.null`)
-            .limit(1000);
-          if (findErr) {
-            add(`Error clearing month(s): ${findErr.message}`);
-            setBusy(false);
-            return;
-          }
-          if (!idRows || idRows.length === 0) break;
+          const { data: idRows, error: findErr } = await applyFilter(
+            supabase.from(config.table).select("id").in("facility_id", fids)
+          ).limit(1000);
+          if (findErr) return findErr.message;
+          if (!idRows || idRows.length === 0) return null;
           const ids = (idRows as { id: string }[]).map((r) => r.id);
           const { error: delErr } = await supabase.from(config.table).delete().in("id", ids);
-          if (delErr) {
-            add(`Error clearing month(s): ${delErr.message}`);
-            setBusy(false);
-            return;
-          }
+          if (delErr) return delErr.message;
+        }
+      };
+      for (const fids of chunk(touched, 50)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const err1 = await clearBy(fids, (q: any) => q.in("period", periods));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const err2 = err1 ?? (await clearBy(fids, (q: any) => q.is("period", null)));
+        if (err1 || err2) {
+          add(`Error clearing month(s): ${err1 || err2}`);
+          setBusy(false);
+          return;
         }
       }
       // Insert in PARALLEL WAVES — several batches at once instead of one at a
