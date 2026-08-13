@@ -1,9 +1,14 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { Profile, Facility } from "@/lib/types";
 
 // Loads the authenticated user's profile. Redirects to /login if not signed in.
-export async function requireProfile(): Promise<{
+//
+// Wrapped in React.cache so the layout AND the page (which both call this on
+// every navigation) share ONE result per request — halving the auth round-trips
+// (getUser + profiles query) that otherwise ran twice per page load.
+export const requireProfile = cache(async function requireProfile(): Promise<{
   userId: string;
   email: string | null;
   profile: Profile;
@@ -39,7 +44,7 @@ export async function requireProfile(): Promise<{
     } as Profile);
 
   return { userId: user.id, email: user.email ?? null, profile: resolved };
-}
+});
 
 // Facilities the current user may see (RLS already enforces this; this is the
 // list used to render pickers/labels).
