@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 
@@ -35,6 +34,7 @@ export default function BackupButton() {
   const [busy, setBusy] = useState("");
 
   const run = async () => {
+    const XLSX = await import("xlsx");
     const supabase = createClient();
     setBusy("Backing up…");
     const wb = XLSX.utils.book_new();

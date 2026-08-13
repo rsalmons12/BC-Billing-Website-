@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -326,7 +325,8 @@ export default function TrackerModule({
   const visible = filtered.slice(0, RENDER_CAP);
   const hidden = filtered.length - visible.length;
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     const data = filtered.map((r) => {
       const o: Record<string, unknown> = { Facility: facName(r.facility_id) };
       for (const c of config.columns) o[c.label] = c.compute ? c.compute(r) : r[c.key];

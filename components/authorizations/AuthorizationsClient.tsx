@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { logAuthActivity } from "@/lib/activity";
@@ -324,7 +323,8 @@ export default function AuthorizationsClient({
     };
   }, [filtered, groups]);
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    const XLSX = await import("xlsx");
     // Every auth line (not just current), with days + facility.
     const data = rows
       .filter((r) => facilityFilter === "all" || r.facility_id === facilityFilter)
