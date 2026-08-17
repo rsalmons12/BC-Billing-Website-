@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
-import { isExcludedMember, isRiskPayer } from "@/lib/claims";
+import { isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
 import { facilityCensusCompare, type CensusWeekSummary } from "./census";
 
@@ -291,7 +291,9 @@ export async function computeFacilityRecaps(
     ]);
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
-  const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
+  const claims = claimsRaw.filter(
+    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+  );
 
   // Per-facility reimbursement floors. These columns are optional — if the
   // migration hasn't been run yet the query errors, and we treat every floor as

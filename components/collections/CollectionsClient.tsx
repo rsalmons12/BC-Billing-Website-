@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { payerBucket, matchesPayer } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
@@ -180,7 +180,9 @@ export default function CollectionsClient({
         .range(f, t)
     );
     // Excluded plans (e.g. VMAH member ids) are hidden from Collections entirely.
-    const visibleClaims = claimList.filter((c) => !isExcludedMember(c.member_id));
+    const visibleClaims = claimList.filter(
+      (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+    );
     const ids = visibleClaims.map((c) => c.claim_id);
 
     let workMap: Record<string, ClaimWork> = {};

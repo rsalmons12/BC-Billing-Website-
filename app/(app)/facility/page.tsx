@@ -9,7 +9,7 @@ import CensusPanel from "@/components/overview/CensusPanel";
 import MyRecapButton from "@/components/facility/MyRecapButton";
 import { censusByFacility } from "@/lib/report/census";
 import { money } from "@/lib/format";
-import { isExcludedMember, isRiskPayer } from "@/lib/claims";
+import { isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import type {
   Claim,
@@ -143,7 +143,9 @@ export default async function FacilityDashboard({
     facilities: facilities.map((f) => ({ id: f.id, name: f.name, short_name: f.short_name })),
     payments: allPayments,
     billed: allBilled,
-    claims: allClaims.filter((c) => !isExcludedMember(c.member_id)),
+    claims: allClaims.filter(
+      (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+    ),
     auths: allAuths,
     census: allCensus,
     repricing: allRepricing,
@@ -160,9 +162,12 @@ export default async function FacilityDashboard({
   const scoped = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
     selectedId === "all" ? rows : rows.filter((r) => r.facility_id === selectedId);
 
-  // Excluded plans (e.g. VMAH member ids) are removed from AR entirely.
+  // Excluded plans (e.g. VMAH member ids) and dead 365+ day claims are removed
+  // from AR entirely.
   const inView = scoped(allClaims);
-  const claims = inView.filter((c) => !isExcludedMember(c.member_id));
+  const claims = inView.filter(
+    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+  );
   // How much VMAH we pulled out — shown so this is verifiable at a glance.
   const excludedClaims = inView.filter((c) => isExcludedMember(c.member_id));
   const excludedAR = excludedClaims.reduce((s, c) => s + (c.balance ?? 0), 0);

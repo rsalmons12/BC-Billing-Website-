@@ -9,7 +9,7 @@ import FacilityRecapButtons from "@/components/overview/FacilityRecapButtons";
 import CensusPanel from "@/components/overview/CensusPanel";
 import { censusByFacility } from "@/lib/report/census";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import {
   RISK_AGE_THRESHOLD,
@@ -178,7 +178,9 @@ export default async function OverviewPage() {
 
   const facilities = (facData as Facility[]) ?? [];
   // Excluded plans (e.g. VMAH member ids) are hidden from every total.
-  const claims = (claimsData ?? []).filter((c) => !isExcludedMember(c.member_id));
+  const claims = (claimsData ?? []).filter(
+    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+  );
   const issues = issuesData ?? [];
 
   const facName = (id: string) => {

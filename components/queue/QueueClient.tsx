@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { payerBucket, matchesPayer } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
@@ -411,6 +411,8 @@ export default function QueueClient({
       .filter((c) => {
         // Excluded plans (e.g. VMAH member ids) never enter the queue.
         if (isExcludedMember(c.member_id)) return false;
+        // Claims over ~1 year old are dead — never work them, never show them.
+        if (isStaleClaim(c.age_days)) return false;
         // Claims shifted to Marketplace / Exchange are out of the queue.
         if (movedIds.has(c.claim_id)) return false;
         // Every collector works the full age range now — 100+ included. Priority
