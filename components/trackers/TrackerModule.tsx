@@ -1093,10 +1093,11 @@ export function ImportPanel({
       // repeatedly grabbing the first 500 matching ids and deleting those keeps
       // every statement short (and offset always 0, so it can't slow down).
       add(`Clearing month(s) ${periods.join(", ")} (per-month)…`);
-      // Delete by primary key in batches of ≤1000 so no statement runs long.
-      // Clear with the SIMPLEST possible filter — one `.eq` per month, plus a
-      // pass for leftover period-null rows. No `in`/`or` lists at all, so there
-      // is nothing PostgREST can misparse into a "Bad Request".
+      // Find the rows to clear (simple `.eq` filter per month), then delete them
+      // by primary key. CRITICAL: delete in SMALL groups (100 ids) — the id list
+      // travels in the request URL, and a big list (500–1000 ids) makes the URL
+      // too long for the gateway → "Bad Request". 100 keeps every request short
+      // AND every delete statement fast (no timeout).
       const clearBy = async (
         fids: string[],
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1109,8 +1110,10 @@ export function ImportPanel({
           if (findErr) return findErr.message;
           if (!idRows || idRows.length === 0) return null;
           const ids = (idRows as { id: string }[]).map((r) => r.id);
-          const { error: delErr } = await supabase.from(config.table).delete().in("id", ids);
-          if (delErr) return delErr.message;
+          for (const group of chunk(ids, 100)) {
+            const { error: delErr } = await supabase.from(config.table).delete().in("id", group);
+            if (delErr) return delErr.message;
+          }
         }
       };
       for (const fids of chunk(touched, 50)) {
