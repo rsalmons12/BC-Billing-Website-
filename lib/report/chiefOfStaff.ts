@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { isExcludedMember } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { PRIORITY_AGE_THRESHOLD, RISK_AGE_THRESHOLD } from "@/lib/types";
 import { censusByFacility, type CensusLike } from "@/lib/report/census";
 import { easternToday } from "@/lib/report/eodSummary";
@@ -137,7 +137,9 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
     ),
   ]);
 
-  const claims = claimsRaw.filter((c) => !isExcludedMember(c.member_id));
+  const claims = claimsRaw.filter(
+    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+  );
   const censusOf = new Map(
     censusByFacility(
       facilities.map((f) => f.id),

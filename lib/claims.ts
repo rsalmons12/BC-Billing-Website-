@@ -10,6 +10,17 @@ export function isExcludedMember(memberId: unknown): boolean {
   return EXCLUDED_MEMBER_PREFIXES.some((p) => id.startsWith(p));
 }
 
+// Claims older than this many days are effectively uncollectible ("dead"). They
+// are hidden from the Queue and Collections and excluded from every AR total, so
+// year-old claims don't inflate the numbers or clutter collectors' work.
+export const STALE_AGE_THRESHOLD = 365;
+
+// True when a claim is too old to work / count — over the stale threshold.
+export function isStaleClaim(ageDays: unknown): boolean {
+  const n = typeof ageDays === "number" ? ageDays : Number(ageDays);
+  return Number.isFinite(n) && n > STALE_AGE_THRESHOLD;
+}
+
 // Payers whose marketplace / exchange plans carry a high risk of
 // non-reimbursement. AR tied to these is flagged on the facility screen.
 export const RISK_PAYER_PATTERNS: RegExp[] = [
