@@ -1,0 +1,26 @@
+# Render Blueprint — runs the BC Billing (Recovery Desk) Next.js app.
+# Connect this repo on Render as a "Blueprint" and it provisions the web
+# service below automatically. Secrets (sync:false) are entered once in the
+# Render dashboard — the same values currently set on Vercel.
+services:
+  - type: web
+    name: bc-billing
+    runtime: node
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: npm install && npm run build
+    startCommand: npx next start -p $PORT
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Service-role key for server-side Supabase (emails, admin reads).
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Resend API key for outgoing email.
+      - key: RESEND_API_KEY
+        sync: false
+      # Shared secret guarding the scheduled-email endpoints.
+      - key: CRON_SECRET
+        sync: false
