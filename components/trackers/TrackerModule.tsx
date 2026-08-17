@@ -1092,11 +1092,11 @@ export function ImportPanel({
       // rows can run past the database statement timeout once a table is large;
       // repeatedly grabbing the first 500 matching ids and deleting those keeps
       // every statement short (and offset always 0, so it can't slow down).
-      add(`Clearing month(s) ${periods.join(", ")}…`);
+      add(`Clearing month(s) ${periods.join(", ")} (per-month)…`);
       // Delete by primary key in batches of ≤1000 so no statement runs long.
-      // Combining an `in` list with `is null` inside one `.or()` trips
-      // PostgREST's parser (→ "Bad Request"), so clear in two clean passes:
-      // the target months, then any leftover period-null rows.
+      // Clear with the SIMPLEST possible filter — one `.eq` per month, plus a
+      // pass for leftover period-null rows. No `in`/`or` lists at all, so there
+      // is nothing PostgREST can misparse into a "Bad Request".
       const clearBy = async (
         fids: string[],
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1114,12 +1114,16 @@ export function ImportPanel({
         }
       };
       for (const fids of chunk(touched, 50)) {
+        let clearErr: string | null = null;
+        for (const period of periods) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          clearErr = await clearBy(fids, (q: any) => q.eq("period", period));
+          if (clearErr) break;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const err1 = await clearBy(fids, (q: any) => q.in("period", periods));
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const err2 = err1 ?? (await clearBy(fids, (q: any) => q.is("period", null)));
-        if (err1 || err2) {
-          add(`Error clearing month(s): ${err1 || err2}`);
+        clearErr = clearErr ?? (await clearBy(fids, (q: any) => q.is("period", null)));
+        if (clearErr) {
+          add(`Error clearing month(s): ${clearErr}`);
           setBusy(false);
           return;
         }
