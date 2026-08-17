@@ -313,8 +313,22 @@ export default function QueueClient({
     // policy in migration 0034; without it a staff roster is just themselves.)
     // Every assigned collector works the whole age range (100+ first), so all of
     // them share in the split.
+    // Build the facility roster from a SERVER-SIDE function so EVERY collector
+    // computes the identical split. Reading `assignments` directly on the client
+    // is RLS-filtered — a staff collector often can't see co-collectors' rows, so
+    // their roster collapsed to just themselves and every collector ended up
+    // "owning" every patient (duplicate work, uneven split). collector_roster()
+    // (SECURITY DEFINER) returns the full, collector-only map regardless of row
+    // visibility. Falls back to the visible assignments if the function isn't
+    // installed yet.
     const rosterByFacility = new Map<string, string[]>();
-    for (const a of asg) {
+    const { data: rosterRows, error: rosterErr } = await supabase.rpc("collector_roster");
+    const rosterSource: { facility_id: string | null; profile_id: string }[] =
+      !rosterErr && Array.isArray(rosterRows) && rosterRows.length > 0
+        ? (rosterRows as { facility_id: string | null; profile_id: string }[])
+        : asg.map((a) => ({ facility_id: a.facility_id, profile_id: a.profile_id }));
+    for (const a of rosterSource) {
+      if (!a.facility_id) continue;
       if (!rosterByFacility.has(a.facility_id)) rosterByFacility.set(a.facility_id, []);
       const arr = rosterByFacility.get(a.facility_id)!;
       if (!arr.includes(a.profile_id)) arr.push(a.profile_id);
