@@ -74,6 +74,7 @@ export interface FacilityRecap {
   name: string;
   monthLabel: string;
   priorMonthLabel: string;
+  dayRange: string; // e.g. "1–17" — the same day window both months are compared over
   totalAR: number;
   expectedRevenue: number;
   collectedThisMonth: number;
@@ -219,11 +220,6 @@ function parseDate(v: unknown): Date | null {
   const t = Date.parse(s);
   return isNaN(t) ? null : new Date(t);
 }
-function isSameMonth(v: unknown, now: Date): boolean {
-  const d = parseDate(v);
-  return !!d && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-}
-
 // Build a recap per facility (mirrors the /facility dashboard). Pass facilityIds
 // to scope to specific facilities (e.g. a facility login's own).
 export async function computeFacilityRecaps(
@@ -236,6 +232,22 @@ export async function computeFacilityRecaps(
   const prior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const priorKey = `${prior.getFullYear()}-${String(prior.getMonth() + 1).padStart(2, "0")}`;
   const priorMonthLabel = prior.toLocaleString("en-US", { month: "long", year: "numeric" });
+  // Month-over-month is APPLES-TO-APPLES: the current month is only partway
+  // through, so we compare each month only through the SAME day-of-month. On
+  // Aug 17 that's Aug 1–17 vs Jul 1–17; on Aug 23 it's Jul/Aug 1–23. Otherwise a
+  // full prior month makes the in-progress month always look way down.
+  const cutoffDay = now.getDate();
+  const dayRange = `1–${cutoffDay}`;
+  // True when a date falls in `target`'s month AND on/before the cutoff day.
+  const inWindow = (v: unknown, target: Date): boolean => {
+    const d = parseDate(v);
+    return (
+      !!d &&
+      d.getFullYear() === target.getFullYear() &&
+      d.getMonth() === target.getMonth() &&
+      d.getDate() <= cutoffDay
+    );
+  };
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
   const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
 
@@ -351,10 +363,11 @@ export async function computeFacilityRecaps(
     }
     const riskAR = fc.reduce((s, c) => s + (isRiskPayer(c.claim_status) ? c.balance ?? 0 : 0), 0);
 
+    // Payments collected in the current month THROUGH the cutoff day.
     const monthPays = payments.filter(
       (p) =>
         p.facility_id === f.id &&
-        (isSameMonth(p.deposit_date, now) || isSameMonth(p.payment_entered, now))
+        (inWindow(p.deposit_date, now) || inWindow(p.payment_entered, now))
     );
     const collectedThisMonth = monthPays.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
     const payByPayer = new Map<string, number>();
@@ -363,20 +376,29 @@ export async function computeFacilityRecaps(
       payByPayer.set(src, (payByPayer.get(src) ?? 0) + (p.paid_amount ?? 0));
     }
 
-    const billedInMonth = (key: string, when: Date) =>
-      billed.filter(
-        (b) =>
-          b.facility_id === f.id &&
-          (b.period ? b.period === key : isSameMonth(b.entered_date, when))
-      );
+    // Billed rows in `target`'s month, capped at the cutoff day. Day comes from
+    // the billing date (entered/from); a row with no date at all falls back to
+    // its period tag so it isn't dropped (can't day-cap those).
+    const billedInMonth = (key: string, target: Date) =>
+      billed.filter((b) => {
+        if (b.facility_id !== f.id) return false;
+        const d = parseDate(b.entered_date);
+        if (d)
+          return (
+            d.getFullYear() === target.getFullYear() &&
+            d.getMonth() === target.getMonth() &&
+            d.getDate() <= cutoffDay
+          );
+        return b.period === key;
+      });
     const billedThisMonth = billedInMonth(monthKey, now).reduce((s, b) => s + (b.total_amount ?? 0), 0);
     const billedLastMonth = billedInMonth(priorKey, prior).reduce((s, b) => s + (b.total_amount ?? 0), 0);
 
-    // Level-of-care sessions billed each month, from the billed CPT units — the
-    // accurate "why" behind a billing swing (PHP/IOP/OP this month vs last).
-    const locSessions = (key: string, when: Date) => {
+    // Level-of-care sessions billed each month (through the cutoff day), from the
+    // billed CPT units — the accurate "why" behind a billing swing.
+    const locSessions = (key: string, target: Date) => {
       const acc: Record<string, number> = {};
-      for (const b of billedInMonth(key, when)) {
+      for (const b of billedInMonth(key, target)) {
         if (!b.loc_units) continue;
         for (const [fam, u] of Object.entries(b.loc_units)) acc[fam] = (acc[fam] ?? 0) + (Number(u) || 0);
       }
@@ -411,11 +433,11 @@ export async function computeFacilityRecaps(
           .filter((r) => (billedDelta < 0 ? r.delta < 0 : r.delta > 0))
           .sort((a, b) => (billedDelta < 0 ? a.delta - b.delta : b.delta - a.delta));
         const top = movers[0];
-        const stem = `Billing is ${dir} ${money(Math.abs(billedDelta))} (${Math.abs(
-          billedPct ?? 0
-        )}%) vs ${priorMonthLabel}.`;
+        const stem = `Through the same days (${dayRange}), billing is ${dir} ${money(
+          Math.abs(billedDelta)
+        )} (${Math.abs(billedPct ?? 0)}%) vs ${priorMonthLabel}.`;
         billingNote = top
-          ? `${stem} Biggest driver: ${top.loc} sessions ${top.cur} vs ${top.prior} last month (${
+          ? `${stem} Biggest driver: ${top.loc} sessions ${top.cur} vs ${top.prior} (${
               top.delta > 0 ? "+" : ""
             }${top.delta}).`
           : stem;
@@ -442,6 +464,7 @@ export async function computeFacilityRecaps(
       name: f.short_name || f.name,
       monthLabel,
       priorMonthLabel,
+      dayRange,
       totalAR,
       expectedRevenue: totalAR * EXPECTED_RATE,
       collectedThisMonth,
@@ -636,10 +659,10 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     .join("");
   const billingBlock =
     r.billedThisMonth > 0 || r.billedLastMonth > 0
-      ? `${sectionHead("Billing vs last month")}
+      ? `${sectionHead(`Billing vs last month · same days (${r.dayRange})`)}
           <table style="border-collapse:collapse;width:100%;margin-bottom:2px"><tr>
-            ${statTile(`Billed · ${r.monthLabel}`, money(r.billedThisMonth), INK)}
-            ${statTile(`Billed · ${r.priorMonthLabel}`, money(r.billedLastMonth), INK)}
+            ${statTile(`Billed · ${r.monthLabel} (${r.dayRange})`, money(r.billedThisMonth), INK)}
+            ${statTile(`Billed · ${r.priorMonthLabel} (${r.dayRange})`, money(r.billedLastMonth), INK)}
             ${statTile(
               "Change",
               `${r.billedDelta < 0 ? "−" : "+"}${money(Math.abs(r.billedDelta))}`,
@@ -653,8 +676,8 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
               ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:12px">
                   <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
                     <th style="padding:4px 0">Level of care</th>
-                    <th style="padding:4px 0;text-align:right">Sessions · ${r.monthLabel}</th>
-                    <th style="padding:4px 0;text-align:right">Sessions · ${r.priorMonthLabel}</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.monthLabel} (${r.dayRange})</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.priorMonthLabel} (${r.dayRange})</th>
                     <th style="padding:4px 0;text-align:right">Change</th>
                   </tr></thead><tbody>${billLocRows}</tbody></table>`
               : ""
