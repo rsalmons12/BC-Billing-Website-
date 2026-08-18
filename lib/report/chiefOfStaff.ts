@@ -121,8 +121,8 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
       )
     ),
     safe(
-      selectAll<{ discharged: boolean | null; discharge_date: string | null; next_review_date: string | null }>(
-        (f, t) => client.from("authorizations").select("discharged,discharge_date,next_review_date").range(f, t)
+      selectAll<{ discharged: boolean | null; discharge_date: string | null; next_review_date: string | null; status: string | null }>(
+        (f, t) => client.from("authorizations").select("discharged,discharge_date,next_review_date,status").range(f, t)
       )
     ),
     safe(
@@ -191,14 +191,19 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
     return s === "" || s === "requested";
   }).length;
 
-  // Authorizations: pending = still active (not discharged); past due = active
-  // with a review date already in the past.
+  // Authorizations. A patient is ACTIVE while there's no discharge date. But
+  // "pending" is NOT every active patient — it only counts ones the auth
+  // specialist actually SET to status "Pending" (an active patient with no
+  // pending status set shouldn't inflate the number). "Past due" = a pending
+  // auth whose review date has already passed.
   let authsPending = 0,
     authsPastDue = 0;
   for (const a of auths) {
     const dm = parseDate(a.discharge_date);
     const active = !a.discharged && !(dm && dm <= today0);
     if (!active) continue;
+    const isPending = String(a.status ?? "").trim().toLowerCase() === "pending";
+    if (!isPending) continue;
     authsPending++;
     const nr = parseDate(a.next_review_date);
     if (nr && nr < today0) authsPastDue++;
