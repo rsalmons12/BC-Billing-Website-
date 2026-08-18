@@ -1,0 +1,31 @@
+name: Scheduled Emails
+
+# Fires the app's scheduled email endpoints on time, every day, from GitHub's
+# own scheduler — reliable and independent of the web host. Hits the Render URL;
+# ?force=1 sends regardless of the app's internal time gate, so a single daily
+# run always goes out. (The endpoints send to management / facilities exactly as
+# configured in the app.)
+on:
+  schedule:
+    - cron: "0 11 * * *" # ~7 AM ET (6 AM in winter): Chief of Staff morning brief
+    - cron: "0 21 * * *" # ~5 PM ET (4 PM in winter): evening recap + end-of-day
+  workflow_dispatch: {} # lets you run the Chief of Staff brief on demand from the Actions tab
+
+jobs:
+  chief-of-staff:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 11 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Chief of Staff morning brief
+        run: |
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/chief-of-staff?force=1" \
+            -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
+
+  evening:
+    if: github.event.schedule == '0 21 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send evening recap + end-of-day summary
+        run: |
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/evening?force=1" \
+            -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
