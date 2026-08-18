@@ -11,6 +11,7 @@ export async function updateSession(request: NextRequest) {
   const isPublic =
     path === "/login" ||
     path.startsWith("/auth") ||
+    path.startsWith("/api/cron") || // scheduled-email endpoints; secured by CRON_SECRET, NOT a login session — must not redirect to /login or the timer can never fire
     path === "/privacy" ||
     path === "/api/messages/inbound" || // Resend webhook; secured by its own token
     path === "/manifest.webmanifest";
