@@ -2,7 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
-import { facilityCensusCompare, type CensusWeekSummary } from "./census";
+import {
+  facilityCensusCompare,
+  missedGroupDetail,
+  type CensusWeekSummary,
+  type MissedGroupRow,
+} from "./census";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -96,6 +101,9 @@ export interface FacilityRecap {
   // Current census week + the week before it, for a "this week vs last week"
   // missed-GN comparison in the recap.
   census: { current: CensusWeekSummary | null; prior: CensusWeekSummary | null } | null;
+  // Per-patient breakdown of this week's missed groups (name + why), so the
+  // recap can name who was short and the reason.
+  missedGroups: MissedGroupRow[];
   // Current census patients (PHP/IOP) whose most-recent payment pays less per day
   // than the management-set floor for that level of care.
   belowFloor: BelowFloorRow[];
@@ -488,6 +496,7 @@ export async function computeFacilityRecaps(
         const c = facilityCensusCompare(f.id, census);
         return c.current ? c : null;
       })(),
+      missedGroups: missedGroupDetail(f.id, census).rows,
       belowFloor: computeBelowFloor(
         f.id,
         payments,
@@ -731,6 +740,33 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
               <td style="width:25%"></td>
             </tr></table>`;
           })()
+        : ""
+    }
+
+    ${
+      r.missedGroups.length
+        ? `${sectionHead("Missed groups — who & why")}
+            <table style="border-collapse:collapse;width:100%;font-size:13px">
+              <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+                <th style="padding:4px 0">Patient</th>
+                <th style="padding:4px 0">Level</th>
+                <th style="padding:4px 0;text-align:center">Missed</th>
+                <th style="padding:4px 0">Reason</th>
+              </tr></thead>
+              <tbody>
+                ${r.missedGroups
+                  .map(
+                    (m) => `<tr>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};font-weight:600;color:${INK}">${m.patient}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};color:${MUTE}">${m.loc || "—"}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:center;font-weight:700;color:${NEG}">−${m.missed}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};color:${MUTE}">${m.reason}</td>
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+            <div style="color:${FAINT};font-size:11px;margin-top:6px">Groups already held before a client's admit date aren't counted against them.</div>`
         : ""
     }
 
