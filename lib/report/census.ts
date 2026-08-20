@@ -198,6 +198,62 @@ export function facilityCensusCompare(
   };
 }
 
+export interface MissedGroupRow {
+  patient: string;
+  loc: string;
+  attended: number; // GN groups actually attended
+  expected: number; // GN groups they were accountable for (admit-prorated)
+  missed: number; // expected − attended
+  partialWeek: boolean; // admitted mid-week (fewer groups were available to them)
+  reason: string; // plain-English "why" for the recap
+}
+
+const mdOf = (iso: string): string => {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[2])}/${Number(m[3])}` : iso;
+};
+
+// Per-patient MISSED-GROUP detail for a facility's CURRENT census week — the
+// names behind the "Missed Groups" number, each with a reason so the recap can
+// say WHY. Only patients who actually came up short (after admit proration) are
+// returned, worst shortfall first. Non-group levels of care (no weekly GN
+// requirement) are skipped.
+export function missedGroupDetail(
+  facilityId: string,
+  rows: CensusLike[]
+): { week: string | null; weekLabel: string; rows: MissedGroupRow[] } {
+  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
+  if (fRows.length === 0) return { week: null, weekLabel: "—", rows: [] };
+  const week = Array.from(new Set(fRows.map((r) => r.week_start!))).sort().slice(-1)[0];
+  const weekRows = fRows.filter((r) => r.week_start === week);
+  const groupDates = weekGroupDates(weekRows);
+  const out: MissedGroupRow[] = [];
+  for (const r of weekRows) {
+    const freq = locProgramDays(r.level_of_care);
+    if (freq <= 0) continue; // level of care with no weekly group requirement
+    const attended = actualsFor(r.days).GN ?? 0;
+    const expected = proratedRequirements(r, groupDates).GN;
+    const missed = Math.max(0, expected - attended);
+    if (missed <= 0) continue;
+    const admit = toIsoDate(r.admit_date, r.week_start);
+    const partialWeek = !!admit && groupDates.length > 0 && admit > groupDates[0];
+    const reason = partialWeek
+      ? `admitted ${mdOf(admit)} (partial week) — attended ${attended} of ${expected} available`
+      : `attended ${attended} of ${expected} groups`;
+    out.push({
+      patient: String(r.patient_name ?? "").trim() || "—",
+      loc: String(r.level_of_care ?? "").trim(),
+      attended,
+      expected,
+      missed,
+      partialWeek,
+      reason,
+    });
+  }
+  out.sort((a, b) => b.missed - a.missed || a.patient.localeCompare(b.patient));
+  return { week, weekLabel: censusWeekLabel(week), rows: out };
+}
+
 // Summarize every facility's most-recent week (facilities with no census are
 // skipped).
 export function censusByFacility(
