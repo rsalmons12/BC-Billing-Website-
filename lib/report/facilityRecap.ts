@@ -42,6 +42,7 @@ async function pageAll<T>(client: Admin, build: (q: any) => any): Promise<T[]> {
 type ClaimRow = {
   facility_id: string;
   member_id: string | null;
+  patient_name: string | null;
   balance: number | null;
   age_days: number | null;
   claim_status: string | null;
@@ -107,6 +108,9 @@ export interface FacilityRecap {
   // Current census patients (PHP/IOP) whose most-recent payment pays less per day
   // than the management-set floor for that level of care.
   belowFloor: BelowFloorRow[];
+  // Current census patients joined to their outstanding AR: per-day reimbursement
+  // (from their payments) × count of outstanding claim lines = expected revenue.
+  censusReceivables: CensusReceivableRow[];
 }
 
 type LocFamily = "PHP" | "IOP" | "OP";
@@ -116,6 +120,14 @@ export interface BelowFloorRow {
   loc: LocFamily;
   perDay: number; // most-recent paid ÷ days
   floor: number; // the threshold it fell under
+}
+
+export interface CensusReceivableRow {
+  patient: string;
+  loc: LocFamily;
+  perDay: number; // expected reimbursement per day, from this patient's payments
+  outstanding: number; // count of their outstanding (unpaid) AR claim lines
+  expected: number; // perDay × outstanding
 }
 
 export interface ReimbursementFloors {
@@ -212,6 +224,82 @@ function computeBelowFloor(
   return out;
 }
 
+// For one facility: each CURRENT CENSUS patient, joined to their outstanding AR.
+// perDay = their most-recent reimbursement ÷ days of service (the payment info we
+// receive on the census patient); outstanding = how many of their claim lines
+// still carry a balance; expected = perDay × outstanding. Mirrors the user's
+// combined line: "Sierra Peters · IOP · $114/day · 20 outstanding · $2,280".
+function computeCensusReceivables(
+  facilityId: string,
+  payments: PayRow[],
+  census: {
+    facility_id: string | null;
+    level_of_care: string | null;
+    week_start: string | null;
+    patient_name: string | null;
+    member_id: string | null;
+  }[],
+  claims: ClaimRow[]
+): CensusReceivableRow[] {
+  const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
+  if (fCensus.length === 0) return [];
+  const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
+  const current = fCensus.filter((c) => c.week_start === latestWeek);
+  const fPays = payments.filter((p) => p.facility_id === facilityId);
+  // Outstanding = still owed (a positive balance). Stale/excluded claims are
+  // already filtered out of `claims` upstream, so they don't inflate the count.
+  const fClaims = claims.filter((c) => c.facility_id === facilityId && (c.balance ?? 0) > 0);
+
+  const out: CensusReceivableRow[] = [];
+  const seen = new Set<string>();
+  for (const c of current) {
+    const fam = locFamily2(c.level_of_care);
+    if (!fam) continue;
+    const cid = String(c.member_id ?? "").trim().toLowerCase();
+    const cnm = normName(c.patient_name);
+    if (!cid && !cnm) continue;
+    const dedupe = cid || cnm;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+
+    // Per-day reimbursement from this patient's most-recent payment. Prefer a
+    // payment tagged for the same level of care; a payment with no CPT/LOC on it
+    // (e.g. a deposit line) still counts — we don't have anything better.
+    const pMatches = fPays.filter((p) => {
+      if ((p.paid_amount ?? 0) <= 0) return false;
+      const pfam = locFamily2(p.cpt_description);
+      if (pfam && pfam !== fam) return false;
+      const pid = String(p.member_id ?? "").trim().toLowerCase();
+      if (cid && pid) return cid === pid;
+      return cnm !== "" && normName(p.patient_name) === cnm;
+    });
+    if (pMatches.length === 0) continue; // no payment info → no per-day rate
+    pMatches.sort((a, b) => payDate(b) - payDate(a));
+    const p = pMatches[0];
+    const days = inclusiveDays(p.dos_from, p.dos_to);
+    const perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
+    if (perDay <= 0) continue;
+
+    // Their outstanding AR claim lines (member id first, else name).
+    const outstanding = fClaims.filter((cl) => {
+      const clid = String(cl.member_id ?? "").trim().toLowerCase();
+      if (cid && clid) return cid === clid;
+      return cnm !== "" && normName(cl.patient_name) === cnm;
+    }).length;
+    if (outstanding <= 0) continue;
+
+    out.push({
+      patient: String(c.patient_name ?? "").trim() || "—",
+      loc: fam,
+      perDay,
+      outstanding,
+      expected: perDay * outstanding,
+    });
+  }
+  out.sort((a, b) => b.expected - a.expected);
+  return out;
+}
+
 // Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
 function payerFromStatus(status: unknown): string {
   const t = String(status ?? "").trim();
@@ -268,7 +356,7 @@ export async function computeFacilityRecaps(
         scopeIn(
           a
             .from("claims")
-            .select("facility_id,member_id,balance,age_days,claim_status")
+            .select("facility_id,member_id,patient_name,balance,age_days,claim_status")
             .eq("present", true)
         )
       ),
@@ -503,6 +591,7 @@ export async function computeFacilityRecaps(
         census,
         floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
       ),
+      censusReceivables: computeCensusReceivables(f.id, payments, census, fc),
     };
   });
 }
@@ -767,6 +856,41 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
               </tbody>
             </table>
             <div style="color:${FAINT};font-size:11px;margin-top:6px">Groups already held before a client's admit date aren't counted against them.</div>`
+        : ""
+    }
+
+    ${
+      r.censusReceivables.length
+        ? `${sectionHead("Census — expected revenue on outstanding claims")}
+            <table style="border-collapse:collapse;width:100%;font-size:13px">
+              <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+                <th style="padding:4px 0">Patient</th>
+                <th style="padding:4px 0">Level</th>
+                <th style="padding:4px 0;text-align:right">Per day</th>
+                <th style="padding:4px 0;text-align:right">Outstanding</th>
+                <th style="padding:4px 0;text-align:right">Expected Revenue</th>
+              </tr></thead>
+              <tbody>
+                ${r.censusReceivables
+                  .map(
+                    (c) => `<tr>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};font-weight:600;color:${INK}">${c.patient}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};color:${MUTE}">${c.loc}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${money(c.perDay)}/day</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${c.outstanding} ${c.loc}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:700;color:${POS};${NUM}">${money(c.expected)}</td>
+                    </tr>`
+                  )
+                  .join("")}
+                <tr>
+                  <td colspan="4" style="padding:8px 0;text-align:right;font-weight:600;color:${MUTE}">Total expected on current census</td>
+                  <td style="padding:8px 0;text-align:right;font-weight:800;color:${POS};${NUM}">${money(
+                    r.censusReceivables.reduce((s, c) => s + c.expected, 0)
+                  )}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="color:${FAINT};font-size:11px;margin-top:6px">Per-day = this patient's most recent reimbursement rate; expected = per-day × their outstanding claim lines.</div>`
         : ""
     }
 
