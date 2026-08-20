@@ -758,11 +758,31 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
       type: findCol(h, [/payment type/]),
       check: findCol(h, [/check/]),
     };
+    // Two shapes of payment export land here:
+    //   • Per-patient EOB report — has a Patient column; each row is one
+    //     patient's paid line (used to auto-fill census Paid $).
+    //   • Payer-level deposit summary (e.g. "Credit Payer Name / Payment
+    //     Check # / Insurance Paid Amount / Deposit Date") — NO patient column;
+    //     each row is a remittance keyed by payer. These still count toward the
+    //     facility's Collected total on the recap / overview / monthly report.
+    const hasPatientCol = col.patient >= 0;
     let added = 0;
     for (let i = hr + 1; i < rows.length; i++) {
       const r = rows[i];
-      const patient = col.patient >= 0 ? toStr(r[col.patient]) : "";
-      if (!patient) continue;
+      const patient = hasPatientCol ? toStr(r[col.patient]) : "";
+      const source = col.source >= 0 ? toStr(r[col.source]) : "";
+      const check = col.check >= 0 ? toStr(r[col.check]) : "";
+      const paid = col.paid >= 0 ? toNum(r[col.paid]) : null;
+      if (hasPatientCol) {
+        // Per-patient report: only rows that name a patient are payments (this
+        // skips the footer grand-total row, which has no patient).
+        if (!patient) continue;
+      } else {
+        // Payer-level summary: keep any real remittance line (a payer or check
+        // plus an amount); drop the banner / blank / footer rows.
+        if (!source && !check) continue;
+        if (paid == null) continue;
+      }
       const office = col.office >= 0 ? toStr(r[col.office]) : "";
       const deposit = col.deposit >= 0 ? toStr(r[col.deposit]) : "";
       const entered = col.entered >= 0 ? toStr(r[col.entered]) : "";
@@ -773,13 +793,13 @@ export function parsePayments(data: ArrayBuffer): TrackerParseResult<PaymentRow>
         patient_name: patient,
         member_id: col.member >= 0 ? toStr(r[col.member]) : "",
         cpt_description: col.cpt >= 0 ? toStr(r[col.cpt]) : "",
-        payment_source: col.source >= 0 ? toStr(r[col.source]) : "",
+        payment_source: source,
         dos_from: col.from >= 0 ? toStr(r[col.from]) : "",
         dos_to: col.to >= 0 ? toStr(r[col.to]) : "",
         charge_amount: col.charge >= 0 ? toNum(r[col.charge]) : null,
-        paid_amount: col.paid >= 0 ? toNum(r[col.paid]) : null,
+        paid_amount: paid,
         payment_type: col.type >= 0 ? toStr(r[col.type]) : "",
-        check_number: col.check >= 0 ? toStr(r[col.check]) : "",
+        check_number: check,
         // Which month this payment counts toward (deposit date first).
         period: periodOf(deposit, entered),
       });
