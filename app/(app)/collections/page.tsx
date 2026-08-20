@@ -6,7 +6,13 @@ import CollectionsClient from "@/components/collections/CollectionsClient";
 export default async function CollectionsPage() {
   const { profile, email } = await requireProfile();
 
-  if (profile.role !== "management" && profile.role !== "staff") {
+  // Management + staff work the board; facility logins get a read-only view of
+  // their own facility's claims. Everyone else is bounced.
+  if (
+    profile.role !== "management" &&
+    profile.role !== "staff" &&
+    profile.role !== "facility"
+  ) {
     redirect("/");
   }
 
@@ -20,6 +26,7 @@ export default async function CollectionsPage() {
           facilities={facilities}
           userId={profile.id}
           userName={profile.full_name ?? ""}
+          readOnly={profile.role === "facility"}
         />
       </main>
     </>
