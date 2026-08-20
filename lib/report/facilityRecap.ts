@@ -41,11 +41,18 @@ async function pageAll<T>(client: Admin, build: (q: any) => any): Promise<T[]> {
 
 type ClaimRow = {
   facility_id: string;
+  claim_id: string | null;
   member_id: string | null;
   patient_name: string | null;
   balance: number | null;
   age_days: number | null;
   claim_status: string | null;
+};
+type HistRow = {
+  prefix: string | null;
+  cpt_code: string | null;
+  code_used: string | null;
+  paid_per_day: number | null;
 };
 type PayRow = {
   facility_id: string | null;
@@ -62,6 +69,7 @@ type PayRow = {
 };
 type BilledRow = {
   facility_id: string | null;
+  claim_id: string | null;
   total_amount: number | null;
   period: string | null;
   entered_date: string | null;
@@ -145,6 +153,54 @@ function locFamily2(loc: unknown): LocFamily | null {
   if (/\bOP\b/.test(u) || /OUTPATIENT/.test(u) || /90853/.test(u)) return "OP";
   return null;
 }
+// Billing CPT codes that define each level of care (for the historical per-day
+// lookup): S0201/H0035 = PHP, H0015/S9480 = IOP, 90853 = OP.
+const LOC_CPTS: Record<LocFamily, string[]> = {
+  PHP: ["S0201", "H0035"],
+  IOP: ["H0015", "S9480"],
+  OP: ["90853"],
+};
+
+// Historical paid-per-day by member-ID prefix + level of care. Keyed
+// "PREFIX|FAM" → the highest paid_per_day seen for that prefix's LOC codes, so a
+// census patient with no payment yet still gets an expected rate off their plan.
+function buildHistPerDay(rows: HistRow[]): Map<string, number> {
+  const cptToFam = new Map<string, LocFamily>();
+  for (const fam of Object.keys(LOC_CPTS) as LocFamily[])
+    for (const cpt of LOC_CPTS[fam]) cptToFam.set(cpt, fam);
+  const out = new Map<string, number>();
+  for (const h of rows) {
+    const prefix = String(h.prefix ?? "").trim().toUpperCase();
+    const code = String(h.cpt_code || h.code_used || "").trim().toUpperCase();
+    const perDay = h.paid_per_day ?? 0;
+    if (!prefix || perDay <= 0) continue;
+    const fam = cptToFam.get(code);
+    if (!fam) continue;
+    const key = `${prefix}|${fam}`;
+    out.set(key, Math.max(out.get(key) ?? 0, Math.round(perDay)));
+  }
+  return out;
+}
+
+// From the billed report, the set of claim_ids known to be level-of-care
+// (PHP/IOP/OP) services, and the set billed AT ALL. Lets the receivables count
+// keep only real PHP/IOP/OP claim lines wherever billed data covers a patient.
+function buildBilledClaimSets(rows: BilledRow[]): {
+  loc: Set<string>;
+  any: Set<string>;
+} {
+  const loc = new Set<string>();
+  const any = new Set<string>();
+  for (const b of rows) {
+    const id = String(b.claim_id ?? "").trim();
+    if (!id) continue;
+    any.add(id);
+    const lu = b.loc_units;
+    if (lu && (["PHP", "IOP", "OP"] as const).some((k) => (lu[k] ?? 0) > 0)) loc.add(id);
+  }
+  return { loc, any };
+}
+
 // Normalize a name so "Doe, Jane" and "Jane Doe" match.
 function normName(s: unknown): string {
   return String(s ?? "")
@@ -239,7 +295,9 @@ function computeCensusReceivables(
     patient_name: string | null;
     member_id: string | null;
   }[],
-  claims: ClaimRow[]
+  claims: ClaimRow[],
+  histPerDay: Map<string, number>,
+  billedClaims: { loc: Set<string>; any: Set<string> }
 ): CensusReceivableRow[] {
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
@@ -262,9 +320,9 @@ function computeCensusReceivables(
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
 
-    // Per-day reimbursement from this patient's most-recent payment. Prefer a
-    // payment tagged for the same level of care; a payment with no CPT/LOC on it
-    // (e.g. a deposit line) still counts — we don't have anything better.
+    // Per-day reimbursement: prefer this patient's most-recent real payment for
+    // this level of care; fall back to the historical paid-per-day for their
+    // member-ID prefix + LOC when there's no payment on file yet.
     const pMatches = fPays.filter((p) => {
       if ((p.paid_amount ?? 0) <= 0) return false;
       const pfam = locFamily2(p.cpt_description);
@@ -273,19 +331,32 @@ function computeCensusReceivables(
       if (cid && pid) return cid === pid;
       return cnm !== "" && normName(p.patient_name) === cnm;
     });
-    if (pMatches.length === 0) continue; // no payment info → no per-day rate
-    pMatches.sort((a, b) => payDate(b) - payDate(a));
-    const p = pMatches[0];
-    const days = inclusiveDays(p.dos_from, p.dos_to);
-    const perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
-    if (perDay <= 0) continue;
+    let perDay = 0;
+    if (pMatches.length > 0) {
+      pMatches.sort((a, b) => payDate(b) - payDate(a));
+      const p = pMatches[0];
+      const days = inclusiveDays(p.dos_from, p.dos_to);
+      perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
+    } else {
+      const prefix = String(c.member_id ?? "").trim().slice(0, 3).toUpperCase();
+      perDay = prefix ? histPerDay.get(`${prefix}|${fam}`) ?? 0 : 0;
+    }
+    if (perDay <= 0) continue; // no rate anywhere → can't state expected revenue
 
-    // Their outstanding AR claim lines (member id first, else name).
-    const outstanding = fClaims.filter((cl) => {
+    // This patient's outstanding AR claim lines (member id first, else name).
+    const theirClaims = fClaims.filter((cl) => {
       const clid = String(cl.member_id ?? "").trim().toLowerCase();
       if (cid && clid) return cid === clid;
       return cnm !== "" && normName(cl.patient_name) === cnm;
-    }).length;
+    });
+    // Keep only PHP/IOP/OP claim lines. Where the billed report covers this
+    // patient we trust it (only claims it marks as a level-of-care service
+    // count); where it doesn't cover them at all, we can't classify, so we fall
+    // back to their full outstanding set rather than drop them.
+    const coveredByBilled = theirClaims.some((cl) => billedClaims.any.has(String(cl.claim_id ?? "")));
+    const outstanding = coveredByBilled
+      ? theirClaims.filter((cl) => billedClaims.loc.has(String(cl.claim_id ?? ""))).length
+      : theirClaims.length;
     if (outstanding <= 0) continue;
 
     out.push({
@@ -347,7 +418,7 @@ export async function computeFacilityRecaps(
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
   const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
 
-  const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing] =
+  const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing, historical] =
     await Promise.all([
       pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
         a.from("facilities").select("id,name,short_name").order("name")
@@ -356,7 +427,7 @@ export async function computeFacilityRecaps(
         scopeIn(
           a
             .from("claims")
-            .select("facility_id,member_id,patient_name,balance,age_days,claim_status")
+            .select("facility_id,claim_id,member_id,patient_name,balance,age_days,claim_status")
             .eq("present", true)
         )
       ),
@@ -373,7 +444,7 @@ export async function computeFacilityRecaps(
         scopeIn(
           a
             .from("billed_claims")
-            .select("facility_id,total_amount,period,entered_date,loc_units,patient_name")
+            .select("facility_id,claim_id,total_amount,period,entered_date,loc_units,patient_name")
         )
       ).catch(() => []),
       pageAll<NegRow>(client, (a) =>
@@ -396,12 +467,21 @@ export async function computeFacilityRecaps(
       pageAll<any>(client, (a) =>
         scopeIn(a.from("repricing").select("facility_id,total_amount,amount_paid,claim_status"))
       ).catch(() => []),
+      // Historical reimbursement reference (global — not facility-scoped): the
+      // per-day paid rate by member-ID prefix + service code, used as the
+      // per-day fallback when a census patient has no payment on file yet.
+      pageAll<HistRow>(client, (a) =>
+        a.from("historical_data").select("prefix,cpt_code,code_used,paid_per_day")
+      ).catch(() => []),
     ]);
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
   const claims = claimsRaw.filter(
     (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
   );
+  // Per-day rate fallback + PHP/IOP/OP claim classification, built once.
+  const histPerDay = buildHistPerDay(historical as HistRow[]);
+  const billedClaimSets = buildBilledClaimSets(billed as BilledRow[]);
 
   // Per-facility reimbursement floors. These columns are optional — if the
   // migration hasn't been run yet the query errors, and we treat every floor as
@@ -591,7 +671,14 @@ export async function computeFacilityRecaps(
         census,
         floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
       ),
-      censusReceivables: computeCensusReceivables(f.id, payments, census, fc),
+      censusReceivables: computeCensusReceivables(
+        f.id,
+        payments,
+        census,
+        fc,
+        histPerDay,
+        billedClaimSets
+      ),
     };
   });
 }
