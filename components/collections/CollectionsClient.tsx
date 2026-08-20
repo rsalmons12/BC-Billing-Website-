@@ -123,10 +123,16 @@ export default function CollectionsClient({
   facilities,
   userId,
   userName = "",
+  readOnly = false,
 }: {
   facilities: Facility[];
   userId: string;
   userName?: string;
+  // Facility logins get a view-only board: they can browse and expand their
+  // own claims (grouped by patient) but cannot work them. The database also
+  // blocks writes for the facility role (can_edit() is false), so this is a
+  // UX layer over an RLS guarantee.
+  readOnly?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [facilityId, setFacilityId] = useState<string>(
@@ -229,6 +235,7 @@ export default function CollectionsClient({
   // Optimistic local update + persist.
   const patchRow = useCallback(
     (claimId: string, partial: Partial<ClaimWork>) => {
+      if (readOnly) return; // facility view — no edits
       setRows((prev) =>
         prev.map((r) =>
           r.claim_id === claimId
@@ -238,11 +245,12 @@ export default function CollectionsClient({
       );
       saveWork(claimId, partial);
     },
-    [saveWork]
+    [saveWork, readOnly]
   );
 
   // Open the bulk-note panel for a patient group with every DOS pre-selected.
   const openBulkNote = (key: string, claimIds: string[]) => {
+    if (readOnly) return;
     setExpanded((prev) => new Set(prev).add(key));
     setNoteGroupKey(key);
     setBulkSel(new Set(claimIds));
@@ -252,6 +260,7 @@ export default function CollectionsClient({
 
   // Attach one stamped note to every selected DOS (prepended to each note).
   const applyBulkNote = (claimIds: string[]) => {
+    if (readOnly) return;
     const init = bulkInit.trim().toUpperCase();
     if (!bulkText.trim() || !init) {
       alert("A note needs your initials and text — it can't be saved without both.");
@@ -279,6 +288,7 @@ export default function CollectionsClient({
   // Auth flag = "Y" routes the claim to the auth team and parks it off the board.
   const raiseAuthIssue = useCallback(
     async (row: ClaimRow) => {
+      if (readOnly) return;
       patchRow(row.claim_id, { auth_flag: "Y", auth_issue_status: "open" });
       setSaveState("Routing to auth team…");
       const { error } = await supabase.from("auth_issues").insert({
@@ -304,10 +314,11 @@ export default function CollectionsClient({
       setRows((prev) => prev.filter((r) => r.claim_id !== row.claim_id));
       setTimeout(() => setSaveState(""), 1500);
     },
-    [patchRow, supabase]
+    [patchRow, supabase, readOnly]
   );
 
   const onAuthFlagChange = (row: ClaimRow, value: string) => {
+    if (readOnly) return;
     if (value === "Y" && row.work?.auth_issue_status !== "open") {
       if (
         confirm(
@@ -606,6 +617,11 @@ export default function CollectionsClient({
         </button>
 
         <div className="ml-auto flex items-center gap-4 text-xs">
+          {readOnly && (
+            <span className="badge whitespace-nowrap border border-surface-border bg-surface px-2 py-1 font-semibold text-surface-muted" title="Your facility login can view claims but not change them">
+              👁 View only
+            </span>
+          )}
           {saveState && (
             <span className="font-medium text-secured">{saveState}</span>
           )}
@@ -709,17 +725,19 @@ export default function CollectionsClient({
                             >
                               📋 Ledger
                             </button>
-                            <button
-                              onClick={() =>
-                                panelOpen
-                                  ? setNoteGroupKey(null)
-                                  : openBulkNote(g.key, g.rows.map((r) => r.claim_id))
-                              }
-                              className="badge whitespace-nowrap bg-command px-2.5 py-1 text-[11px] font-semibold text-command-text"
-                              title="Attach one note to several dates of service"
-                            >
-                              📝 Note to DOS
-                            </button>
+                            {!readOnly && (
+                              <button
+                                onClick={() =>
+                                  panelOpen
+                                    ? setNoteGroupKey(null)
+                                    : openBulkNote(g.key, g.rows.map((r) => r.claim_id))
+                                }
+                                className="badge whitespace-nowrap bg-command px-2.5 py-1 text-[11px] font-semibold text-command-text"
+                                title="Attach one note to several dates of service"
+                              >
+                                📝 Note to DOS
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -850,6 +868,7 @@ export default function CollectionsClient({
                       <TextCell
                         value={w.claim_number}
                         className="w-28 font-mono text-xs"
+                        readOnly={readOnly}
                         onSave={(v) => patchRow(r.claim_id, { claim_number: v })}
                       />
                     </td>
@@ -857,6 +876,7 @@ export default function CollectionsClient({
                       <TextCell
                         value={w.reference_number}
                         className="w-28 font-mono text-xs"
+                        readOnly={readOnly}
                         onSave={(v) =>
                           patchRow(r.claim_id, { reference_number: v })
                         }
@@ -878,6 +898,7 @@ export default function CollectionsClient({
                     <td className="td">
                       <StatusCell
                         value={r.claim_status ?? ""}
+                        readOnly={readOnly}
                         onSave={(v) => {
                           setRows((prev) =>
                             prev.map((x) =>
@@ -895,47 +916,61 @@ export default function CollectionsClient({
                     </td>
                     <FlagCell
                       value={w.med_rec}
+                      readOnly={readOnly}
                       onChange={(v) => onMedRecChange(r, v)}
                     />
                     <td className="td">
-                      <select
-                        value={w.auth_flag}
-                        onChange={(e) => onAuthFlagChange(r, e.target.value)}
-                        className={`cell-input w-14 ${
-                          w.auth_flag === "Y" ? "text-secured font-semibold" : ""
-                        }`}
-                      >
-                        {AUTH_FLAG_OPTIONS.map((o) => (
-                          <option key={o} value={o}>
-                            {o || "—"}
-                          </option>
-                        ))}
-                      </select>
+                      {readOnly ? (
+                        <span
+                          className={`text-xs ${w.auth_flag === "Y" ? "font-semibold text-secured" : "text-surface-muted"}`}
+                        >
+                          {w.auth_flag || "—"}
+                        </span>
+                      ) : (
+                        <select
+                          value={w.auth_flag}
+                          onChange={(e) => onAuthFlagChange(r, e.target.value)}
+                          className={`cell-input w-14 ${
+                            w.auth_flag === "Y" ? "text-secured font-semibold" : ""
+                          }`}
+                        >
+                          {AUTH_FLAG_OPTIONS.map((o) => (
+                            <option key={o} value={o}>
+                              {o || "—"}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <FlagCell
                       value={w.billing}
+                      readOnly={readOnly}
                       onChange={(v) => patchRow(r.claim_id, { billing: v })}
                     />
                     <FlagCell
                       value={w.cap_blue}
+                      readOnly={readOnly}
                       onChange={(v) => patchRow(r.claim_id, { cap_blue: v })}
                     />
                     <FlagCell
                       value={w.highmark}
+                      readOnly={readOnly}
                       onChange={(v) => patchRow(r.claim_id, { highmark: v })}
                     />
                     <FlagCell
                       value={w.rebill}
+                      readOnly={readOnly}
                       onChange={(v) => patchRow(r.claim_id, { rebill: v })}
                     />
                     <td className="td text-center">
                       <input
                         type="checkbox"
                         checked={w.mgmt_needed}
+                        disabled={readOnly}
                         onChange={(e) =>
                           patchRow(r.claim_id, { mgmt_needed: e.target.checked })
                         }
-                        className="h-4 w-4 accent-gold"
+                        className="h-4 w-4 accent-gold disabled:opacity-50"
                       />
                     </td>
                     <td className="td">
@@ -943,6 +978,7 @@ export default function CollectionsClient({
                         value={w.notes}
                         initials={(w.initials && w.initials.trim()) || deriveInitials(userName)}
                         claimNumber={w.claim_number}
+                        readOnly={readOnly}
                         onClaimNumber={(v) =>
                           patchRow(r.claim_id, { claim_number: v })
                         }
@@ -959,6 +995,7 @@ export default function CollectionsClient({
                       <TextCell
                         value={w.initials}
                         className="w-12 uppercase"
+                        readOnly={readOnly}
                         onSave={(v) => patchRow(r.claim_id, { initials: v })}
                       />
                     </td>
@@ -967,6 +1004,7 @@ export default function CollectionsClient({
                         value={w.date_worked}
                         className="w-28"
                         type="date"
+                        readOnly={readOnly}
                         onSave={(v) => patchRow(r.claim_id, { date_worked: v })}
                       />
                     </td>
@@ -998,6 +1036,7 @@ export default function CollectionsClient({
             ""
           }
           defaultInit={deriveInitials(userName)}
+          readOnly={readOnly}
           onClose={() => setLedgerKey(null)}
           onAddNote={(claimIds, entry, init) => {
             for (const cid of claimIds) {
@@ -1035,6 +1074,7 @@ function PatientLedger({
   defaultInit,
   onClose,
   onAddNote,
+  readOnly = false,
 }: {
   patient: string;
   claims: ClaimRow[];
@@ -1042,6 +1082,7 @@ function PatientLedger({
   defaultInit: string;
   onClose: () => void;
   onAddNote: (claimIds: string[], entry: string, init: string) => void;
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [init, setInit] = useState(defaultInit);
@@ -1201,6 +1242,7 @@ function PatientLedger({
           </div>
 
           {/* add a patient note */}
+          {!readOnly && (
           <div className="rounded-lg border border-command/30 bg-command/[0.04] p-3">
             <div className="mb-2 text-xs font-semibold">
               Add a note (visible to every collector on this patient)
@@ -1261,6 +1303,7 @@ function PatientLedger({
               dates of service. Every collector sees it here and on the claim.
             </p>
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -1270,10 +1313,23 @@ function PatientLedger({
 function FlagCell({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: string;
   onChange: (v: string) => void;
+  readOnly?: boolean;
 }) {
+  if (readOnly) {
+    return (
+      <td className="td">
+        <span
+          className={`text-xs ${value === "Y" ? "font-semibold text-recovered" : value === "N" ? "text-risk" : "text-surface-muted"}`}
+        >
+          {value || "—"}
+        </span>
+      </td>
+    );
+  }
   return (
     <td className="td">
       <select
@@ -1296,14 +1352,19 @@ function TextCell({
   onSave,
   className = "",
   type = "text",
+  readOnly = false,
 }: {
   value: string;
   onSave: (v: string) => void;
   className?: string;
   type?: string;
+  readOnly?: boolean;
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
+  if (readOnly) {
+    return <span className={`text-xs text-surface-muted ${className}`}>{value || "—"}</span>;
+  }
   return (
     <input
       type={type}
@@ -1320,12 +1381,21 @@ function TextCell({
 function StatusCell({
   value,
   onSave,
+  readOnly = false,
 }: {
   value: string;
   onSave: (v: string) => void;
+  readOnly?: boolean;
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
+  if (readOnly) {
+    return (
+      <div className="min-w-[12rem] max-w-[16rem] whitespace-pre-wrap break-words text-xs text-surface-muted">
+        {value || "—"}
+      </div>
+    );
+  }
   return (
     <AutoTextarea
       value={v}
@@ -1346,12 +1416,14 @@ function NotesCell({
   claimNumber,
   onClaimNumber,
   onAppend,
+  readOnly = false,
 }: {
   value: string;
   initials: string;
   claimNumber: string;
   onClaimNumber: (v: string) => void;
   onAppend: (full: string, init: string) => void;
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const entries = parseNoteEntries(value);
@@ -1378,6 +1450,9 @@ function NotesCell({
   };
   return (
     <div className="min-w-[18rem] max-w-[28rem] space-y-1.5">
+      {entries.length === 0 && readOnly && (
+        <div className="text-xs text-surface-muted">—</div>
+      )}
       {entries.map((e, i) => (
         <div
           key={i}
@@ -1387,6 +1462,7 @@ function NotesCell({
           <div className="whitespace-pre-wrap break-words">{e.text}</div>
         </div>
       ))}
+      {!readOnly && (
       <div className="flex items-start gap-1">
         <textarea
           value={draft}
@@ -1410,6 +1486,7 @@ function NotesCell({
           Add
         </button>
       </div>
+      )}
     </div>
   );
 }
