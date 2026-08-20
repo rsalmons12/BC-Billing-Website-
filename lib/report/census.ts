@@ -18,6 +18,7 @@ export type CensusLike = {
   gn_rate: number | null;
   patient_name: string | null;
   days: Record<string, string> | null;
+  admit_date?: string | null;
 };
 
 // Per-GN billed rate: a per-row override if set, else the standard rate for the
@@ -37,8 +38,68 @@ function locProgramDays(loc: string | null): number {
   return m ? Number(m[1]) : 0;
 }
 
-function requirementsFor(loc: string | null): Record<string, number> {
-  return { GN: locProgramDays(loc), CM: WEEKLY_RULES.CM, ID: WEEKLY_RULES.ID };
+const pad2 = (v: string | number) => String(Number(v)).padStart(2, "0");
+
+// Normalize a stored admit-date cell ("8/13/2026", "8/13/26", "2026-08-13", or
+// a bare "8/13") to ISO YYYY-MM-DD so it can be compared against day-column
+// dates. A bare M/D with no year borrows the year from the census week.
+function toIsoDate(raw: string | null | undefined, weekStart?: string | null): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return `${iso[1]}-${pad2(iso[2])}-${pad2(iso[3])}`;
+  const m = s.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?/);
+  if (m) {
+    let yr: number;
+    if (m[3]) {
+      yr = Number(m[3]);
+      if (yr < 100) yr += 2000;
+    } else {
+      yr = Number(String(weekStart ?? "").slice(0, 4));
+      if (!yr) return ""; // no year anywhere → treat admit as unknown
+    }
+    return `${yr}-${pad2(m[1])}-${pad2(m[2])}`;
+  }
+  return "";
+}
+
+type ProrateRow = {
+  level_of_care: string | null;
+  admit_date?: string | null;
+  week_start?: string | null;
+  days?: Record<string, string> | null;
+};
+
+// The dates a facility actually held groups in a week = the union of every
+// coded day-cell across that week's rows. If a group met on a date, at least
+// one patient has a code there, so the union reconstructs the week's real
+// group calendar (which handles holidays / short weeks automatically).
+export function weekGroupDates(rows: { days?: Record<string, string> | null }[]): string[] {
+  const s = new Set<string>();
+  for (const r of rows) for (const iso of Object.keys(r.days ?? {})) s.add(iso);
+  return Array.from(s).sort();
+}
+
+// Session requirements for ONE patient in a week, prorated to their admit date.
+// A patient admitted mid-week is only accountable for the group-days that fell
+// ON OR AFTER their admit date (capped at the level of care's weekly frequency),
+// so a client who admitted Wednesday on an IOP-6 program isn't charged with
+// "missing" Monday and Tuesday groups they were never there for. A patient with
+// no admit date on file keeps the full weekly expectation, and a client admitted
+// after the last group of the week owes nothing that week.
+export function proratedRequirements(
+  row: ProrateRow,
+  groupDates: string[]
+): Record<string, number> {
+  const freq = locProgramDays(row.level_of_care);
+  const full = { GN: freq, CM: WEEKLY_RULES.CM, ID: WEEKLY_RULES.ID };
+  const admit = toIsoDate(row.admit_date, row.week_start);
+  // No admit date, or no group calendar yet (week not started / no attendance
+  // entered) → nothing to prorate against, so keep the full expectation.
+  if (!admit || groupDates.length === 0) return full;
+  const available = groupDates.filter((d) => d >= admit).length;
+  if (available <= 0) return { GN: 0, CM: 0, ID: 0 };
+  return { GN: Math.min(freq, available), CM: WEEKLY_RULES.CM, ID: WEEKLY_RULES.ID };
 }
 
 // Count each service code across a patient's day cells.
@@ -82,9 +143,10 @@ function summarizeWeek(
   let missedRev = 0;
   let expected = 0;
   const patients = new Set<string>();
+  const groupDates = weekGroupDates(weekRows);
   for (const r of weekRows) {
     const act = actualsFor(r.days);
-    const req = requirementsFor(r.level_of_care);
+    const req = proratedRequirements(r, groupDates);
     for (const c of CENSUS_REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
     const missedGN = Math.max(0, req.GN - (act.GN ?? 0));
     missedRev += missedGN * rateFor(r) * EXPECTED_PCT;

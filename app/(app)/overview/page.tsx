@@ -76,6 +76,7 @@ type CensusRow = {
   gn_rate: number | null;
   patient_name: string | null;
   days: Record<string, string> | null;
+  admit_date: string | null;
 };
 type RepriceRow = {
   facility_id: string | null;
@@ -162,7 +163,7 @@ export default async function OverviewPage() {
       selectAll<CensusRow>((f, t) =>
         supabase
           .from("census")
-          .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days")
+          .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,admit_date")
           .range(f, t)
       )
     ),

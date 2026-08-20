@@ -294,7 +294,7 @@ export async function computeFacilityRecaps(
         scopeIn(
           a
             .from("census")
-            .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,member_id")
+            .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,member_id,admit_date")
         )
       ).catch(() => []),
       pageAll<any>(client, (a) =>
