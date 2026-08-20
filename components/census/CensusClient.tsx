@@ -6,6 +6,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
+import { weekGroupDates, proratedRequirements } from "@/lib/report/census";
 import { normFacility } from "@/lib/import/parse";
 import {
   CENSUS_BILLING_STATUS,
@@ -345,17 +346,22 @@ export default function CensusClient({
     let missedRev = 0; // revenue lost to missed GN sessions
     const missed: Record<string, number> = {};
     for (const c of REQ_CODES) missed[c] = 0;
+    const groupDates = weekGroupDates(weekRows);
     for (const r of weekRows) {
       const act = actualsFor(r.days);
       exp += expectedFor(r);
       paid += effectivePaid(r);
-      const req = requirementsFor(r.level_of_care);
+      const req = proratedRequirements(r, groupDates);
       for (const c of REQ_CODES) missed[c] += Math.max(0, req[c] - (act[c] ?? 0));
       const missedGN = Math.max(0, req.GN - (act.GN ?? 0));
       missedRev += missedGN * rateFor(r) * EXPECTED_PCT;
     }
     return { exp, paid, missed, missedRev };
   }, [weekRows, effectivePaid]);
+
+  // Dates this facility actually held groups this week (union of coded cells),
+  // used to prorate each client's missed-group expectation to their admit date.
+  const groupDates = useMemo(() => weekGroupDates(weekRows), [weekRows]);
 
   // How much of this week's Paid $ was auto-pulled from Payments (diagnostic).
   const weekPulled = useMemo(
@@ -773,9 +779,12 @@ export default function CensusClient({
               {weekRows.map((r, i) => {
                 const req = requirementsFor(r.level_of_care);
                 const act = actualsFor(r.days);
+                // Missed is measured against the ADMIT-PRORATED requirement, so a
+                // mid-week admit isn't dinged for groups held before they arrived.
+                const due = proratedRequirements(r, groupDates);
                 const missed = REQ_CODES.map((c) => ({
                   c,
-                  short: Math.max(0, req[c] - (act[c] ?? 0)),
+                  short: Math.max(0, due[c] - (act[c] ?? 0)),
                 })).filter((m) => m.short > 0);
                 return (
                 <tr key={r.id} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>

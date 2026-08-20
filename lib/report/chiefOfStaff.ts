@@ -112,7 +112,7 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
     ),
     safe(
       selectAll<CensusLike>((f, t) =>
-        client.from("census").select("facility_id,level_of_care,week_start,gn_rate,patient_name,days").range(f, t)
+        client.from("census").select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,admit_date").range(f, t)
       )
     ),
     safe(
