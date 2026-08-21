@@ -36,6 +36,9 @@ export interface FacilityBrief {
   risk65Bal: number;
   missedGroups: number;
   missedRev: number;
+  // Active claims not worked in 30+ days OR never worked — the neglected book.
+  neglectedCount: number;
+  neglectedBal: number;
 }
 export interface ChiefBrief {
   facilities: FacilityBrief[];
@@ -51,6 +54,8 @@ export interface ChiefBrief {
     medRecPending: number;
     authsPending: number;
     authsPastDue: number;
+    neglectedCount: number;
+    neglectedBal: number;
   };
   collectors: { name: string; worked: number }[];
   weekLabel: string;
@@ -92,16 +97,16 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
   today0.setHours(0, 0, 0, 0);
 
   const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
-  const [facilities, claimsRaw, pays, census, medrecs, auths, prod, cw] = await Promise.all([
+  const [facilities, claimsRaw, pays, census, medrecs, auths, prod, cw, cwAll] = await Promise.all([
     safe(
       selectAll<{ id: string; name: string; short_name: string | null }>((f, t) =>
         client.from("facilities").select("id,name,short_name").order("name").range(f, t)
       )
     ),
     safe(
-      selectAll<{ facility_id: string | null; member_id: string | null; balance: number | null; age_days: number | null }>(
+      selectAll<{ facility_id: string | null; claim_id: string | null; member_id: string | null; balance: number | null; age_days: number | null }>(
         (f, t) =>
-          client.from("claims").select("facility_id,member_id,balance,age_days").eq("present", true).range(f, t)
+          client.from("claims").select("facility_id,claim_id,member_id,balance,age_days").eq("present", true).range(f, t)
       )
     ),
     safe(
@@ -135,11 +140,31 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
         client.from("claim_work").select("updated_by,claim_id").in("date_worked", dates).range(f, t)
       )
     ),
+    // Every claim's last-worked date (all rows), for the "not worked in 30+ days
+    // / never worked" management signal.
+    safe(
+      selectAll<{ claim_id: string | null; date_worked: string | null }>((f, t) =>
+        client.from("claim_work").select("claim_id,date_worked").range(f, t)
+      )
+    ),
   ]);
 
   const claims = claimsRaw.filter(
     (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
   );
+  // Last-worked date per claim; a claim is "neglected" if it was worked more
+  // than 30 days ago, or has never been worked at all.
+  const lastWorked = new Map<string, string>();
+  for (const w of cwAll) {
+    if (w.claim_id && w.date_worked) lastWorked.set(w.claim_id, w.date_worked);
+  }
+  const neglectCutoff = today0.getTime() - 30 * 86400000;
+  const isNeglected = (claimId: string | null): boolean => {
+    const dw = claimId ? lastWorked.get(claimId) : null;
+    if (!dw) return true; // never worked
+    const t = Date.parse(dw);
+    return isNaN(t) || t < neglectCutoff; // worked over a month ago
+  };
   const censusOf = new Map(
     censusByFacility(
       facilities.map((f) => f.id),
@@ -152,7 +177,9 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
       pri100Count = 0,
       pri100Bal = 0,
       risk65Count = 0,
-      risk65Bal = 0;
+      risk65Bal = 0,
+      neglectedCount = 0,
+      neglectedBal = 0;
     for (const c of claims) {
       if (c.facility_id !== f.id) continue;
       const bal = c.balance ?? 0;
@@ -164,6 +191,10 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
       } else if (age > RISK_AGE_THRESHOLD) {
         risk65Count++;
         risk65Bal += bal;
+      }
+      if (isNeglected(c.claim_id)) {
+        neglectedCount++;
+        neglectedBal += bal;
       }
     }
     const collected = pays
@@ -181,6 +212,8 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
       risk65Bal,
       missedGroups: cs?.missedGroups ?? 0,
       missedRev: cs?.missedRev ?? 0,
+      neglectedCount,
+      neglectedBal,
     };
   });
   rows.sort((a, b) => b.pri100Bal - a.pri100Bal || b.outstanding - a.outstanding);
@@ -247,6 +280,8 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
     medRecPending,
     authsPending,
     authsPastDue,
+    neglectedCount: rows.reduce((s, r) => s + r.neglectedCount, 0),
+    neglectedBal: rows.reduce((s, r) => s + r.neglectedBal, 0),
   };
 
   return { facilities: rows, network, collectors, weekLabel: `${mdLabel(dates[0])}–${mdLabel(today)}` };
@@ -288,6 +323,7 @@ export function renderChiefBrief(b: ChiefBrief, date: string): string {
         <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${FAINT};${NUM}">${f.risk65Count}</td>
         <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${f.missedGroups ? NEG : FAINT};${NUM}">${f.missedGroups}</td>
         <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${f.missedRev > 0 ? NEG : FAINT};${NUM}">${money(f.missedRev)}</td>
+        <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${f.neglectedCount ? NEG : FAINT};font-weight:${f.neglectedCount ? 700 : 400};${NUM}" title="${money(f.neglectedBal)}">${f.neglectedCount}</td>
       </tr>`
     )
     .join("");
@@ -321,6 +357,10 @@ export function renderChiefBrief(b: ChiefBrief, date: string): string {
         ${stat("Med Records Pending", String(n.medRecPending), n.medRecPending ? NAVY : POS)}
         ${stat("Missed Revenue", money(n.missedRev), n.missedRev > 0 ? NEG : POS)}
       </tr>
+      <tr>
+        ${stat("Not worked 30d+ / never", String(n.neglectedCount), n.neglectedCount ? NEG : POS, `${money(n.neglectedBal)} sitting untouched`)}
+        <td style="width:75%"></td>
+      </tr>
     </tbody></table>
 
     ${focus ? `${head("Where to focus today")}<div style="color:${INK}">${focus}</div>` : ""}
@@ -343,6 +383,7 @@ export function renderChiefBrief(b: ChiefBrief, date: string): string {
         <th style="padding:4px 0;text-align:right">65–99</th>
         <th style="padding:4px 0;text-align:right">Missed groups</th>
         <th style="padding:4px 0;text-align:right">Missed rev</th>
+        <th style="padding:4px 0;text-align:right">Not worked 30d+</th>
       </tr></thead>
       <tbody>${facRows}</tbody>
     </table>
