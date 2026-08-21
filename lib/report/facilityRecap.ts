@@ -8,6 +8,7 @@ import {
   type CensusWeekSummary,
   type MissedGroupRow,
 } from "./census";
+import { bucketByStatus, lastWorkedLabel, type StatusBucket } from "./statusBuckets";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -119,6 +120,12 @@ export interface FacilityRecap {
   // Current census patients joined to their outstanding AR: per-day reimbursement
   // (from their payments) × count of outstanding claim lines = expected revenue.
   censusReceivables: CensusReceivableRow[];
+  // AR bucketed by payer + status (e.g. "Horizon · Claim At"): claim count,
+  // total balance, and the last date any claim in the bucket was worked.
+  statusBuckets: StatusBucket[];
+  // Work coverage: of all the facility's active claims, how many were worked in
+  // the last 14 days.
+  workCoverage: { total: number; worked14: number };
 }
 
 type LocFamily = "PHP" | "IOP" | "OP";
@@ -418,8 +425,18 @@ export async function computeFacilityRecaps(
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
   const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
 
-  const [facilitiesAll, claimsRaw, payments, billed, negs, auths, census, repricing, historical] =
-    await Promise.all([
+  const [
+    facilitiesAll,
+    claimsRaw,
+    payments,
+    billed,
+    negs,
+    auths,
+    census,
+    repricing,
+    historical,
+    claimWork,
+  ] = await Promise.all([
       pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
         a.from("facilities").select("id,name,short_name").order("name")
       ),
@@ -473,6 +490,10 @@ export async function computeFacilityRecaps(
       pageAll<HistRow>(client, (a) =>
         a.from("historical_data").select("prefix,cpt_code,code_used,paid_per_day")
       ).catch(() => []),
+      // Last-worked dates for the status buckets (claim_id → date_worked).
+      pageAll<{ claim_id: string | null; date_worked: string | null }>(client, (a) =>
+        a.from("claim_work").select("claim_id,date_worked")
+      ).catch(() => []),
     ]);
 
   const facilities = only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll;
@@ -482,6 +503,11 @@ export async function computeFacilityRecaps(
   // Per-day rate fallback + PHP/IOP/OP claim classification, built once.
   const histPerDay = buildHistPerDay(historical as HistRow[]);
   const billedClaimSets = buildBilledClaimSets(billed as BilledRow[]);
+  // claim_id → last date_worked, for the status buckets' "last worked" column.
+  const workedByClaim = new Map<string, string>();
+  for (const w of claimWork as { claim_id: string | null; date_worked: string | null }[]) {
+    if (w.claim_id && w.date_worked) workedByClaim.set(w.claim_id, w.date_worked);
+  }
 
   // Per-facility reimbursement floors. These columns are optional — if the
   // migration hasn't been run yet the query errors, and we treat every floor as
@@ -525,6 +551,8 @@ export async function computeFacilityRecaps(
   const today0 = new Date(now);
   today0.setHours(0, 0, 0, 0);
   const soon = new Date(today0.getTime() + NEG_PAY_LAG_DAYS * 86400000);
+  // Claims worked on/after this moment count toward the 14-day work coverage.
+  const worked14Cutoff = today0.getTime() - 14 * 86400000;
 
   return facilities.map((f) => {
     const fc = claims.filter((c) => c.facility_id === f.id);
@@ -679,6 +707,16 @@ export async function computeFacilityRecaps(
         histPerDay,
         billedClaimSets
       ),
+      statusBuckets: bucketByStatus(fc, workedByClaim),
+      workCoverage: {
+        total: fc.length,
+        worked14: fc.filter((c) => {
+          const dw = c.claim_id ? workedByClaim.get(c.claim_id) : null;
+          if (!dw) return false;
+          const t = Date.parse(dw);
+          return !isNaN(t) && t >= worked14Cutoff;
+        }).length,
+      },
     };
   });
 }
@@ -888,6 +926,40 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
 
     ${sectionHead("Money Outlook")}
     <div style="color:${INK}">${ahead}</div>
+
+    ${
+      r.statusBuckets.length
+        ? `${sectionHead("AR by status")}
+            <div style="color:${MUTE};font-size:13px;margin-bottom:8px">
+              <b style="color:${INK}">${r.workCoverage.worked14}</b> of
+              <b style="color:${INK}">${r.workCoverage.total}</b> claims worked in the last 14 days${
+                r.workCoverage.total > 0
+                  ? ` (${Math.round((r.workCoverage.worked14 / r.workCoverage.total) * 100)}%)`
+                  : ""
+              }.
+            </div>
+            <table style="border-collapse:collapse;width:100%;font-size:13px">
+              <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+                <th style="padding:4px 0">Status</th>
+                <th style="padding:4px 0;text-align:right">Claims</th>
+                <th style="padding:4px 0;text-align:right">Balance</th>
+                <th style="padding:4px 0;text-align:right">Last worked</th>
+              </tr></thead>
+              <tbody>
+                ${r.statusBuckets
+                  .map(
+                    (b) => `<tr>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};font-weight:600;color:${INK}">${b.label}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${b.count}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:700;color:${NAVY};${NUM}">${money(b.balance)}</td>
+                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${MUTE}">${lastWorkedLabel(b.lastWorked)}</td>
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>`
+        : ""
+    }
 
     ${
       r.census && r.census.current

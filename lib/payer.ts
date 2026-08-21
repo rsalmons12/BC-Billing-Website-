@@ -83,3 +83,32 @@ export function statusAction(raw: unknown): string {
 export function matchesStatusAction(raw: unknown, action: string): boolean {
   return action === "all" || statusAction(raw) === action;
 }
+
+// A short, clean insurer name for status BUCKETING — e.g. "Claim at Horizon
+// BCBS of NJ" → "Horizon". Unlike payerBucket (which folds Horizon into the BCBS
+// family for the payer filter), this keeps the payers management tracks by name
+// distinct (Horizon, Tufts, United, …). Empty when the status carries no payer
+// (User Print, Rejected).
+export function statusPayerName(raw: unknown): string {
+  const s = payerText(raw);
+  const low = s.toLowerCase();
+  if (!low) return "";
+  if (/horizon/.test(low)) return "Horizon";
+  if (/tufts/.test(low)) return "Tufts";
+  if (/aetna/.test(low)) return "Aetna";
+  if (/cigna|evernorth/.test(low)) return "Cigna";
+  if (/united ?health|\buhc\b|optum|umr|oxford|golden rule|\bunited\b/.test(low)) return "United";
+  if (/humana/.test(low)) return "Humana";
+  if (/highmark/.test(low)) return "Highmark";
+  if (/anthem/.test(low)) return "Anthem";
+  if (/carefirst/.test(low)) return "Carefirst";
+  if (/independence|\bibc\b/.test(low)) return "Independence";
+  if (/empire/.test(low)) return "Empire";
+  if (/amerihealth/.test(low)) return "Amerihealth";
+  if (/medicare/.test(low)) return "Medicare";
+  if (/medicaid|medi-cal|amerigroup|wellcare|molina|meridian/.test(low)) return "Medicaid";
+  if (/tricare|champva/.test(low)) return "Tricare";
+  if (/bcbs|blue/.test(low)) return "BCBS";
+  // Unknown payer: keep the first word or two, title-cased.
+  return titleCase(s.split(/\s+/).slice(0, 2).join(" "));
+}

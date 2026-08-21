@@ -8,6 +8,7 @@ import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import FacilityRecapButtons from "@/components/overview/FacilityRecapButtons";
 import CensusPanel from "@/components/overview/CensusPanel";
 import { censusByFacility } from "@/lib/report/census";
+import { bucketByStatus, lastWorkedLabel } from "@/lib/report/statusBuckets";
 import { money } from "@/lib/format";
 import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -108,6 +109,7 @@ export default async function OverviewPage() {
     authsData,
     censusData,
     repricingData,
+    claimWorkData,
   ] = await Promise.all([
     supabase.from("facilities").select("*").order("name"),
     // Only the columns the Overview actually uses — much smaller payload than
@@ -175,6 +177,11 @@ export default async function OverviewPage() {
           .range(f, t)
       )
     ),
+    safe(
+      selectAll<{ claim_id: string | null; date_worked: string | null }>((f, t) =>
+        supabase.from("claim_work").select("claim_id,date_worked").range(f, t)
+      )
+    ),
   ]);
 
   const facilities = (facData as Facility[]) ?? [];
@@ -183,6 +190,25 @@ export default async function OverviewPage() {
     (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
   );
   const issues = issuesData ?? [];
+
+  // claim_id → last date_worked, for status buckets + 14-day work coverage.
+  const workedByClaim = new Map<string, string>();
+  for (const w of (claimWorkData ?? []) as { claim_id: string | null; date_worked: string | null }[]) {
+    if (w.claim_id && w.date_worked) workedByClaim.set(w.claim_id, w.date_worked);
+  }
+  // Network-wide AR by payer + status (e.g. "Horizon · Claim At").
+  const statusBuckets = bucketByStatus(
+    claims.map((c) => ({ claim_id: c.claim_id, claim_status: c.claim_status, balance: c.balance })),
+    workedByClaim
+  ).slice(0, 20);
+  // Per-facility work coverage: of all active claims, how many worked in 14 days.
+  const worked14Cutoff = Date.now() - 14 * 86400000;
+  const isWorked14 = (claimId: string | null | undefined): boolean => {
+    const dw = claimId ? workedByClaim.get(claimId) : null;
+    if (!dw) return false;
+    const t = Date.parse(dw);
+    return !isNaN(t) && t >= worked14Cutoff;
+  };
 
   const facName = (id: string) => {
     const f = facilities.find((x) => x.id === id);
@@ -201,6 +227,8 @@ export default async function OverviewPage() {
     risk65Count: number;
     risk65Balance: number;
     openIssues: number;
+    claimCount: number;
+    worked14: number;
   };
   const aggMap: Record<string, Agg> = {};
   for (const f of facilities) {
@@ -215,6 +243,8 @@ export default async function OverviewPage() {
       risk65Count: 0,
       risk65Balance: 0,
       openIssues: 0,
+      claimCount: 0,
+      worked14: 0,
     };
   }
   for (const c of claims) {
@@ -222,6 +252,8 @@ export default async function OverviewPage() {
     if (!a) continue;
     a.charged += c.charge_amount ?? 0;
     a.balance += c.balance ?? 0;
+    a.claimCount++;
+    if (isWorked14(c.claim_id)) a.worked14++;
     if (isPriority(c)) {
       a.pri100Count++;
       a.pri100Balance += c.balance ?? 0;
@@ -324,6 +356,81 @@ export default async function OverviewPage() {
 
           {/* Facility census — current week: patients, missed groups, missed rev */}
           <CensusPanel summaries={censusSummaries} facName={facName} />
+
+          {/* AR by status — payer + status action, with 14-day work coverage */}
+          {statusBuckets.length > 0 && (
+            <section className="card overflow-hidden">
+              <div className="border-b border-surface-border px-5 py-3 font-semibold">
+                AR by Status
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[40rem] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wide text-surface-muted">
+                      <th className="px-5 py-2">Status</th>
+                      <th className="px-3 py-2 text-right">Claims</th>
+                      <th className="px-3 py-2 text-right">Balance</th>
+                      <th className="px-5 py-2 text-right">Last worked</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statusBuckets.map((b) => (
+                      <tr key={b.key} className="border-b border-surface-border last:border-0">
+                        <td className="px-5 py-2 font-medium">{b.label}</td>
+                        <td className="px-3 py-2 text-right font-mono">{b.count}</td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold">
+                          {money(b.balance)}
+                        </td>
+                        <td className="px-5 py-2 text-right text-surface-muted">
+                          {lastWorkedLabel(b.lastWorked)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* Work coverage — of each facility's claims, how many worked in 14 days */}
+          <section className="card overflow-hidden">
+            <div className="border-b border-surface-border px-5 py-3 font-semibold">
+              Work Coverage · last 14 days
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[36rem] text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wide text-surface-muted">
+                    <th className="px-5 py-2">Facility</th>
+                    <th className="px-3 py-2 text-right">Claims</th>
+                    <th className="px-3 py-2 text-right">Worked (14d)</th>
+                    <th className="px-5 py-2 text-right">Coverage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aggs
+                    .filter((a) => a.claimCount > 0)
+                    .map((a) => {
+                      const pct = Math.round((a.worked14 / a.claimCount) * 100);
+                      return (
+                        <tr key={a.id} className="border-b border-surface-border last:border-0">
+                          <td className="px-5 py-2 font-medium">{a.name}</td>
+                          <td className="px-3 py-2 text-right font-mono">{a.claimCount}</td>
+                          <td className="px-3 py-2 text-right font-mono">{a.worked14}</td>
+                          <td
+                            className={`px-5 py-2 text-right font-mono font-semibold ${
+                              pct >= 50 ? "text-recovered" : pct >= 25 ? "text-gold" : "text-risk"
+                            }`}
+                          >
+                            {pct}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           {/* 100+ priority panel */}
           <RiskPanel
