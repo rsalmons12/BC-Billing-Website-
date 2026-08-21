@@ -232,7 +232,7 @@ const payDate = (p: PayRow): number =>
 // PHP/IOP/OP whose most recent payment for that level of care comes in under the
 // floor. Census-driven — only patients currently on the census are considered
 // (no day-window on payments).
-function computeBelowFloor(
+export function computeBelowFloor(
   facilityId: string,
   payments: PayRow[],
   census: {

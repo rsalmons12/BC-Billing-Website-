@@ -7,7 +7,8 @@ import Header from "@/components/Header";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import CensusPanel from "@/components/overview/CensusPanel";
 import MyRecapButton from "@/components/facility/MyRecapButton";
-import { censusByFacility } from "@/lib/report/census";
+import { censusByFacility, missedGroupDetail } from "@/lib/report/census";
+import { computeBelowFloor, type BelowFloorRow } from "@/lib/report/facilityRecap";
 import { money } from "@/lib/format";
 import { isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
@@ -51,13 +52,6 @@ function parseDate(v: unknown): Date | null {
   return isNaN(t) ? null : new Date(t);
 }
 
-function isThisMonth(v: unknown, now: Date): boolean {
-  const d = parseDate(v);
-  return (
-    !!d && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
-  );
-}
-
 export default async function FacilityDashboard({
   searchParams,
 }: {
@@ -78,6 +72,25 @@ export default async function FacilityDashboard({
     : now;
   const monthLabel = viewMonth.toLocaleString("en-US", { month: "long", year: "numeric" });
   const viewMonthKey = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, "0")}`;
+
+  // Apples-to-apples month comparison. When looking at the CURRENT month (only
+  // partway through), compare BOTH months through the same day-of-month — e.g.
+  // on Aug 21 it's Aug 1–21 vs Jul 1–21, not a partial August against a full
+  // July. A past month is viewed in full (cutoff past its last day).
+  const isCurrentMonthView =
+    viewMonth.getFullYear() === now.getFullYear() && viewMonth.getMonth() === now.getMonth();
+  const cutoffDay = isCurrentMonthView ? now.getDate() : 32;
+  const dayRange = isCurrentMonthView ? ` (1–${now.getDate()})` : "";
+  // True if a date is in `target`'s month AND on/before the cutoff day.
+  const inMonthWindow = (v: unknown, target: Date): boolean => {
+    const d = parseDate(v);
+    return (
+      !!d &&
+      d.getFullYear() === target.getFullYear() &&
+      d.getMonth() === target.getMonth() &&
+      d.getDate() <= cutoffDay
+    );
+  };
 
   // The exact set of facilities THIS login may see: its primary facility plus
   // any explicitly granted via assignments. Computed in-app so the dashboard
@@ -185,6 +198,23 @@ export default async function FacilityDashboard({
     return f?.short_name || f?.name || "—";
   };
 
+  // Missed-group detail (who & why) for the facilities in view — same admit-date
+  // proration as the recap, so a mid-week admit isn't dinged for groups held
+  // before they arrived.
+  const missedGroups = censusFacilityIds.flatMap((id) => missedGroupDetail(id, allCensus).rows);
+
+  // Patients whose most-recent payment for their level of care lands under the
+  // facility's per-day reimbursement floor. Uses the floors set on each facility.
+  const belowFloor: BelowFloorRow[] = censusFacilityIds.flatMap((id) => {
+    const f = facilities.find((x) => x.id === id);
+    if (!f) return [];
+    return computeBelowFloor(id, allPayments, allCensus, {
+      PHP: f.php_floor && f.php_floor > 0 ? f.php_floor : null,
+      IOP: f.iop_floor && f.iop_floor > 0 ? f.iop_floor : null,
+      OP: f.op_floor && f.op_floor > 0 ? f.op_floor : null,
+    });
+  });
+
   const viewLabel = facility
     ? facility.short_name || facility.name
     : multi
@@ -212,8 +242,10 @@ export default async function FacilityDashboard({
   );
 
   // ---- Payments collected in the viewed month + per payer ------------------
+  // Day-matched to the cutoff (so a current-month view is 1–today, not the whole
+  // calendar month) for a fair comparison with prior months.
   const monthPayments = payments.filter(
-    (p) => isThisMonth(p.deposit_date, viewMonth) || isThisMonth(p.payment_entered, viewMonth)
+    (p) => inMonthWindow(p.deposit_date, viewMonth) || inMonthWindow(p.payment_entered, viewMonth)
   );
   const collectedThisMonth = monthPayments.reduce(
     (s, p) => s + (p.paid_amount ?? 0),
@@ -233,8 +265,14 @@ export default async function FacilityDashboard({
   const priorMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1);
   const priorMonthKey = `${priorMonth.getFullYear()}-${String(priorMonth.getMonth() + 1).padStart(2, "0")}`;
   const priorMonthLabel = priorMonth.toLocaleString("en-US", { month: "long", year: "numeric" });
+  // Day-matched billed window. Uses the billed report's entered date for the
+  // day cutoff; when a month is viewed in FULL (a past month), rows tagged only
+  // by period (no usable entered date) still count via the period match.
   const billedInMonth = (key: string, when: Date) =>
-    billed.filter((b) => (b.period ? b.period === key : isThisMonth(b.entered_date, when)));
+    billed.filter((b) => {
+      if (inMonthWindow(b.entered_date, when)) return true;
+      return cutoffDay >= 32 && b.period === key;
+    });
   const billedThisMonth = billedInMonth(viewMonthKey, viewMonth).reduce(
     (s, b) => s + (b.total_amount ?? 0),
     0
@@ -407,20 +445,22 @@ export default async function FacilityDashboard({
               sub={`${Math.round(EXPECTED_RATE * 100)}% of AR`}
             />
             <BigStat
-              label={`Collected · ${monthLabel}`}
+              label={`Collected · ${monthLabel}${dayRange}`}
               value={money(collectedThisMonth)}
               accent="recovered"
             />
-            <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
+            <BigStat label={`Billed · ${monthLabel}${dayRange}`} value={money(billedThisMonth)} />
           </section>
 
           {/* Billing vs last month — accurate, data-only trend (no generic text) */}
           {(billedThisMonth > 0 || billedLastMonth > 0) && (
             <section className="card p-5">
-              <div className="mb-3 font-semibold">Billing vs last month</div>
+              <div className="mb-3 font-semibold">
+                Billing vs last month{isCurrentMonthView ? ` · same days (${dayRange.trim().replace(/[()]/g, "")})` : ""}
+              </div>
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-                <BigStat label={`Billed · ${monthLabel}`} value={money(billedThisMonth)} />
-                <BigStat label={`Billed · ${priorMonthLabel}`} value={money(billedLastMonth)} />
+                <BigStat label={`Billed · ${monthLabel}${dayRange}`} value={money(billedThisMonth)} />
+                <BigStat label={`Billed · ${priorMonthLabel}${dayRange}`} value={money(billedLastMonth)} />
                 <BigStat
                   label="Change"
                   value={`${billedDelta < 0 ? "−" : "+"}${money(Math.abs(billedDelta))}`}
@@ -435,8 +475,8 @@ export default async function FacilityDashboard({
                     <thead>
                       <tr className="text-left text-surface-muted">
                         <th className="th">Level of care</th>
-                        <th className="th text-right">Sessions · {monthLabel}</th>
-                        <th className="th text-right">Sessions · {priorMonthLabel}</th>
+                        <th className="th text-right">Sessions · {monthLabel}{dayRange}</th>
+                        <th className="th text-right">Sessions · {priorMonthLabel}{dayRange}</th>
                         <th className="th text-right">Change</th>
                       </tr>
                     </thead>
@@ -477,6 +517,70 @@ export default async function FacilityDashboard({
 
           {/* Facility census — current week: patients, missed groups, missed rev */}
           <CensusPanel summaries={censusSummaries} facName={censusName} />
+
+          {/* Missed groups — who & why (admit-date prorated) */}
+          {missedGroups.length > 0 && (
+            <section className="card p-5">
+              <div className="mb-3 font-semibold">Missed groups — who &amp; why</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-surface-muted">
+                      <th className="th">Patient</th>
+                      <th className="th">Level</th>
+                      <th className="th text-center">Missed</th>
+                      <th className="th">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {missedGroups.map((m, i) => (
+                      <tr key={`${m.patient}-${i}`}>
+                        <td className="td font-medium">{m.patient}</td>
+                        <td className="td text-surface-muted">{m.loc || "—"}</td>
+                        <td className="td text-center font-semibold text-risk">−{m.missed}</td>
+                        <td className="td text-surface-muted">{m.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-surface-muted">
+                Groups already held before a client&apos;s admit date aren&apos;t counted against them.
+              </p>
+            </section>
+          )}
+
+          {/* Patients below reimbursement floor */}
+          {belowFloor.length > 0 && (
+            <section className="card p-5">
+              <div className="mb-3 font-semibold">Patients below reimbursement floor</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-surface-muted">
+                      <th className="th">Patient</th>
+                      <th className="th">Level</th>
+                      <th className="th text-right">Paid / day</th>
+                      <th className="th text-right">Floor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {belowFloor.map((b, i) => (
+                      <tr key={`${b.patient}-${i}`}>
+                        <td className="td font-medium">{b.patient}</td>
+                        <td className="td text-surface-muted">{b.loc}</td>
+                        <td className="td text-right font-mono font-semibold text-risk">{money(b.perDay)}</td>
+                        <td className="td text-right font-mono text-surface-muted">{money(b.floor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-surface-muted">
+                Current census patients whose most recent payment for their level of care comes in under the per-day floor.
+              </p>
+            </section>
+          )}
 
           {/* Non-reimbursement risk (marketplace / exchange payers) */}
           {riskAR > 0 && (
