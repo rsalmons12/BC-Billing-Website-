@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
 import { isExcludedMember, isStaleClaim } from "@/lib/claims";
-import { payerBucket, matchesPayer } from "@/lib/payer";
+import { payerBucket, matchesPayer, statusAction, matchesStatusAction } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
 import {
@@ -127,6 +127,7 @@ export default function QueueClient({
   const [search, setSearch] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
   const [payerF, setPayerF] = useState("all");
+  const [statusF, setStatusF] = useState("all");
   const [eodBusy, setEodBusy] = useState(false);
   // Risk-first enforcement: collectors must clear today's 65+ before working
   // anything younger. Management can lift it.
@@ -637,6 +638,7 @@ export default function QueueClient({
   const shown = baseRows.filter((r) => {
     if (riskOnly && (r.age_days ?? 0) <= RISK_AGE_THRESHOLD) return false;
     if (!matchesPayer(r.claim_status, payerF)) return false;
+    if (!matchesStatusAction(r.claim_status, statusF)) return false;
     if (q) {
       const hay = `${r.patient_name ?? ""} ${r.claim_id ?? ""} ${r.member_id ?? ""} ${
         r.claim_status ?? ""
@@ -648,6 +650,12 @@ export default function QueueClient({
 
   // Payer families present in this queue's claims, for the payer dropdown.
   const payerOptions = Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort();
+
+  // Status actions present in this queue's claims (Claim At, Denied At, User
+  // Print, Rejected…) — insurer names collapsed out — for the status dropdown.
+  const statusOptions = Array.from(
+    new Set(rows.map((r) => statusAction(r.claim_status)).filter(Boolean))
+  ).sort();
 
   // Email an end-of-day production summary now. Recipients are everyone marked
   // "management" (their login emails) — nothing is typed or preset. This also
@@ -1069,6 +1077,21 @@ export default function QueueClient({
           {payerOptions.map((p) => (
             <option key={p} value={p}>
               {p}
+            </option>
+          ))}
+        </select>
+
+        {/* status filter — Claim At / Denied At / User Print / Rejected … */}
+        <select
+          value={statusF}
+          onChange={(e) => setStatusF(e.target.value)}
+          className="input max-w-[10rem]"
+          title="Filter by status (Claim At, Denied At, User Print, Rejected…)"
+        >
+          <option value="all">All statuses</option>
+          {statusOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
             </option>
           ))}
         </select>

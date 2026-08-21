@@ -6,7 +6,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { isExcludedMember, isStaleClaim } from "@/lib/claims";
-import { payerBucket, matchesPayer } from "@/lib/payer";
+import { payerBucket, matchesPayer, statusAction, matchesStatusAction } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import {
   WATCH_AGE_THRESHOLD,
@@ -143,6 +143,7 @@ export default function CollectionsClient({
   const [bucket, setBucket] = useState<Bucket>("all");
   const [worked, setWorked] = useState<Worked>("all");
   const [payerF, setPayerF] = useState("all");
+  const [statusF, setStatusF] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState<string>("");
   const [groupByPatient, setGroupByPatient] = useState(true);
@@ -392,6 +393,7 @@ export default function CollectionsClient({
       if (worked === "unworked" && isWorked(r.work)) return false;
 
       if (!matchesPayer(r.claim_status, payerF)) return false;
+      if (!matchesStatusAction(r.claim_status, statusF)) return false;
 
       if (q) {
         const hay = `${r.patient_name ?? ""} ${r.member_id ?? ""} ${r.claim_id} ${
@@ -401,11 +403,22 @@ export default function CollectionsClient({
       }
       return true;
     });
-  }, [rows, bucket, worked, payerF, search]);
+  }, [rows, bucket, worked, payerF, statusF, search]);
 
   // Payer families present in the loaded claims, for the payer dropdown.
   const payerOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => payerBucket(r.claim_status)))).sort(),
+    [rows]
+  );
+
+  // Status actions present in the loaded claims (e.g. "Claim At", "Denied At",
+  // "User Print", "Rejected") — insurer names collapsed out — for the status
+  // dropdown.
+  const statusOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map((r) => statusAction(r.claim_status)).filter(Boolean))
+      ).sort(),
     [rows]
   );
 
@@ -576,6 +589,20 @@ export default function CollectionsClient({
           {payerOptions.map((p) => (
             <option key={p} value={p}>
               {p}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={statusF}
+          onChange={(e) => setStatusF(e.target.value)}
+          className="input max-w-[11rem]"
+          title="Filter by status (Claim At, Denied At, User Print, Rejected…)"
+        >
+          <option value="all">All statuses</option>
+          {statusOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
             </option>
           ))}
         </select>

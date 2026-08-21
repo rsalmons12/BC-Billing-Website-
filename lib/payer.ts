@@ -57,3 +57,29 @@ export function payerBucket(raw: unknown): PayerBucket {
 export function matchesPayer(raw: unknown, bucket: string): boolean {
   return bucket === "all" || payerBucket(raw) === bucket;
 }
+
+// ---------------------------------------------------------------------------
+// Status action — the WHAT of an imported claim status, with the insurer name
+// dropped. "Claim at UHC" and "Claim at Tufts" both become "Claim At"; "Denied
+// at Aetna" → "Denied At"; standalone statuses like "User Print" / "Rejected"
+// stay as themselves. Lets a tab filter by the kind of status without one option
+// per insurance.
+// ---------------------------------------------------------------------------
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function statusAction(raw: unknown): string {
+  const t = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  // "<action> at <insurer>" → just "<action> At" (drop the insurer). Everything
+  // else (User Print, Rejected, …) keeps its full text.
+  const m = t.match(/^(.*?\bat)\b/i);
+  const base = (m ? m[1] : t).trim();
+  return titleCase(base);
+}
+
+// Does a status match the selected action ("all" matches everything)?
+export function matchesStatusAction(raw: unknown, action: string): boolean {
+  return action === "all" || statusAction(raw) === action;
+}
