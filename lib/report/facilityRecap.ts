@@ -8,7 +8,7 @@ import {
   type CensusWeekSummary,
   type MissedGroupRow,
 } from "./census";
-import { bucketByStatus, lastWorkedLabel, type StatusBucket } from "./statusBuckets";
+import { bucketByStatus, type StatusBucket } from "./statusBuckets";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -930,20 +930,11 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     ${
       r.statusBuckets.length
         ? `${sectionHead("AR by status")}
-            <div style="color:${MUTE};font-size:13px;margin-bottom:8px">
-              <b style="color:${INK}">${r.workCoverage.worked14}</b> of
-              <b style="color:${INK}">${r.workCoverage.total}</b> claims worked in the last 14 days${
-                r.workCoverage.total > 0
-                  ? ` (${Math.round((r.workCoverage.worked14 / r.workCoverage.total) * 100)}%)`
-                  : ""
-              }.
-            </div>
             <table style="border-collapse:collapse;width:100%;font-size:13px">
               <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
                 <th style="padding:4px 0">Status</th>
                 <th style="padding:4px 0;text-align:right">Claims</th>
                 <th style="padding:4px 0;text-align:right">Balance</th>
-                <th style="padding:4px 0;text-align:right">Last worked</th>
               </tr></thead>
               <tbody>
                 ${r.statusBuckets
@@ -952,7 +943,6 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
                       <td style="padding:7px 0;border-bottom:1px solid ${HAIR};font-weight:600;color:${INK}">${b.label}</td>
                       <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${b.count}</td>
                       <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:700;color:${NAVY};${NUM}">${money(b.balance)}</td>
-                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;color:${MUTE}">${lastWorkedLabel(b.lastWorked)}</td>
                     </tr>`
                   )
                   .join("")}
