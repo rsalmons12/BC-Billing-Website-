@@ -228,6 +228,35 @@ function inclusiveDays(from: unknown, to: unknown): number {
 const payDate = (p: PayRow): number =>
   Date.parse(String(p.deposit_date || p.payment_entered || p.dos_from || "")) || 0;
 
+// A census patient's per-day reimbursement for a level of care, from their
+// actual SERVICE payments (CPT maps to this LOC). Returns the most-recent
+// MATERIAL payment's per-day — trivial secondary/adjustment postings (a $2
+// remittance, a small copay) are dropped, so they can't masquerade as the rate.
+// "Material" = at least 10% of the patient's best realized per-day for this LOC.
+// 0 when the patient has no service payment for this level of care.
+function patientPerDay(
+  payments: PayRow[],
+  memberId: string,
+  name: string,
+  fam: LocFamily
+): number {
+  const cands: { perDay: number; date: number }[] = [];
+  for (const p of payments) {
+    if ((p.paid_amount ?? 0) <= 0) continue;
+    if (locFamily2(p.cpt_description) !== fam) continue;
+    const pid = String(p.member_id ?? "").trim().toLowerCase();
+    const match = memberId && pid ? memberId === pid : name !== "" && normName(p.patient_name) === name;
+    if (!match) continue;
+    const days = inclusiveDays(p.dos_from, p.dos_to);
+    cands.push({ perDay: Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1)), date: payDate(p) });
+  }
+  if (cands.length === 0) return 0;
+  const maxPD = Math.max(...cands.map((c) => c.perDay));
+  const material = cands.filter((c) => c.perDay >= maxPD * 0.1);
+  material.sort((a, b) => b.date - a.date);
+  return material[0]?.perDay ?? maxPD;
+}
+
 // For one facility: the CURRENT CENSUS patients (latest census week) in
 // PHP/IOP/OP whose most recent payment for that level of care comes in under the
 // floor. Census-driven — only patients currently on the census are considered
@@ -264,20 +293,7 @@ export function computeBelowFloor(
     const dedupe = `${cid || cnm}|${fam}`;
     if (seen.has(dedupe)) continue;
 
-    // That census patient's real payments for THIS level of care (member id, else name).
-    const matches = fPays.filter((p) => {
-      if ((p.paid_amount ?? 0) <= 0) return false;
-      if (locFamily2(p.cpt_description) !== fam) return false;
-      const pid = String(p.member_id ?? "").trim().toLowerCase();
-      if (cid && pid) return cid === pid;
-      return normName(p.patient_name) === cnm && cnm !== "";
-    });
-    if (matches.length === 0) continue;
-
-    matches.sort((a, b) => payDate(b) - payDate(a));
-    const p = matches[0];
-    const days = inclusiveDays(p.dos_from, p.dos_to);
-    const perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
+    const perDay = patientPerDay(fPays, cid, cnm, fam);
     if (perDay > 0 && perDay < floor) {
       out.push({ patient: String(c.patient_name ?? "").trim() || "—", loc: fam, perDay, floor });
       seen.add(dedupe);
@@ -327,26 +343,12 @@ function computeCensusReceivables(
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
 
-    // Per-day reimbursement: this patient's most-recent payment FOR A SERVICE AT
-    // THIS LEVEL OF CARE. The payment's CPT must map to this level of care —
-    // a lump deposit / copay / patient-payment line with no service CPT is NOT a
-    // per-day rate (dividing it by a single day produced wrong figures like
-    // $18/day). This mirrors the below-floor calc exactly, so the two sections
-    // agree. When there's no CPT-matched payment we fall back to historical.
-    const pMatches = fPays.filter((p) => {
-      if ((p.paid_amount ?? 0) <= 0) return false;
-      if (locFamily2(p.cpt_description) !== fam) return false;
-      const pid = String(p.member_id ?? "").trim().toLowerCase();
-      if (cid && pid) return cid === pid;
-      return cnm !== "" && normName(p.patient_name) === cnm;
-    });
-    let perDay = 0;
-    if (pMatches.length > 0) {
-      pMatches.sort((a, b) => payDate(b) - payDate(a));
-      const p = pMatches[0];
-      const days = inclusiveDays(p.dos_from, p.dos_to);
-      perDay = Math.round((p.paid_amount ?? 0) / (days > 0 ? days : 1));
-    } else {
+    // Per-day reimbursement from this patient's actual SERVICE payments for this
+    // level of care (identical rule to the below-floor calc, so the two sections
+    // agree). Falls back to the historical paid-per-day for their member-ID
+    // prefix + LOC when they have no service payment on file yet.
+    let perDay = patientPerDay(fPays, cid, cnm, fam);
+    if (perDay <= 0) {
       const prefix = String(c.member_id ?? "").trim().slice(0, 3).toUpperCase();
       perDay = prefix ? histPerDay.get(`${prefix}|${fam}`) ?? 0 : 0;
     }
