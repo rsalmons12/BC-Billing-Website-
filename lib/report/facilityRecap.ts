@@ -327,13 +327,15 @@ function computeCensusReceivables(
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
 
-    // Per-day reimbursement: prefer this patient's most-recent real payment for
-    // this level of care; fall back to the historical paid-per-day for their
-    // member-ID prefix + LOC when there's no payment on file yet.
+    // Per-day reimbursement: this patient's most-recent payment FOR A SERVICE AT
+    // THIS LEVEL OF CARE. The payment's CPT must map to this level of care —
+    // a lump deposit / copay / patient-payment line with no service CPT is NOT a
+    // per-day rate (dividing it by a single day produced wrong figures like
+    // $18/day). This mirrors the below-floor calc exactly, so the two sections
+    // agree. When there's no CPT-matched payment we fall back to historical.
     const pMatches = fPays.filter((p) => {
       if ((p.paid_amount ?? 0) <= 0) return false;
-      const pfam = locFamily2(p.cpt_description);
-      if (pfam && pfam !== fam) return false;
+      if (locFamily2(p.cpt_description) !== fam) return false;
       const pid = String(p.member_id ?? "").trim().toLowerCase();
       if (cid && pid) return cid === pid;
       return cnm !== "" && normName(p.patient_name) === cnm;
