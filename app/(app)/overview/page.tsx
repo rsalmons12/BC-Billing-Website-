@@ -10,7 +10,7 @@ import CensusPanel from "@/components/overview/CensusPanel";
 import { censusByFacility } from "@/lib/report/census";
 import { bucketByStatus, lastWorkedLabel } from "@/lib/report/statusBuckets";
 import { money } from "@/lib/format";
-import { isExcludedMember, isStaleClaim } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import {
   RISK_AGE_THRESHOLD,
@@ -184,10 +184,22 @@ export default async function OverviewPage() {
     ),
   ]);
 
-  const facilities = (facData as Facility[]) ?? [];
-  // Excluded plans (e.g. VMAH member ids) are hidden from every total.
+  // Demo facilities (App Store review data) are hidden from all management
+  // reporting so they never pollute real network numbers.
+  const facilities = ((facData as Facility[]) ?? []).filter(
+    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+  );
+  const demoFacilityIds = new Set(
+    ((facData as Facility[]) ?? [])
+      .filter((f) => isDemoFacility(f.name) || isDemoFacility(f.short_name))
+      .map((f) => f.id)
+  );
+  // Excluded plans (e.g. VMAH member ids) and demo facilities are hidden from every total.
   const claims = (claimsData ?? []).filter(
-    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+    (c) =>
+      !isExcludedMember(c.member_id) &&
+      !isStaleClaim(c.age_days) &&
+      !(c.facility_id && demoFacilityIds.has(c.facility_id))
   );
   const issues = issuesData ?? [];
 
