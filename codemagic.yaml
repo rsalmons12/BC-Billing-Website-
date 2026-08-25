@@ -46,6 +46,15 @@ workflows:
             ios/App/App.xcodeproj/project.pbxproj
           echo "Bundle ids now set to:"
           grep PRODUCT_BUNDLE_IDENTIFIER ios/App/App.xcodeproj/project.pbxproj || true
+          # Bump the build number above any previously uploaded build. Apple
+          # requires CFBundleVersion to increase on every upload, but a freshly
+          # scaffolded project always resets it to 1. Use a unix timestamp, which
+          # is numeric and always increases, so each build uploads cleanly.
+          BUILD_NUM="$(date +%s)"
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*;/CURRENT_PROJECT_VERSION = ${BUILD_NUM};/g" \
+            ios/App/App.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" ios/App/App/Info.plist 2>/dev/null || true
+          echo "Build number (CFBundleVersion) set to ${BUILD_NUM}"
       - name: Set up code signing (create cert + profile if missing)
         script: |
           set -e
