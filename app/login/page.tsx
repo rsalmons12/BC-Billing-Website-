@@ -9,12 +9,18 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Every user must accept the Privacy Policy + HIPAA notice before access.
+    if (!agreed) {
+      setError("Please read and agree to the Privacy Policy and HIPAA Notice to continue.");
+      return;
+    }
     setLoading(true);
     try {
       const supabase = createClient();
@@ -94,6 +100,36 @@ export default function LoginPage() {
             className="mb-4 w-full rounded-lg border border-command-border bg-command px-3 py-2 text-sm text-command-text outline-none focus:border-gold"
           />
 
+          <label className="mb-4 flex items-start gap-2 text-xs leading-snug text-command-muted">
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-gold"
+            />
+            <span>
+              I have read and agree to the{" "}
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-command-text underline"
+              >
+                Privacy Policy
+              </a>{" "}
+              and{" "}
+              <a
+                href="/hipaa"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-command-text underline"
+              >
+                HIPAA Notice
+              </a>
+              . This system contains PHI; I will access it only for authorized work.
+            </span>
+          </label>
+
           {error && (
             <p className="mb-4 rounded-lg bg-risk/10 px-3 py-2 text-sm text-risk">
               {error}
@@ -102,7 +138,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !agreed}
             className="w-full rounded-lg bg-gold px-3.5 py-2.5 text-sm font-semibold text-command transition hover:brightness-105 disabled:opacity-60"
           >
             {loading ? "Signing in…" : "Sign in"}

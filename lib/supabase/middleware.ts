@@ -14,6 +14,7 @@ export async function updateSession(request: NextRequest) {
     path.startsWith("/api/cron") || // scheduled-email endpoints; secured by CRON_SECRET, NOT a login session — must not redirect to /login or the timer can never fire
     path === "/privacy" ||
     path === "/support" ||
+    path === "/hipaa" ||
     path === "/api/messages/inbound" || // Resend webhook; secured by its own token
     path === "/manifest.webmanifest";
 
