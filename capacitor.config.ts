@@ -9,7 +9,10 @@ const config: CapacitorConfig = {
   appName: "BC Billing",
   webDir: "public",
   server: {
-    url: "https://bcbilling.cloud",
+    // Loads the live hosted app. Points at the Render URL, which is the
+    // reliably-reachable host; change to https://bcbilling.cloud once that
+    // domain is pointed at Render.
+    url: "https://bc-billing.onrender.com",
     cleartext: false,
   },
   ios: {
