@@ -339,6 +339,8 @@ export default function AuthorizationsClient({
         "Total Days": authDays(r) ?? "",
         "Next Review": r.next_review_date ?? "",
         Discharge: r.discharge_date ?? "",
+        "DX Code Primary": r.dx_code_primary ?? "",
+        "Billing CPT Code": r.billing_cpt_code ?? "",
         Status: r.status ?? "",
         Discharged: r.discharged ? "Yes" : "",
         Notes: r.notes ?? "",
@@ -813,6 +815,8 @@ function AuthCard({
         })}
         {field("Next Review", "next_review_date", { placeholder: "M/D/YYYY" })}
         {field("Discharge", "discharge_date", { placeholder: "M/D/YYYY" })}
+        {field("DX Code Primary", "dx_code_primary", { placeholder: "e.g. F11.20" })}
+        {field("Billing CPT Code", "billing_cpt_code", { placeholder: "e.g. H0015" })}
       </div>
 
       <label className="mt-3 block">

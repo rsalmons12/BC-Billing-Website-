@@ -186,6 +186,8 @@ export interface Authorization {
   auth_number: string | null;
   level_of_care: string | null;
   total_days: number | null;
+  dx_code_primary: string | null;
+  billing_cpt_code: string | null;
   status: string;
   notes: string;
   discharged: boolean;
