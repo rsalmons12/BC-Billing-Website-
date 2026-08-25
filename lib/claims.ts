@@ -10,6 +10,14 @@ export function isExcludedMember(memberId: unknown): boolean {
   return EXCLUDED_MEMBER_PREFIXES.some((p) => id.startsWith(p));
 }
 
+// A demo facility (name ends with "(Demo)") holds fake data used only for the
+// App Store review login. It's hidden from all management / network reporting
+// (Overview, daily recaps, Chief brief) so it never pollutes real numbers, but
+// stays fully visible to the scoped demo account that's assigned to it.
+export function isDemoFacility(name: unknown): boolean {
+  return /\(demo\)\s*$/i.test(String(name ?? "").trim());
+}
+
 // Claims older than this many days are effectively uncollectible ("dead"). They
 // are hidden from the Queue and Collections and excluded from every AR total, so
 // year-old claims don't inflate the numbers or clutter collectors' work.

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { isExcludedMember, isStaleClaim } from "@/lib/claims";
+import { isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { PRIORITY_AGE_THRESHOLD, RISK_AGE_THRESHOLD } from "@/lib/types";
 import { censusByFacility, type CensusLike } from "@/lib/report/census";
 import { easternToday } from "@/lib/report/eodSummary";
@@ -149,6 +149,11 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
     ),
   ]);
 
+  // Demo facilities (App Store review data) never appear in the brief.
+  const realFacilities = facilities.filter(
+    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+  );
+
   const claims = claimsRaw.filter(
     (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
   );
@@ -167,12 +172,12 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
   };
   const censusOf = new Map(
     censusByFacility(
-      facilities.map((f) => f.id),
+      realFacilities.map((f) => f.id),
       census
     ).map((s) => [s.facilityId, s])
   );
 
-  const rows: FacilityBrief[] = facilities.map((f) => {
+  const rows: FacilityBrief[] = realFacilities.map((f) => {
     let outstanding = 0,
       pri100Count = 0,
       pri100Bal = 0,
