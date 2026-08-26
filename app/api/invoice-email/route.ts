@@ -36,9 +36,14 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: me } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (me?.role !== "management")
-    return NextResponse.json({ error: "Management only." }, { status: 403 });
+  const { data: me } = await supabase
+    .from("profiles")
+    .select("role, is_owner")
+    .eq("id", user.id)
+    .maybeSingle();
+  // Invoicing is owner-only. Managers run collections but never touch invoices.
+  if (me?.role !== "management" || me?.is_owner !== true)
+    return NextResponse.json({ error: "Owners only." }, { status: 403 });
 
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });

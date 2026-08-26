@@ -5,6 +5,7 @@ export type Tab = {
   label: string;
   icon: string;
   roles: Role[]; // roles that may access at all
+  ownerOnly?: boolean; // true = only management users flagged is_owner may see it
 };
 
 // Single source of truth for navigation + per-user access.
@@ -28,7 +29,7 @@ export const TABS: Tab[] = [
   { href: "/attachments", label: "Attachments", icon: "📎", roles: ["management", "staff"] },
   { href: "/notifications", label: "Email Notifications", icon: "✉", roles: ["management"] },
   { href: "/reporting", label: "Reporting & Analytics", icon: "▲", roles: ["management"] },
-  { href: "/monthly-report", label: "Monthly Report", icon: "🗓", roles: ["management"] },
+  { href: "/monthly-report", label: "Monthly Report", icon: "🗓", roles: ["management"], ownerOnly: true },
   { href: "/team", label: "Collector Status", icon: "◉", roles: ["management"] },
   { href: "/lookup", label: "Patient Lookup", icon: "🔎", roles: ["management"] },
   { href: "/facility", label: "Dashboard", icon: "▣", roles: ["facility"] },
@@ -45,7 +46,11 @@ export const FACILITY_GRANTABLE = TABS.filter((t) =>
 // The tabs a given profile may actually see: role-allowed, then narrowed by
 // allowed_tabs if management has set an explicit list.
 export function tabsForProfile(profile: Profile): Tab[] {
-  const roleTabs = TABS.filter((t) => t.roles.includes(profile.role));
+  // Owner-only tabs (the invoicing screen) are hidden from managers — only a
+  // management user explicitly flagged is_owner sees them.
+  const roleTabs = TABS.filter(
+    (t) => t.roles.includes(profile.role) && (!t.ownerOnly || profile.is_owner === true)
+  );
   if (!profile.allowed_tabs || profile.allowed_tabs.length === 0) return roleTabs;
   const set = new Set(profile.allowed_tabs);
   return roleTabs.filter((t) => set.has(t.href));

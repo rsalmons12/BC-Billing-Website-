@@ -83,6 +83,7 @@ export interface Profile {
   queue_tier: string | null; // 'standard' | 'priority_100'
   receives_daily_emails: boolean | null; // false = excluded from the daily emails
   receives_invoices: boolean | null; // true = receives facility invoice emails
+  is_owner: boolean | null; // true = may see the Monthly Report / invoicing screen
   created_at: string;
 }
 

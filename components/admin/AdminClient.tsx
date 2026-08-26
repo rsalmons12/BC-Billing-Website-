@@ -72,6 +72,17 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : receives_invoices ? "Gets invoices" : "No invoices");
   };
 
+  const setOwner = async (p: Profile, is_owner: boolean) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, is_owner } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ is_owner })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : is_owner ? "Owner — sees invoices" : "Manager — no invoices");
+  };
+
   const setJobTitle = async (p: Profile, job_title: string) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, job_title } : x))
@@ -191,6 +202,7 @@ export default function AdminClient({
           setRole={setRole}
           setDailyEmails={setDailyEmails}
           setInvoices={setInvoices}
+          setOwner={setOwner}
           setJobTitle={setJobTitle}
           setQueueTier={setQueueTier}
           setFacilityId={setFacilityId}
@@ -222,6 +234,7 @@ function UsersTab({
   setRole,
   setDailyEmails,
   setInvoices,
+  setOwner,
   setJobTitle,
   setQueueTier,
   setFacilityId,
@@ -235,6 +248,7 @@ function UsersTab({
   setRole: (p: Profile, r: Role) => void;
   setDailyEmails: (p: Profile, on: boolean) => void;
   setInvoices: (p: Profile, on: boolean) => void;
+  setOwner: (p: Profile, on: boolean) => void;
   setJobTitle: (p: Profile, title: string) => void;
   setQueueTier: (p: Profile, tier: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
@@ -313,6 +327,25 @@ function UsersTab({
                   </span>
                 </label>
               </div>
+
+              {/* Owner = a management user who may ALSO see the Monthly Report /
+                  invoicing screen. Managers (owner off) get every other tab. */}
+              {p.role === "management" && (
+                <div>
+                  <span className="label">Owner</span>
+                  <label className="mt-1 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={p.is_owner === true}
+                      onChange={(e) => setOwner(p, e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-surface-muted">
+                      {p.is_owner === true ? "Sees invoices" : "Manager — no invoices"}
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {p.role === "staff" && (
                 <div>

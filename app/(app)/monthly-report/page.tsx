@@ -5,7 +5,8 @@ import MonthlyReportClient from "@/components/report/MonthlyReportClient";
 
 export default async function MonthlyReportPage() {
   const { profile, email } = await requireProfile();
-  if (profile.role !== "management") redirect("/");
+  // Invoicing is owner-only: managers may run everything else, not the invoices.
+  if (profile.role !== "management" || profile.is_owner !== true) redirect("/");
 
   const facilities = await accessibleFacilities();
 
