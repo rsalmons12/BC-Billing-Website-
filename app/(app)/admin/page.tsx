@@ -26,6 +26,7 @@ export default async function AdminPage() {
           initialFacilities={(facilities as Facility[]) ?? []}
           initialAssignments={(assignments as Assignment[]) ?? []}
           selfId={profile.id}
+          selfIsOwner={profile.is_owner === true}
         />
       </main>
     </>

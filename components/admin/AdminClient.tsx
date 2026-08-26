@@ -15,11 +15,13 @@ export default function AdminClient({
   initialFacilities,
   initialAssignments,
   selfId,
+  selfIsOwner,
 }: {
   initialProfiles: Profile[];
   initialFacilities: Facility[];
   initialAssignments: Assignment[];
   selfId: string;
+  selfIsOwner: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [tab, setTab] = useState<Tab>("users");
@@ -199,6 +201,7 @@ export default function AdminClient({
           facilities={facilities}
           assignments={assignments}
           selfId={selfId}
+          selfIsOwner={selfIsOwner}
           setRole={setRole}
           setDailyEmails={setDailyEmails}
           setInvoices={setInvoices}
@@ -216,6 +219,7 @@ export default function AdminClient({
           facilities={facilities}
           setFacilities={setFacilities}
           flash={flash}
+          selfIsOwner={selfIsOwner}
         />
       )}
 
@@ -231,6 +235,7 @@ function UsersTab({
   facilities,
   assignments,
   selfId,
+  selfIsOwner,
   setRole,
   setDailyEmails,
   setInvoices,
@@ -245,6 +250,7 @@ function UsersTab({
   facilities: Facility[];
   assignments: Assignment[];
   selfId: string;
+  selfIsOwner: boolean;
   setRole: (p: Profile, r: Role) => void;
   setDailyEmails: (p: Profile, on: boolean) => void;
   setInvoices: (p: Profile, on: boolean) => void;
@@ -329,7 +335,10 @@ function UsersTab({
               </div>
 
               {/* Owner = a management user who may ALSO see the Monthly Report /
-                  invoicing screen. Managers (owner off) get every other tab. */}
+                  invoicing screen. Managers (owner off) get every other tab.
+                  Only an existing owner can grant/revoke this, and never on
+                  their own row — the DB enforces the same rule (see
+                  0049_guard_is_owner.sql), so this is just the matching UI. */}
               {p.role === "management" && (
                 <div>
                   <span className="label">Owner</span>
@@ -337,11 +346,17 @@ function UsersTab({
                     <input
                       type="checkbox"
                       checked={p.is_owner === true}
+                      disabled={!selfIsOwner || p.id === selfId}
                       onChange={(e) => setOwner(p, e.target.checked)}
-                      className="h-4 w-4"
+                      className="h-4 w-4 disabled:opacity-40"
                     />
                     <span className="text-surface-muted">
                       {p.is_owner === true ? "Sees invoices" : "Manager — no invoices"}
+                      {p.id === selfId
+                        ? " (locked — your own)"
+                        : !selfIsOwner
+                          ? " (owners only)"
+                          : ""}
                     </span>
                   </label>
                 </div>
@@ -463,10 +478,12 @@ function FacilitiesTab({
   facilities,
   setFacilities,
   flash,
+  selfIsOwner,
 }: {
   facilities: Facility[];
   setFacilities: React.Dispatch<React.SetStateAction<Facility[]>>;
   flash: (m: string) => void;
+  selfIsOwner: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [name, setName] = useState("");
@@ -552,7 +569,7 @@ function FacilitiesTab({
               <th className="th">Legal name</th>
               <th className="th">Short name</th>
               <th className="th">State</th>
-              <th className="th">Bill %</th>
+              {selfIsOwner && <th className="th">Bill %</th>}
               <th className="th">PHP floor</th>
               <th className="th">IOP floor</th>
               <th className="th">OP floor</th>
@@ -594,21 +611,23 @@ function FacilitiesTab({
                     className="cell-input w-16"
                   />
                 </td>
-                <td className="td">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    defaultValue={f.billing_rate ?? ""}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
-                      const next = v == null || isNaN(v) ? null : v;
-                      if (next !== (f.billing_rate ?? null)) save(f, { billing_rate: next });
-                    }}
-                    className="cell-input w-20"
-                    placeholder="%"
-                  />
-                </td>
+                {selfIsOwner && (
+                  <td className="td">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      defaultValue={f.billing_rate ?? ""}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                        const next = v == null || isNaN(v) ? null : v;
+                        if (next !== (f.billing_rate ?? null)) save(f, { billing_rate: next });
+                      }}
+                      className="cell-input w-20"
+                      placeholder="%"
+                    />
+                  </td>
+                )}
                 <td className="td">
                   <input
                     type="number"
