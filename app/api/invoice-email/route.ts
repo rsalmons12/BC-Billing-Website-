@@ -223,12 +223,12 @@ export async function POST(request: Request) {
       : null;
   let payUrl: string | null = staticUrl;
   let payExact = false;
-  const exactLink = await createSquarePaymentLink({
+  const square = await createSquarePaymentLink({
     amount: fee,
     name: `${facilityName} — ${label} Invoice`,
   });
-  if (exactLink) {
-    payUrl = exactLink;
+  if (square.url) {
+    payUrl = square.url;
     payExact = true;
   }
 
@@ -282,5 +282,8 @@ export async function POST(request: Request) {
     fee,
     collected,
     test: !!body.test,
+    // Why the Square "Pay" button did / didn't appear, so misconfig is visible.
+    squarePay: payExact ? "exact-link" : staticUrl ? "static-link" : "none",
+    squareError: square.url ? null : square.error,
   });
 }
