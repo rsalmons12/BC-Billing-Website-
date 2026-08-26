@@ -210,12 +210,19 @@ export default function AuthorizationsClient({
   );
 
   // Insert another auth/review for an existing patient (same name + facility).
+  // The clinical type (Live / Fax / Initial Live) is required — an auth can't be
+  // created without answering how the clinical was submitted.
   const addReview = useCallback(
-    async (facility_id: string | null, patient_name: string) => {
+    async (facility_id: string | null, patient_name: string, clinical_type: string) => {
+      if (!clinical_type) {
+        setSaveState("Pick Live / Fax before adding.");
+        setTimeout(() => setSaveState(""), 1800);
+        return;
+      }
       setSaveState("Adding review…");
       const { data, error } = await supabase
         .from("authorizations")
-        .insert({ facility_id, patient_name, status: "Pending", updated_by: userId })
+        .insert({ facility_id, patient_name, clinical_type, status: "Pending", updated_by: userId })
         .select()
         .single();
       if (error) {
@@ -603,7 +610,7 @@ export default function AuthorizationsClient({
           onClose={() => setOpenKey(null)}
           onSave={saveField}
           onDelete={del}
-          onAddReview={() => addReview(openGroup.facility_id, openGroup.name)}
+          onAddReview={(clinical) => addReview(openGroup.facility_id, openGroup.name, clinical)}
         />
       )}
 
@@ -612,8 +619,8 @@ export default function AuthorizationsClient({
           facilities={facilities}
           defaultFacility={facilityFilter !== "all" ? facilityFilter : facilities[0]?.id ?? ""}
           onClose={() => setShowAdd(false)}
-          onCreate={async (facility_id, name) => {
-            await addReview(facility_id, name);
+          onCreate={async (facility_id, name, clinical) => {
+            await addReview(facility_id, name, clinical);
             setShowAdd(false);
             setOpenKey(`${facility_id}||${norm(name)}`);
           }}
@@ -643,8 +650,10 @@ function PatientDetail({
   onClose: () => void;
   onSave: (id: string, key: keyof Authorization, value: unknown) => void;
   onDelete: (id: string) => void;
-  onAddReview: () => void;
+  onAddReview: (clinical: string) => void;
 }) {
+  // Clinical type must be answered before a new auth/review can be added.
+  const [reviewClinical, setReviewClinical] = useState("");
   // Total days per level of care across ALL of this patient's auths.
   const locTotals = useMemo(() => {
     const m = new Map<string, number>();
@@ -722,7 +731,29 @@ function PatientDetail({
         {/* footer */}
         {!readOnly && (
           <div className="border-t border-surface-border px-6 py-4">
-            <button onClick={onAddReview} className="btn-primary w-full">
+            <label className="mb-2 block">
+              <span className="label">Clinical (required)</span>
+              <select
+                value={reviewClinical}
+                onChange={(e) => setReviewClinical(e.target.value)}
+                className="input w-full"
+              >
+                {CLINICAL_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o || "— Is this Live or Fax? —"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={() => {
+                if (!reviewClinical) return;
+                onAddReview(reviewClinical);
+                setReviewClinical("");
+              }}
+              disabled={!reviewClinical}
+              className="btn-primary w-full disabled:opacity-50"
+            >
               + Add authorization / review
             </button>
             <p className="mt-2 text-center text-xs text-surface-muted">
@@ -899,10 +930,11 @@ function AddPatient({
   facilities: Facility[];
   defaultFacility: string;
   onClose: () => void;
-  onCreate: (facility_id: string, name: string) => void;
+  onCreate: (facility_id: string, name: string, clinical: string) => void;
 }) {
   const [name, setName] = useState("");
   const [facility, setFacility] = useState(defaultFacility);
+  const [clinical, setClinical] = useState("");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -921,7 +953,7 @@ function AddPatient({
             placeholder="Jane Doe"
           />
         </label>
-        <label className="mb-4 block">
+        <label className="mb-3 block">
           <span className="label">Facility</span>
           <select
             value={facility}
@@ -935,13 +967,27 @@ function AddPatient({
             ))}
           </select>
         </label>
+        <label className="mb-4 block">
+          <span className="label">Clinical (required)</span>
+          <select
+            value={clinical}
+            onChange={(e) => setClinical(e.target.value)}
+            className="input w-full"
+          >
+            {CLINICAL_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o || "— Is this Live or Fax? —"}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="btn-ghost">
             Cancel
           </button>
           <button
-            onClick={() => name.trim() && facility && onCreate(facility, name.trim())}
-            disabled={!name.trim() || !facility}
+            onClick={() => name.trim() && facility && clinical && onCreate(facility, name.trim(), clinical)}
+            disabled={!name.trim() || !facility || !clinical}
             className="btn-primary disabled:opacity-50"
           >
             Add & open
