@@ -22,6 +22,9 @@ import {
 // ---------------------------------------------------------------------------
 const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
 
+// How the clinical review was submitted.
+const CLINICAL_OPTIONS = ["", "Live", "Fax", "Initial Live"] as const;
+
 function parseDate(v: unknown): Date | null {
   const s = String(v ?? "").trim();
   if (!s) return null;
@@ -312,6 +315,19 @@ export default function AuthorizationsClient({
     // so it's a reliable "these slipped" number no matter how the board is
     // filtered. Based on each patient's current auth.
     const pastDue = groups.filter((g) => isPastDue(g.current)).length;
+    // Clinical submission counts across every auth line in view — so you can
+    // see how many are Live vs Fax (Initial Live = first clinical live, rest fax).
+    let clinicalLive = 0,
+      clinicalFax = 0,
+      clinicalInitialLive = 0;
+    for (const g of filtered) {
+      for (const a of g.auths) {
+        const ct = norm(a.clinical_type);
+        if (ct === "live") clinicalLive++;
+        else if (ct === "fax") clinicalFax++;
+        else if (ct.includes("initial")) clinicalInitialLive++;
+      }
+    }
     return {
       patients: filtered.length,
       due: curr.filter(isDueForReview).length,
@@ -320,6 +336,9 @@ export default function AuthorizationsClient({
       pending: curr.filter((c) => /pending/.test(norm(c.status))).length,
       totalDays,
       locRows,
+      clinicalLive,
+      clinicalFax,
+      clinicalInitialLive,
     };
   }, [filtered, groups]);
 
@@ -341,6 +360,7 @@ export default function AuthorizationsClient({
         Discharge: r.discharge_date ?? "",
         "DX Code Primary": r.dx_code_primary ?? "",
         "Billing CPT Code": r.billing_cpt_code ?? "",
+        Clinical: r.clinical_type ?? "",
         Status: r.status ?? "",
         Discharged: r.discharged ? "Yes" : "",
         Notes: r.notes ?? "",
@@ -480,6 +500,23 @@ export default function AuthorizationsClient({
               ))}
               <span className="badge bg-surface text-surface-ink">
                 Total: <b className="ml-1">{summary.totalDays} days</b>
+              </span>
+            </div>
+          </div>
+          {/* Clinical submission mix: Live vs Fax (Initial Live counted apart) */}
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              Clinicals
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="badge bg-recovered/12 text-recovered">
+                Live: <b className="ml-1">{summary.clinicalLive}</b>
+              </span>
+              <span className="badge bg-command/10 text-command">
+                Fax: <b className="ml-1">{summary.clinicalFax}</b>
+              </span>
+              <span className="badge bg-gold/15 text-gold">
+                Initial Live: <b className="ml-1">{summary.clinicalInitialLive}</b>
               </span>
             </div>
           </div>
@@ -801,6 +838,21 @@ function AuthCard({
             {AUTH_STATUS_OPTIONS.map((o) => (
               <option key={o} value={o}>
                 {o}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="label">Clinical</span>
+          <select
+            defaultValue={auth.clinical_type ?? ""}
+            disabled={readOnly}
+            onChange={(e) => onSave(auth.id, "clinical_type", e.target.value)}
+            className="input w-full"
+          >
+            {CLINICAL_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o || "— Live / Fax —"}
               </option>
             ))}
           </select>

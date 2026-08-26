@@ -188,6 +188,7 @@ export interface Authorization {
   total_days: number | null;
   dx_code_primary: string | null;
   billing_cpt_code: string | null;
+  clinical_type: string | null; // "Live" | "Fax" | "Initial Live"
   status: string;
   notes: string;
   discharged: boolean;
