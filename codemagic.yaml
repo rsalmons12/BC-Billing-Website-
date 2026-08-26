@@ -18,6 +18,10 @@ workflows:
     integrations:
       app_store_connect: BC_BILLING_APP_STORE_KEY
     environment:
+      groups:
+        # Add a secure variable DIST_CERT_KEY (the fixed distribution signing
+        # key) to a Codemagic variable group named exactly "ios_signing".
+        - ios_signing
       vars:
         # Capacitor 8 uses Swift Package Manager (no CocoaPods / no .xcworkspace).
         XCODE_PROJECT: "ios/App/App.xcodeproj"
