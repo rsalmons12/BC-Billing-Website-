@@ -175,11 +175,18 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       });
       const data = await res.json().catch(() => ({}));
       const who = Array.isArray(data.sentTo) && data.sentTo.length ? ` → ${data.sentTo.join(", ")}` : "";
+      // If the Square "Pay" button couldn't be built, say why (helps set up Square).
+      const sq =
+        res.ok && data.squarePay === "none" && data.squareError
+          ? ` ⚠ No Pay button — Square: ${data.squareError}`
+          : res.ok && data.squarePay === "static-link"
+            ? " (Pay button uses the facility's static Square link.)"
+            : "";
       setInvoiceMsg(
         res.ok
-          ? test
-            ? `✓ Test invoice sent to you${who}.`
-            : `✓ Invoice emailed to ${data.recipients ?? 0} recipient(s)${who}.`
+          ? (test
+              ? `✓ Test invoice sent to you${who}.`
+              : `✓ Invoice emailed to ${data.recipients ?? 0} recipient(s)${who}.`) + sq
           : `Error: ${data.error || "could not send"}`
       );
     } catch {

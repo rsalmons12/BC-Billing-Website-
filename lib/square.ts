@@ -12,13 +12,15 @@ import { randomUUID } from "crypto";
 export async function createSquarePaymentLink(opts: {
   amount: number; // dollars
   name: string;
-}): Promise<string | null> {
+}): Promise<{ url: string | null; error: string | null }> {
   const token = process.env.SQUARE_ACCESS_TOKEN;
   const locationId = process.env.SQUARE_LOCATION_ID;
-  if (!token || !locationId) return null;
+  if (!token) return { url: null, error: "SQUARE_ACCESS_TOKEN not set on the server" };
+  if (!locationId) return { url: null, error: "SQUARE_LOCATION_ID not set on the server" };
 
   const cents = Math.round(opts.amount * 100);
-  if (!Number.isFinite(cents) || cents <= 0) return null;
+  if (!Number.isFinite(cents) || cents <= 0)
+    return { url: null, error: "amount must be greater than 0" };
 
   const base =
     process.env.SQUARE_ENV === "sandbox"
@@ -42,11 +44,22 @@ export async function createSquarePaymentLink(opts: {
         },
       }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // Surface Square's own error so misconfig (wrong token/location, sandbox
+      // vs production, amount limit) is diagnosable instead of a silent null.
+      const detail =
+        data?.errors?.[0]?.detail ||
+        data?.errors?.[0]?.code ||
+        `Square returned HTTP ${res.status}`;
+      console.error("Square payment link failed:", res.status, JSON.stringify(data?.errors ?? data));
+      return { url: null, error: String(detail) };
+    }
     const url = data?.payment_link?.url;
-    return typeof url === "string" ? url : null;
-  } catch {
-    return null;
+    return typeof url === "string"
+      ? { url, error: null }
+      : { url: null, error: "Square response had no payment link URL" };
+  } catch (e) {
+    return { url: null, error: e instanceof Error ? e.message : "Square request failed" };
   }
 }
