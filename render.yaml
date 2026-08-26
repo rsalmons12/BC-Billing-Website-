@@ -24,3 +24,11 @@ services:
       # Shared secret guarding the scheduled-email endpoints.
       - key: CRON_SECRET
         sync: false
+      # Square — dynamic "Pay $X" links on facility invoices. Token + location
+      # are secrets entered in the dashboard; env selects live vs sandbox.
+      - key: SQUARE_ACCESS_TOKEN
+        sync: false
+      - key: SQUARE_LOCATION_ID
+        sync: false
+      - key: SQUARE_ENV
+        value: production
