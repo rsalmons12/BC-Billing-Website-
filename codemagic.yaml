@@ -59,12 +59,18 @@ workflows:
         script: |
           set -e
           keychain initialize
-          # Apple distribution certificates can't be created without a private
-          # key. Generate one, then create/fetch the distribution certificate
-          # AND the App Store provisioning profile for the bundle id, saving
-          # both locally so the keychain + Xcode project can use them.
+          # Reuse ONE fixed distribution key across every build. With a stable
+          # key, fetch-signing-files finds the certificate it created the first
+          # time and reuses it — so we never create a new certificate each run
+          # (Apple caps distribution certs at 2, which is what kept failing).
+          # The key is provided as the secure env var DIST_CERT_KEY; if it's not
+          # set we fall back to generating one (first-time / local use).
           CERT_KEY="$CM_BUILD_DIR/dist_cert_key.pem"
-          openssl genrsa -out "$CERT_KEY" 2048
+          if [ -n "$DIST_CERT_KEY" ]; then
+            printf '%s\n' "$DIST_CERT_KEY" > "$CERT_KEY"
+          else
+            openssl genrsa -out "$CERT_KEY" 2048
+          fi
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --certificate-key @file:"$CERT_KEY" \
