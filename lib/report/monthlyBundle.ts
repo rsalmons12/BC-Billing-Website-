@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
+import { arBalance, isExcludedMember, isStaleClaim } from "@/lib/claims";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 const MONEY = '$#,##0.00';
@@ -221,15 +222,21 @@ export async function buildMonthlyBundle({
   // ===== COLLECTION SUMMARY (aggregates only) =====
   const coll = wb.addWorksheet("COLLECTION SUMMARY");
   title(coll, `${facilityName} — Collection Summary`, 5);
+  // Same AR rule as every other surface: present claims only (already filtered
+  // by the caller), excluding VMAH plans and dead >365-day claims, counting
+  // positive balances — so the invoice/monthly AR matches the dashboard & recap.
   const arMap = new Map<string, { bal: number; n: number }>();
+  let arCount = 0;
   for (const c of claims) {
-    const bal = num(c.balance);
+    if (isExcludedMember(c.member_id) || isStaleClaim(c.age_days)) continue;
+    const bal = arBalance(c.balance);
     if (bal <= 0) continue;
     const k = payerFromStatus(c.claim_status);
     const cur = arMap.get(k) ?? { bal: 0, n: 0 };
     cur.bal += bal;
     cur.n += 1;
     arMap.set(k, cur);
+    arCount += 1;
   }
   const totalAR = Array.from(arMap.values()).reduce((s, v) => s + v.bal, 0);
   section(coll, "Outstanding AR by Payer", 3);
@@ -243,7 +250,7 @@ export async function buildMonthlyBundle({
     Array.from(arMap.entries())
       .sort((a, b) => b[1].bal - a[1].bal)
       .map(([payer, v]) => ({ payer, ar: round(v.bal), n: v.n })),
-    { payer: "TOTAL AR", ar: round(totalAR), n: claims.filter((c) => num(c.balance) > 0).length }
+    { payer: "TOTAL AR", ar: round(totalAR), n: arCount }
   );
 
   const negByCarrier = new Map<

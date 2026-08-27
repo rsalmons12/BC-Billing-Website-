@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { PRIORITY_AGE_THRESHOLD, RISK_AGE_THRESHOLD } from "@/lib/types";
 import { censusByFacility, type CensusLike } from "@/lib/report/census";
 import { easternToday } from "@/lib/report/eodSummary";
@@ -187,7 +187,7 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
       neglectedBal = 0;
     for (const c of claims) {
       if (c.facility_id !== f.id) continue;
-      const bal = c.balance ?? 0;
+      const bal = arBalance(c.balance);
       const age = c.age_days ?? 0;
       outstanding += bal;
       if (age >= PRIORITY_AGE_THRESHOLD) {

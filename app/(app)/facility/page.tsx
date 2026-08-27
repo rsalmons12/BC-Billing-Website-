@@ -10,7 +10,7 @@ import MyRecapButton from "@/components/facility/MyRecapButton";
 import { censusByFacility, missedGroupDetail } from "@/lib/report/census";
 import { computeBelowFloor, type BelowFloorRow } from "@/lib/report/facilityRecap";
 import { money } from "@/lib/format";
-import { isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
+import { arBalance, isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import type {
   Claim,
@@ -222,12 +222,12 @@ export default async function FacilityDashboard({
       : facilities[0]?.short_name || facilities[0]?.name || "Facility Dashboard";
 
   // ---- AR (Outstanding Collections) + breakdown by payer (from status) -----
-  const totalAR = claims.reduce((s, c) => s + (c.balance ?? 0), 0);
+  const totalAR = claims.reduce((s, c) => s + arBalance(c.balance), 0);
   const expectedRevenue = totalAR * EXPECTED_RATE;
 
   const arByPayer = new Map<string, number>();
   for (const c of claims) {
-    const bal = c.balance ?? 0;
+    const bal = arBalance(c.balance);
     if (bal <= 0) continue;
     const p = payerFromStatus(c.claim_status);
     arByPayer.set(p, (arByPayer.get(p) ?? 0) + bal);
@@ -237,7 +237,7 @@ export default async function FacilityDashboard({
   // AR at risk of non-reimbursement (marketplace/exchange payers). Matched on
   // the claim status so it catches "Denied at Highmark", "at Independence", etc.
   const riskAR = claims.reduce(
-    (s, c) => s + (isRiskPayer(c.claim_status) ? c.balance ?? 0 : 0),
+    (s, c) => s + (isRiskPayer(c.claim_status) ? arBalance(c.balance) : 0),
     0
   );
 
