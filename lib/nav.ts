@@ -34,7 +34,7 @@ export const TABS: Tab[] = [
   { href: "/lookup", label: "Patient Lookup", icon: "🔎", roles: ["management"] },
   { href: "/facility", label: "Dashboard", icon: "▣", roles: ["facility"] },
   { href: "/import", label: "Weekly Import", icon: "↥", roles: ["management"] },
-  { href: "/admin", label: "Admin", icon: "⚙", roles: ["management"] },
+  { href: "/admin", label: "Admin", icon: "⚙", roles: ["management"], ownerOnly: true },
 ];
 
 // Tabs a facility login can be granted (read-only). Management/staff get all
