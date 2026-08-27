@@ -113,31 +113,57 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
       return;
     }
 
-    // Collapse the file to one row per prefix+CPT (in case multiple files overlap),
-    // keeping the first — parsePrefixData already picked the most-common amount.
+    // Collapse the file to one row per prefix+service (in case multiple files
+    // overlap), keeping the first — parsePrefixData already picked the most-common
+    // amount.
     const fileMap = new Map<string, HistoricalRow>();
     for (const row of parsed) {
       const k = keyOf(row);
       if (!fileMap.has(k)) fileMap.set(k, row);
     }
 
-    // Never erase, never duplicate: skip any prefix+service already in the table.
-    const existing = new Set(rows.map((r) => keyOf(r)));
-    const toAdd = Array.from(fileMap.values()).filter((r) => !existing.has(keyOf(r)));
-    const skipped = fileMap.size - toAdd.length;
+    // Split the file against what's already in the table:
+    //   • NEW      → key not present yet          → insert
+    //   • UPDATED  → key present but a value moved → refresh from the file
+    //   • same     → key present, identical        → left alone
+    // Non-file rows are NEVER touched.
+    const existingByKey = new Map(rows.map((r) => [keyOf(r), r]));
+    const sameNum = (a: number | null | undefined, b: number | null | undefined) =>
+      (a ?? null) === (b ?? null);
+    const sameStr = (a: unknown, b: unknown) => String(a ?? "") === String(b ?? "");
+    const toAdd: HistoricalRow[] = [];
+    const toUpdate: { id: string; row: HistoricalRow }[] = [];
+    for (const [k, row] of fileMap) {
+      const ex = existingByKey.get(k);
+      if (!ex) {
+        toAdd.push(row);
+        continue;
+      }
+      const changed =
+        !sameNum(ex.billed_per_day, row.billed_per_day) ||
+        !sameNum(ex.paid_per_day, row.paid_per_day) ||
+        !sameStr(ex.description, row.description) ||
+        !sameStr(ex.code_type, row.code_type) ||
+        !sameStr(ex.cpt_code, row.cpt_code) ||
+        !sameStr(ex.rev_code, row.rev_code) ||
+        !sameStr(ex.prefix_length, row.prefix_length);
+      if (changed) toUpdate.push({ id: ex.id, row });
+    }
+    const unchanged = fileMap.size - toAdd.length - toUpdate.length;
 
-    if (toAdd.length === 0) {
-      setBusy(`Nothing new — all ${fileMap.size} rows are already in your data.`);
+    if (toAdd.length === 0 && toUpdate.length === 0) {
+      setBusy(`Nothing to do — all ${fileMap.size.toLocaleString()} rows already match your data.`);
       clearFile();
       setTimeout(() => setBusy(""), 2500);
       return;
     }
 
     const ok = window.confirm(
-      `This file has ${fileMap.size.toLocaleString()} reference rows (prefix + CPT).\n\n` +
+      `This file has ${fileMap.size.toLocaleString()} reference rows (prefix + service).\n\n` +
         `• ${toAdd.length.toLocaleString()} are NEW and will be added\n` +
-        `• ${skipped.toLocaleString()} already exist and will be kept as-is (skipped)\n\n` +
-        `Nothing already in your data is erased or changed. Add the ${toAdd.length.toLocaleString()} new rows?`
+        `• ${toUpdate.length.toLocaleString()} already exist but changed and will be UPDATED to the file's values\n` +
+        `• ${unchanged.toLocaleString()} already match and are left as-is\n\n` +
+        `Only rows in this file are affected — nothing else is erased. Proceed?`
     );
     if (!ok) {
       setBusy("Cancelled — nothing changed.");
@@ -146,20 +172,41 @@ export default function HistoricalClient({ canEdit }: { canEdit: boolean }) {
       return;
     }
 
-    let n = 0;
+    // Add the new rows.
+    let added = 0;
     for (const batch of chunk(toAdd, 500)) {
       const { error } = await supabase.from("historical_data").insert(batch);
       if (error) {
-        setBusy(`Error: ${error.message}`);
+        setBusy(`Error adding rows: ${error.message}`);
         return;
       }
-      n += batch.length;
-      setBusy(`Added ${n}/${toAdd.length}…`);
+      added += batch.length;
+      setBusy(`Adding ${added}/${toAdd.length}…`);
     }
-    setBusy(`✓ Added ${toAdd.length} new · kept ${skipped} existing`);
+
+    // Apply the updates: replace each changed row with the file's version
+    // (delete by id, then insert) — efficient and keeps the same identity key.
+    let updated = 0;
+    for (const batch of chunk(toUpdate, 400)) {
+      const ids = batch.map((u) => u.id);
+      const { error: delErr } = await supabase.from("historical_data").delete().in("id", ids);
+      if (delErr) {
+        setBusy(`Error updating rows: ${delErr.message}`);
+        return;
+      }
+      const { error: insErr } = await supabase.from("historical_data").insert(batch.map((u) => u.row));
+      if (insErr) {
+        setBusy(`Error updating rows: ${insErr.message}`);
+        return;
+      }
+      updated += batch.length;
+      setBusy(`Updating ${updated}/${toUpdate.length}…`);
+    }
+
+    setBusy(`✓ Added ${toAdd.length} · updated ${toUpdate.length} · ${unchanged} unchanged`);
     clearFile();
     load();
-    setTimeout(() => setBusy(""), 2500);
+    setTimeout(() => setBusy(""), 3500);
   };
 
   const RENDER_CAP = 500;
