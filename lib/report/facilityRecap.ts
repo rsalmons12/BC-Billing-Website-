@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
-import { isExcludedMember, isRiskPayer, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isRiskPayer, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
 import {
   facilityCensusCompare,
@@ -562,16 +562,16 @@ export async function computeFacilityRecaps(
 
   return facilities.map((f) => {
     const fc = claims.filter((c) => c.facility_id === f.id);
-    const totalAR = fc.reduce((s, c) => s + (c.balance ?? 0), 0);
+    const totalAR = fc.reduce((s, c) => s + arBalance(c.balance), 0);
 
     const arByPayer = new Map<string, number>();
     for (const c of fc) {
-      const bal = c.balance ?? 0;
+      const bal = arBalance(c.balance);
       if (bal <= 0) continue;
       const p = payerFromStatus(c.claim_status);
       arByPayer.set(p, (arByPayer.get(p) ?? 0) + bal);
     }
-    const riskAR = fc.reduce((s, c) => s + (isRiskPayer(c.claim_status) ? c.balance ?? 0 : 0), 0);
+    const riskAR = fc.reduce((s, c) => s + (isRiskPayer(c.claim_status) ? arBalance(c.balance) : 0), 0);
 
     // Payments collected in the current month THROUGH the cutoff day.
     const monthPays = payments.filter(

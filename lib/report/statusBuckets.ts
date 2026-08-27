@@ -1,4 +1,5 @@
 import { statusAction, statusPayerName } from "@/lib/payer";
+import { arBalance } from "@/lib/claims";
 
 // ---------------------------------------------------------------------------
 // Status buckets — group AR claims by payer + status action (e.g. "Horizon ·
@@ -51,7 +52,7 @@ export function bucketByStatus(
       bestMs.set(key, -Infinity);
     }
     b.count += 1;
-    b.balance += c.balance ?? 0;
+    b.balance += arBalance(c.balance);
     const dw = c.claim_id ? workedByClaim?.get(c.claim_id) : undefined;
     if (dw) {
       const t = Date.parse(dw);

@@ -29,6 +29,16 @@ export function isStaleClaim(ageDays: unknown): boolean {
   return Number.isFinite(n) && n > STALE_AGE_THRESHOLD;
 }
 
+// Outstanding-AR contribution of a claim: its balance when positive, else 0.
+// A negative balance is a credit/overpayment (not a receivable) and zero isn't
+// outstanding — so every AR total and its per-payer breakdown use THIS, which
+// keeps the headline number and the breakdown reconciled (rows sum to the
+// total, percentages stay ≤ 100%) and identical across every screen.
+export function arBalance(balance: unknown): number {
+  const b = typeof balance === "number" ? balance : Number(balance);
+  return Number.isFinite(b) && b > 0 ? b : 0;
+}
+
 // Payers whose marketplace / exchange plans carry a high risk of
 // non-reimbursement. AR tied to these is flagged on the facility screen.
 export const RISK_PAYER_PATTERNS: RegExp[] = [

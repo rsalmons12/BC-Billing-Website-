@@ -10,7 +10,7 @@ import CensusPanel from "@/components/overview/CensusPanel";
 import { censusByFacility } from "@/lib/report/census";
 import { bucketByStatus, lastWorkedLabel } from "@/lib/report/statusBuckets";
 import { money } from "@/lib/format";
-import { isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import {
   RISK_AGE_THRESHOLD,
@@ -263,15 +263,15 @@ export default async function OverviewPage() {
     const a = aggMap[c.facility_id];
     if (!a) continue;
     a.charged += c.charge_amount ?? 0;
-    a.balance += c.balance ?? 0;
+    a.balance += arBalance(c.balance);
     a.claimCount++;
     if (isWorked14(c.claim_id)) a.worked14++;
     if (isPriority(c)) {
       a.pri100Count++;
-      a.pri100Balance += c.balance ?? 0;
+      a.pri100Balance += arBalance(c.balance);
     } else if (isRisk65(c)) {
       a.risk65Count++;
-      a.risk65Balance += c.balance ?? 0;
+      a.risk65Balance += arBalance(c.balance);
     }
   }
   for (const a of Object.values(aggMap)) a.recovered = a.charged - a.balance;
