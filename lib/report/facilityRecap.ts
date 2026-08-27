@@ -934,30 +934,6 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     <div style="color:${INK}">${ahead}</div>
 
     ${
-      r.statusBuckets.length
-        ? `${sectionHead("AR by status")}
-            <table style="border-collapse:collapse;width:100%;font-size:13px">
-              <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
-                <th style="padding:4px 0">Status</th>
-                <th style="padding:4px 0;text-align:right">Claims</th>
-                <th style="padding:4px 0;text-align:right">Balance</th>
-              </tr></thead>
-              <tbody>
-                ${r.statusBuckets
-                  .map(
-                    (b) => `<tr>
-                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};font-weight:600;color:${INK}">${b.label}</td>
-                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;${NUM}">${b.count}</td>
-                      <td style="padding:7px 0;border-bottom:1px solid ${HAIR};text-align:right;font-weight:700;color:${NAVY};${NUM}">${money(b.balance)}</td>
-                    </tr>`
-                  )
-                  .join("")}
-              </tbody>
-            </table>`
-        : ""
-    }
-
-    ${
       r.census && r.census.current
         ? (() => {
             const cur = r.census.current;
