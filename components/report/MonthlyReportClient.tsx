@@ -123,6 +123,116 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
 
   const [invoiceMsg, setInvoiceMsg] = useState("");
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+
+  // ---- "All invoices" batch panel: see every facility's invoice for a month,
+  // verify each, then send them all at once. ----
+  type InvoiceRow = {
+    facilityId: string;
+    name: string;
+    rate: number | null;
+    collected: number;
+    fee: number;
+    ready: boolean;
+    issue: string;
+  };
+  type SendResult = { name: string; ok: boolean; recipients?: number; error?: string; squareError?: string | null };
+  const [allMonth, setAllMonth] = useState("");
+  const [allMonths, setAllMonths] = useState<string[]>([]);
+  const [allRows, setAllRows] = useState<InvoiceRow[]>([]);
+  const [allLoading, setAllLoading] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMsg, setBatchMsg] = useState("");
+  const [batchResults, setBatchResults] = useState<SendResult[]>([]);
+
+  const loadSummary = useCallback(async (m?: string) => {
+    setAllLoading(true);
+    try {
+      const res = await fetch("/api/invoice-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(m ? { month: m } : {}),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBatchMsg(d.error || "Could not load invoices.");
+        setAllRows([]);
+        return;
+      }
+      if (Array.isArray(d.months)) setAllMonths(d.months);
+      const rows = (d.invoices ?? []) as InvoiceRow[];
+      setAllRows(rows);
+      // Pre-check the ones that are ready to send.
+      setChecked(new Set(rows.filter((r) => r.ready).map((r) => r.facilityId)));
+    } catch {
+      setBatchMsg("Could not load invoices.");
+    } finally {
+      setAllLoading(false);
+    }
+  }, []);
+
+  // Discover months once, then reload whenever the batch month changes.
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
+  useEffect(() => {
+    if (allMonths.length && !allMonths.includes(allMonth)) setAllMonth(allMonths[0]);
+  }, [allMonths, allMonth]);
+  useEffect(() => {
+    if (allMonth) loadSummary(allMonth);
+  }, [allMonth, loadSummary]);
+
+  const toggleChecked = (id: string) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selectedRows = allRows.filter((r) => checked.has(r.facilityId));
+  const selectedTotal = selectedRows.reduce((s, r) => s + r.fee, 0);
+
+  const sendAll = async () => {
+    const toSend = selectedRows;
+    if (!toSend.length) return;
+    if (
+      !confirm(
+        `Send ${toSend.length} invoice(s) for ${monthLabel(allMonth)} — total ${money(selectedTotal)}?\n\n` +
+          `Each facility's invoice goes to ITS OWN login; management marked "Invoices" is BCC'd. This sends real emails.`
+      )
+    )
+      return;
+    setBatchBusy(true);
+    setBatchResults([]);
+    const results: SendResult[] = [];
+    for (const r of toSend) {
+      setBatchMsg(`Sending ${r.name}… (${results.length + 1}/${toSend.length})`);
+      try {
+        const res = await fetch("/api/invoice-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ facilityId: r.facilityId, month: allMonth, test: false }),
+        });
+        const d = await res.json().catch(() => ({}));
+        results.push({
+          name: r.name,
+          ok: res.ok,
+          recipients: d.recipients,
+          error: res.ok ? undefined : d.error || "send failed",
+          squareError: d.squarePay === "none" ? d.squareError : null,
+        });
+      } catch {
+        results.push({ name: r.name, ok: false, error: "network error" });
+      }
+      setBatchResults([...results]);
+    }
+    setBatchBusy(false);
+    const okN = results.filter((r) => r.ok).length;
+    setBatchMsg(`Done — ${okN}/${toSend.length} invoice(s) sent.`);
+    // Refresh so amounts reflect any late-imported payments next time.
+    loadSummary(allMonth);
+  };
   const emailInvoice = async (test: boolean) => {
     // Real send: show EXACTLY who will receive it (never a facility) and confirm.
     if (!test) {
@@ -308,6 +418,147 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
           {downloading ? "Building…" : `↓ Download ${month ? monthLabel(month) : ""} bundle`}
         </button>
         {loading && <span className="ml-3 text-xs text-surface-muted">Loading data…</span>}
+      </div>
+
+      {/* ---- All invoices: verify every facility, then send them all ---- */}
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-bold">All invoices — send in one batch</h2>
+            <p className="mt-1 text-sm text-surface-muted">
+              Every facility&apos;s invoice for the month. Verify each one, then send them all at once.
+            </p>
+          </div>
+          <label className="block">
+            <span className="label">Month</span>
+            <select
+              value={allMonth}
+              onChange={(e) => setAllMonth(e.target.value)}
+              className="input"
+              disabled={allLoading || allMonths.length === 0}
+            >
+              {allMonths.length === 0 && <option value="">No data</option>}
+              {allMonths.map((m) => (
+                <option key={m} value={m}>
+                  {monthLabel(m)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {allLoading ? (
+          <div className="mt-4 text-sm text-surface-muted">Loading invoices…</div>
+        ) : allRows.length === 0 ? (
+          <div className="mt-4 text-sm text-surface-muted">No facilities to invoice.</div>
+        ) : (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-surface-muted">
+                    <th className="px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all ready"
+                        checked={
+                          selectedRows.length > 0 &&
+                          allRows.filter((r) => r.ready).every((r) => checked.has(r.facilityId))
+                        }
+                        onChange={(e) =>
+                          setChecked(
+                            e.target.checked
+                              ? new Set(allRows.filter((r) => r.ready).map((r) => r.facilityId))
+                              : new Set()
+                          )
+                        }
+                        className="h-4 w-4"
+                      />
+                    </th>
+                    <th className="px-2 py-1.5">Facility</th>
+                    <th className="px-2 py-1.5 text-right">Collected</th>
+                    <th className="px-2 py-1.5 text-right">Rate</th>
+                    <th className="px-2 py-1.5 text-right">Amount due</th>
+                    <th className="px-2 py-1.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allRows.map((r) => {
+                    const res = batchResults.find((b) => b.name === r.name);
+                    return (
+                      <tr key={r.facilityId} className="border-t border-surface-border">
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="checkbox"
+                            checked={checked.has(r.facilityId)}
+                            disabled={!r.ready || batchBusy}
+                            onChange={() => toggleChecked(r.facilityId)}
+                            className="h-4 w-4"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 font-medium text-surface-ink">{r.name}</td>
+                        <td className="px-2 py-1.5 text-right">{money(r.collected)}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          {r.rate != null && r.rate > 0 ? `${r.rate}%` : "—"}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-semibold text-secured">
+                          {r.rate != null && r.rate > 0 ? money(r.fee) : "—"}
+                        </td>
+                        <td className="px-2 py-1.5 text-xs">
+                          {res ? (
+                            res.ok ? (
+                              <span className="text-recovered">
+                                ✓ sent{res.recipients != null ? ` (${res.recipients})` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-risk">✕ {res.error}</span>
+                            )
+                          ) : r.issue ? (
+                            <span className="text-warn">{r.issue}</span>
+                          ) : (
+                            <span className="text-surface-muted">Ready</span>
+                          )}
+                          {res?.squareError && (
+                            <span className="block text-[11px] text-warn">
+                              No Pay button — {res.squareError}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-surface-border font-semibold">
+                    <td />
+                    <td className="px-2 py-2">{selectedRows.length} selected</td>
+                    <td />
+                    <td />
+                    <td className="px-2 py-2 text-right text-secured">{money(selectedTotal)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                onClick={sendAll}
+                disabled={batchBusy || selectedRows.length === 0}
+                className="btn-primary disabled:opacity-50"
+              >
+                {batchBusy
+                  ? "Sending…"
+                  : `✉ Send ${selectedRows.length} invoice${selectedRows.length === 1 ? "" : "s"} · ${money(selectedTotal)}`}
+              </button>
+              {batchMsg && <span className="text-xs text-surface-ink">{batchMsg}</span>}
+            </div>
+            <p className="mt-2 text-[11px] text-surface-muted">
+              Only facilities with a Bill % and a recipient marked &quot;Invoices&quot; can be
+              checked. Each invoice goes to its own facility login; management is BCC&apos;d.
+            </p>
+          </>
+        )}
       </div>
 
       <p className="text-xs text-surface-muted">
