@@ -23,7 +23,7 @@ import {
 const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
 
 // How the clinical review was submitted.
-const CLINICAL_OPTIONS = ["", "Live", "Fax", "Initial Live"] as const;
+const CLINICAL_OPTIONS = ["", "Live", "Fax", "Portal", "Initial Live"] as const;
 
 function parseDate(v: unknown): Date | null {
   const s = String(v ?? "").trim();
@@ -215,7 +215,7 @@ export default function AuthorizationsClient({
   const addReview = useCallback(
     async (facility_id: string | null, patient_name: string, clinical_type: string) => {
       if (!clinical_type) {
-        setSaveState("Pick Live / Fax before adding.");
+        setSaveState("Pick Live / Fax / Portal before adding.");
         setTimeout(() => setSaveState(""), 1800);
         return;
       }
@@ -326,12 +326,14 @@ export default function AuthorizationsClient({
     // see how many are Live vs Fax (Initial Live = first clinical live, rest fax).
     let clinicalLive = 0,
       clinicalFax = 0,
+      clinicalPortal = 0,
       clinicalInitialLive = 0;
     for (const g of filtered) {
       for (const a of g.auths) {
         const ct = norm(a.clinical_type);
         if (ct === "live") clinicalLive++;
         else if (ct === "fax") clinicalFax++;
+        else if (ct === "portal") clinicalPortal++;
         else if (ct.includes("initial")) clinicalInitialLive++;
       }
     }
@@ -345,6 +347,7 @@ export default function AuthorizationsClient({
       locRows,
       clinicalLive,
       clinicalFax,
+      clinicalPortal,
       clinicalInitialLive,
     };
   }, [filtered, groups]);
@@ -521,6 +524,9 @@ export default function AuthorizationsClient({
               </span>
               <span className="badge bg-command/10 text-command">
                 Fax: <b className="ml-1">{summary.clinicalFax}</b>
+              </span>
+              <span className="badge bg-secured/12 text-secured">
+                Portal: <b className="ml-1">{summary.clinicalPortal}</b>
               </span>
               <span className="badge bg-gold/15 text-gold">
                 Initial Live: <b className="ml-1">{summary.clinicalInitialLive}</b>
@@ -740,7 +746,7 @@ function PatientDetail({
               >
                 {CLINICAL_OPTIONS.map((o) => (
                   <option key={o} value={o}>
-                    {o || "— Is this Live or Fax? —"}
+                    {o || "— Is this Live / Fax / Portal? —"}
                   </option>
                 ))}
               </select>
@@ -883,7 +889,7 @@ function AuthCard({
           >
             {CLINICAL_OPTIONS.map((o) => (
               <option key={o} value={o}>
-                {o || "— Live / Fax —"}
+                {o || "— Live / Fax / Portal —"}
               </option>
             ))}
           </select>
@@ -976,7 +982,7 @@ function AddPatient({
           >
             {CLINICAL_OPTIONS.map((o) => (
               <option key={o} value={o}>
-                {o || "— Is this Live or Fax? —"}
+                {o || "— Is this Live / Fax / Portal? —"}
               </option>
             ))}
           </select>
