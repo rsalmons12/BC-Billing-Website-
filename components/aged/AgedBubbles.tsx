@@ -38,7 +38,7 @@ export default function AgedBubbles({
           {items.map((f) => (
             <Link
               key={f.facilityId}
-              href={`/collections?facility=${encodeURIComponent(f.facilityId)}&aged=${minDays}`}
+              href={`/aged/${encodeURIComponent(f.facilityId)}`}
               className="group block rounded-xl border border-[#9DC3E6] bg-[#DAEAF7] p-5 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-[#2f5578] dark:bg-[#12314d]"
             >
               <div className="font-display text-lg font-bold text-[#1b3a5b] dark:text-[#cfe4f7]">

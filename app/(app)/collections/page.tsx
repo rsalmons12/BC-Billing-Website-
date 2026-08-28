@@ -6,7 +6,7 @@ import CollectionsClient from "@/components/collections/CollectionsClient";
 export default async function CollectionsPage({
   searchParams,
 }: {
-  searchParams?: { facility?: string; aged?: string };
+  searchParams?: { facility?: string; aged?: string; payer?: string };
 }) {
   const { profile, email } = await requireProfile();
 
@@ -25,6 +25,7 @@ export default async function CollectionsPage({
     typeof searchParams?.facility === "string" ? searchParams.facility : undefined;
   // Opened from the 120+ Day Claims page → land on the 120+ age bucket.
   const initialBucket = searchParams?.aged ? ("120+" as const) : undefined;
+  const initialPayer = typeof searchParams?.payer === "string" ? searchParams.payer : undefined;
 
   return (
     <>
@@ -37,6 +38,7 @@ export default async function CollectionsPage({
           readOnly={profile.role === "facility"}
           initialFacilityId={initialFacilityId}
           initialBucket={initialBucket}
+          initialPayer={initialPayer}
         />
       </main>
     </>
