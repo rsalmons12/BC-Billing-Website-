@@ -1,31 +1,40 @@
 name: Scheduled Emails
 
-# Fires the app's scheduled email endpoints on time, every day, from GitHub's
-# own scheduler — reliable and independent of the web host. Hits the Render URL;
-# ?force=1 sends regardless of the app's internal time gate, so a single daily
-# run always goes out. (The endpoints send to management / facilities exactly as
-# configured in the app.)
+# Fires the app's scheduled email endpoints from GitHub's scheduler. GitHub's
+# cron is best-effort and often runs late (worst exactly at :00), so instead of
+# one run we fire SEVERAL times inside each send window. The endpoints send at
+# most once per Eastern day (a cron_log guard), so the extra attempts only add
+# resilience — the first one GitHub actually runs sends; the rest are no-ops.
+# A manual run from the Actions tab uses ?force=1 to send immediately.
 on:
   schedule:
-    - cron: "0 11 * * *" # ~7 AM ET (6 AM in winter): Chief of Staff morning brief
-    - cron: "0 21 * * *" # ~5 PM ET (4 PM in winter): evening recap + end-of-day
-  workflow_dispatch: {} # lets you run the Chief of Staff brief on demand from the Actions tab
+    # Morning brief — Eastern window is 6–10 AM. 11:xx UTC = 6 AM EST / 7 AM EDT.
+    - cron: "5 11 * * *"
+    - cron: "25 11 * * *"
+    - cron: "50 11 * * *"
+    # Evening recap + end-of-day — Eastern window is 4–8 PM. 21:xx UTC = 4 PM EST / 5 PM EDT.
+    - cron: "5 21 * * *"
+    - cron: "25 21 * * *"
+    - cron: "50 21 * * *"
+  workflow_dispatch: {} # run the morning brief on demand (forced) from the Actions tab
 
 jobs:
   chief-of-staff:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 11 * * *'
+    if: github.event_name == 'workflow_dispatch' || endsWith(github.event.schedule, '11 * * *')
     runs-on: ubuntu-latest
     steps:
       - name: Send Chief of Staff morning brief
         run: |
-          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/chief-of-staff?force=1" \
+          FORCE=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then FORCE="?force=1"; fi
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/chief-of-staff${FORCE}" \
             -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
 
   evening:
-    if: github.event.schedule == '0 21 * * *'
+    if: endsWith(github.event.schedule, '21 * * *')
     runs-on: ubuntu-latest
     steps:
       - name: Send evening recap + end-of-day summary
         run: |
-          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/evening?force=1" \
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/evening" \
             -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { managementEmails, sendResend, easternToday, easternHour } from "@/lib/report/eodSummary";
 import { computeChiefBrief, renderChiefBrief } from "@/lib/report/chiefOfStaff";
-import { logCronRun } from "@/lib/report/cronLog";
+import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 
 // Runs on a schedule (see vercel.json) — ~7 AM Eastern — and emails the
 // Chief-of-Staff morning brief (aging AR priorities, open auth issues, census
@@ -32,9 +32,18 @@ export async function GET(request: Request) {
   // in the MORNING Eastern window (6–10 AM) rather than one exact hour, so the
   // one guaranteed daily run always sends — 7 AM ET in summer (EDT), 6 AM in
   // winter (EST) — and small cron delays don't skip the day. ?force=1 bypasses.
-  if (!(h >= 6 && h <= 10) && url.searchParams.get("force") !== "1") {
+  const force = url.searchParams.get("force") === "1";
+  if (!(h >= 6 && h <= 10) && !force) {
     await logCronRun(admin, "chief-of-staff", `skipped: outside morning window (ET hour ${h})`);
     return NextResponse.json({ ok: true, sent: false, reason: `outside morning window (ET hour ${h})` });
+  }
+
+  // Send at most once per Eastern day, even though the scheduler fires several
+  // times inside the window (to survive GitHub's flaky cron timing). ?force=1
+  // bypasses this for a manual re-send.
+  if (!force && (await alreadySentToday(admin, "chief-of-staff", easternToday()))) {
+    await logCronRun(admin, "chief-of-staff", "skipped: already sent today");
+    return NextResponse.json({ ok: true, sent: false, reason: "already sent today" });
   }
 
   const to = await managementEmails(admin);
@@ -59,6 +68,6 @@ export async function GET(request: Request) {
     await logCronRun(admin, "chief-of-staff", `error sending: ${msg}`);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
-  await logCronRun(admin, "chief-of-staff", `sent to ${to.length} recipient(s)`);
+  await logCronRun(admin, "chief-of-staff", `SENT ${date} to ${to.length} recipient(s)`);
   return NextResponse.json({ ok: true, sent: true, recipients: to.length, facilities: brief.facilities.length });
 }
