@@ -16,6 +16,8 @@ on:
     - cron: "5 21 * * *"
     - cron: "25 21 * * *"
     - cron: "50 21 * * *"
+    # Invoice reminders — once a day (~9 AM ET). Idempotent (milestone-tracked).
+    - cron: "15 14 * * *"
   workflow_dispatch: {} # run the morning brief on demand (forced) from the Actions tab
 
 jobs:
@@ -37,4 +39,13 @@ jobs:
       - name: Send evening recap + end-of-day summary
         run: |
           curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/evening" \
+            -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
+
+  invoice-reminders:
+    if: endsWith(github.event.schedule, '14 * * *')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send 7/14/30-day invoice reminders (unpaid only)
+        run: |
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/invoice-reminders" \
             -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
