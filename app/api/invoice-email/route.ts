@@ -279,6 +279,33 @@ export async function POST(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
   }
+
+  // Record a REAL send in the invoice ledger (drives the Paid toggle + 7/14/30-day
+  // reminders). Re-sending resets the reminder clock. Best-effort — never blocks
+  // the send. Test sends are not logged.
+  if (!body.test) {
+    try {
+      const admin = createAdminClient();
+      await admin.from("invoices").upsert(
+        {
+          facility_id: body.facilityId,
+          period: body.month,
+          amount: fee,
+          collected,
+          rate,
+          sent_at: new Date().toISOString(),
+          paid: false,
+          paid_at: null,
+          reminders_sent: 0,
+          last_reminder_at: null,
+        },
+        { onConflict: "facility_id,period" }
+      );
+    } catch {
+      /* ledger write is best-effort */
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     recipients: to.length + bcc.length,

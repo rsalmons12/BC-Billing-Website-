@@ -145,6 +145,45 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const [batchMsg, setBatchMsg] = useState("");
   const [batchResults, setBatchResults] = useState<SendResult[]>([]);
 
+  // ---- Invoice tracker: sent invoices, Paid toggle, reminder status ----
+  type InvoiceLedger = {
+    id: string;
+    facility_id: string;
+    period: string;
+    amount: number;
+    sent_at: string;
+    paid: boolean;
+    reminders_sent: number;
+  };
+  const [ledger, setLedger] = useState<InvoiceLedger[]>([]);
+  const facName = useCallback(
+    (id: string) => {
+      const f = facilities.find((x) => x.id === id);
+      return f?.short_name || f?.name || "Facility";
+    },
+    [facilities]
+  );
+  const loadLedger = useCallback(async () => {
+    const { data } = await supabase
+      .from("invoices")
+      .select("id,facility_id,period,amount,sent_at,paid,reminders_sent")
+      .order("paid", { ascending: true })
+      .order("sent_at", { ascending: false });
+    setLedger((data as InvoiceLedger[]) ?? []);
+  }, [supabase]);
+  useEffect(() => {
+    loadLedger();
+  }, [loadLedger]);
+  const setPaid = async (id: string, paid: boolean) => {
+    setLedger((prev) => prev.map((r) => (r.id === id ? { ...r, paid } : r)));
+    await supabase
+      .from("invoices")
+      .update({ paid, paid_at: paid ? new Date().toISOString() : null })
+      .eq("id", id);
+  };
+  const reminderLabel = (n: number) =>
+    n <= 0 ? "—" : n === 1 ? "7-day sent" : n === 2 ? "7/14 sent" : "7/14/30 done";
+
   const loadSummary = useCallback(async (m?: string) => {
     setAllLoading(true);
     try {
@@ -232,6 +271,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     setBatchMsg(`Done — ${okN}/${toSend.length} invoice(s) sent.`);
     // Refresh so amounts reflect any late-imported payments next time.
     loadSummary(allMonth);
+    loadLedger();
   };
   const emailInvoice = async (test: boolean) => {
     // Real send: show EXACTLY who will receive it (never a facility) and confirm.
@@ -304,6 +344,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     } finally {
       setInvoiceBusy(false);
       setTimeout(() => setInvoiceMsg(""), 15000);
+      loadLedger();
     }
   };
 
@@ -558,6 +599,66 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               checked. Each invoice goes to its own facility login; management is BCC&apos;d.
             </p>
           </>
+        )}
+      </div>
+
+      {/* ---- Invoice tracker: who still owes + reminder status ---- */}
+      <div className="card p-5">
+        <h2 className="font-display text-lg font-bold">Invoice tracker &amp; reminders</h2>
+        <p className="mt-1 text-sm text-surface-muted">
+          Every invoice you&apos;ve emailed. Mark one <b>Paid</b> when the money comes in — unpaid
+          ones automatically get a reminder at <b>7, 14, and 30 days</b>, then stop.
+        </p>
+        {ledger.length === 0 ? (
+          <div className="mt-4 text-sm text-surface-muted">
+            No invoices sent yet. Email one above and it&apos;ll show here.
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-muted">
+                  <th className="px-2 py-1.5">Facility</th>
+                  <th className="px-2 py-1.5">Month</th>
+                  <th className="px-2 py-1.5 text-right">Amount</th>
+                  <th className="px-2 py-1.5">Sent</th>
+                  <th className="px-2 py-1.5">Reminders</th>
+                  <th className="px-2 py-1.5 text-center">Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.map((r) => (
+                  <tr
+                    key={r.id}
+                    className={`border-t border-surface-border ${r.paid ? "opacity-55" : ""}`}
+                  >
+                    <td className="px-2 py-1.5 font-medium text-surface-ink">
+                      {facName(r.facility_id)}
+                    </td>
+                    <td className="px-2 py-1.5">{monthLabel(r.period)}</td>
+                    <td className="px-2 py-1.5 text-right font-semibold text-secured">
+                      {money(r.amount)}
+                    </td>
+                    <td className="px-2 py-1.5 text-xs text-surface-muted">
+                      {new Date(r.sent_at).toLocaleDateString("en-US")}
+                    </td>
+                    <td className="px-2 py-1.5 text-xs text-surface-muted">
+                      {r.paid ? "—" : reminderLabel(r.reminders_sent)}
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={r.paid}
+                        onChange={(e) => setPaid(r.id, e.target.checked)}
+                        className="h-4 w-4"
+                        aria-label={`Mark ${facName(r.facility_id)} ${monthLabel(r.period)} paid`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
