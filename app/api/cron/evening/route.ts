@@ -14,7 +14,7 @@ import {
   recapBccByFacility,
   renderFacilityRecap,
 } from "@/lib/report/facilityRecap";
-import { logCronRun } from "@/lib/report/cronLog";
+import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 
 // One evening job (~5 PM ET) that does BOTH the end-of-day production summary
 // and the per-facility daily recaps. Combined into a single cron so the app
@@ -43,12 +43,21 @@ export async function GET(request: Request) {
   // the late-afternoon Eastern window (4–8 PM) so the one guaranteed daily run
   // always sends — 5 PM ET in summer (EDT), 4 PM in winter (EST) — and small
   // cron delays don't skip the day. ?force=1 bypasses.
-  if (!(h >= 16 && h <= 20) && url.searchParams.get("force") !== "1") {
+  const force = url.searchParams.get("force") === "1";
+  if (!(h >= 16 && h <= 20) && !force) {
     await logCronRun(admin, "evening", `skipped: outside evening window (ET hour ${h})`);
     return NextResponse.json({ ok: true, sent: false, reason: `outside evening window (ET hour ${h})` });
   }
 
   const date = easternToday();
+
+  // Send at most once per Eastern day, even though the scheduler fires several
+  // times inside the window (to survive GitHub's flaky cron timing). ?force=1
+  // bypasses this for a manual re-send.
+  if (!force && (await alreadySentToday(admin, "evening", date))) {
+    await logCronRun(admin, "evening", "skipped: already sent today");
+    return NextResponse.json({ ok: true, sent: false, reason: "already sent today" });
+  }
   const result: { eod?: unknown; recaps?: unknown } = {};
 
   // 1) End-of-day production summary → management.
@@ -102,6 +111,15 @@ export async function GET(request: Request) {
     result.recaps = { error: e instanceof Error ? e.message : "recap send failed" };
   }
 
-  await logCronRun(admin, "evening", `done — ${JSON.stringify(result)}`);
+  // Mark the day as SENT only if something actually went out — so if BOTH parts
+  // errored (transient), a later trigger in the window retries instead of the
+  // guard wrongly blocking it.
+  const eodSent = (result.eod as { sent?: boolean } | undefined)?.sent === true;
+  const recapsSent = ((result.recaps as { sent?: number } | undefined)?.sent ?? 0) > 0;
+  await logCronRun(
+    admin,
+    "evening",
+    `${eodSent || recapsSent ? `SENT ${date}` : "done (nothing sent)"} — ${JSON.stringify(result)}`
+  );
   return NextResponse.json({ ok: true, ...result });
 }
