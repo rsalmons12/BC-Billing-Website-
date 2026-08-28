@@ -18,7 +18,7 @@ import {
   type Facility,
 } from "@/lib/types";
 
-type Bucket = "all" | "0-35" | "36+" | "risk";
+type Bucket = "all" | "0-35" | "36+" | "120+" | "risk";
 type Worked = "all" | "unworked" | "worked";
 
 // Today as MM/DD/YY — bulk notes are always stamped with the current date.
@@ -124,10 +124,15 @@ export default function CollectionsClient({
   userId,
   userName = "",
   readOnly = false,
+  initialFacilityId,
+  initialBucket,
 }: {
   facilities: Facility[];
   userId: string;
   userName?: string;
+  // Preset filters from the URL (e.g. opened from the 120+ Day Claims page).
+  initialFacilityId?: string;
+  initialBucket?: Bucket;
   // Facility logins get a view-only board: they can browse and expand their
   // own claims (grouped by patient) but cannot work them. The database also
   // blocks writes for the facility role (can_edit() is false), so this is a
@@ -136,11 +141,13 @@ export default function CollectionsClient({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [facilityId, setFacilityId] = useState<string>(
-    facilities[0]?.id ?? ""
+    (initialFacilityId && facilities.some((f) => f.id === initialFacilityId)
+      ? initialFacilityId
+      : facilities[0]?.id) ?? ""
   );
   const [rows, setRows] = useState<ClaimRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [bucket, setBucket] = useState<Bucket>("all");
+  const [bucket, setBucket] = useState<Bucket>(initialBucket ?? "all");
   const [worked, setWorked] = useState<Worked>("all");
   const [payerF, setPayerF] = useState("all");
   const [statusF, setStatusF] = useState("all");
@@ -387,6 +394,7 @@ export default function CollectionsClient({
       const age = r.age_days ?? 0;
       if (bucket === "0-35" && age > 35) return false;
       if (bucket === "36+" && age < 36) return false;
+      if (bucket === "120+" && age < 120) return false;
       if (bucket === "risk" && age <= RISK_AGE_THRESHOLD) return false;
 
       if (worked === "worked" && !isWorked(r.work)) return false;
@@ -540,6 +548,7 @@ export default function CollectionsClient({
               ["all", "All"],
               ["0-35", "0–35d"],
               ["36+", "36+d"],
+              ["120+", "120+d"],
               ["risk", "Risk 65+"],
             ] as [Bucket, string][]
           ).map(([key, label]) => (
