@@ -1491,15 +1491,21 @@ function NotesCell({
       {entries.length === 0 && readOnly && (
         <div className="text-xs text-surface-muted">—</div>
       )}
-      {entries.map((e, i) => (
-        <div
-          key={i}
-          className="rounded-md border border-surface-border bg-surface px-2 py-1 text-xs leading-snug"
-        >
-          {e.head && <div className="mb-0.5 font-semibold text-surface-muted">{e.head}</div>}
-          <div className="whitespace-pre-wrap break-words">{e.text}</div>
+      {/* Cap the note history height so a long call log can't blow the row up to
+          hundreds of pixels — newest note is on top; scroll within to read more. */}
+      {entries.length > 0 && (
+        <div className="max-h-40 space-y-1.5 overflow-y-auto pr-1">
+          {entries.map((e, i) => (
+            <div
+              key={i}
+              className="rounded-md border border-surface-border bg-surface px-2 py-1 text-xs leading-snug"
+            >
+              {e.head && <div className="mb-0.5 font-semibold text-surface-muted">{e.head}</div>}
+              <div className="whitespace-pre-wrap break-words">{e.text}</div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
       {!readOnly && (
       <div className="flex items-start gap-1">
         <textarea
@@ -1548,8 +1554,13 @@ function AutoTextarea({
   useEffect(() => {
     const el = ref.current;
     if (el) {
+      // Grow to fit, but cap the height so a long value scrolls inside the cell
+      // instead of stretching the whole table row.
+      const MAX = 160; // px (~10rem)
       el.style.height = "auto";
-      el.style.height = `${el.scrollHeight}px`;
+      const h = Math.min(el.scrollHeight, MAX);
+      el.style.height = `${h}px`;
+      el.style.overflowY = el.scrollHeight > MAX ? "auto" : "hidden";
     }
   }, [value]);
   return (
