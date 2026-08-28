@@ -126,6 +126,7 @@ export default function CollectionsClient({
   readOnly = false,
   initialFacilityId,
   initialBucket,
+  initialPayer,
 }: {
   facilities: Facility[];
   userId: string;
@@ -133,6 +134,7 @@ export default function CollectionsClient({
   // Preset filters from the URL (e.g. opened from the 120+ Day Claims page).
   initialFacilityId?: string;
   initialBucket?: Bucket;
+  initialPayer?: string;
   // Facility logins get a view-only board: they can browse and expand their
   // own claims (grouped by patient) but cannot work them. The database also
   // blocks writes for the facility role (can_edit() is false), so this is a
@@ -149,7 +151,7 @@ export default function CollectionsClient({
   const [loading, setLoading] = useState(false);
   const [bucket, setBucket] = useState<Bucket>(initialBucket ?? "all");
   const [worked, setWorked] = useState<Worked>("all");
-  const [payerF, setPayerF] = useState("all");
+  const [payerF, setPayerF] = useState(initialPayer || "all");
   const [statusF, setStatusF] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState<string>("");
