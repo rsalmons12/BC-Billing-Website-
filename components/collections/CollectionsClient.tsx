@@ -36,16 +36,56 @@ function todayISO(): string {
   ).padStart(2, "0")}`;
 }
 
-// Split a notes field into its dated entries. Each line is "MM/DD/YY (INIT): text".
+// Break a single blob into dated entries even when the dates are inline with no
+// line breaks — the case for legacy imported call logs. We split BEFORE a date
+// token that begins a new entry: one at the very start, or preceded by " - " or
+// two-plus spaces (the delimiters these logs use). Inline dates (e.g. "(on
+// 06/04/26)", separated by a single space) are left alone, so we under-split
+// rather than break a sentence mid-thought.
+function splitDatedEntries(line: string): string[] {
+  const SEP = "\u0001"; // private delimiter, cannot appear in notes
+  const marked = line.replace(
+    /(^|\s[-–]+\s*|\s{2,})(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g,
+    (_m, _pre, date) => `${SEP}${date}`
+  );
+  return marked
+    .split(SEP)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Parse "M/D/YY" out of an entry's head/text for newest-first sorting.
+function entryDate(head: string, text: string): number {
+  const m = (head || text).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return -Infinity;
+  let y = Number(m[3]);
+  if (y < 100) y += 2000;
+  return new Date(y, Number(m[1]) - 1, Number(m[2])).getTime();
+}
+
+// Split a notes field into its dated entries. New notes arrive one-per-line as
+// "MM/DD/YY (INIT): text"; older imported blobs cram several dated calls onto one
+// line, so we further split those on their inline dates. Sorted newest-first.
 export function parseNoteEntries(value: string): { head: string; text: string }[] {
-  return String(value ?? "")
-    .split("\n")
-    .map((l) => l.replace(/\s+$/, ""))
-    .filter((l) => l.trim())
-    .map((line) => {
-      const m = line.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\(([^)]*)\):\s*([\s\S]*)$/);
-      return m ? { head: `${m[1]} · ${m[2]}`, text: m[3] } : { head: "", text: line };
-    });
+  const segments: string[] = [];
+  for (const line of String(value ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    for (const seg of splitDatedEntries(line.replace(/\s+$/, ""))) segments.push(seg);
+  }
+  const entries = segments.map((seg) => {
+    // "MM/DD/YY (INIT): text" — the app's own format.
+    let m = seg.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\(([^)]*)\):\s*([\s\S]*)$/);
+    if (m) return { head: `${m[1]} · ${m[2]}`, text: m[3] };
+    // "MM/DD/YY rest" — legacy entry with a leading date but no initials.
+    m = seg.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+([\s\S]*)$/);
+    if (m) return { head: m[1], text: m[2] };
+    return { head: "", text: seg };
+  });
+  // Newest date first; undated entries keep their order at the end.
+  return entries
+    .map((e, i) => ({ e, i, d: entryDate(e.head, e.text) }))
+    .sort((a, b) => (b.d - a.d) || (a.i - b.i))
+    .map((x) => x.e);
 }
 
 // Best-guess initials from a full name (e.g. "Amanda Ruiz" -> "AR").
