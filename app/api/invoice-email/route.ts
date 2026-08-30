@@ -169,9 +169,21 @@ export async function POST(request: Request) {
   const monthPayments = pays.filter((p) => payMonth(p) === body.month);
   const monthBilled = billed.filter((b) => bilMonth(b) === body.month);
   const collected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
-  const fee = Math.round(collected * (rate / 100) * 100) / 100;
+  const baseFee = Math.round(collected * (rate / 100) * 100) / 100;
   const facilityName = fac.short_name || fac.name;
   const label = monthLabel(body.month);
+
+  // Extra charges (late fees, adjustments) added for this facility + month.
+  const { data: chargeRows } = await supabase
+    .from("invoice_charges")
+    .select("label, amount")
+    .eq("facility_id", body.facilityId)
+    .eq("period", body.month);
+  const charges = (chargeRows ?? []) as { label: string; amount: number }[];
+  const chargesTotal =
+    Math.round(charges.reduce((s, c) => s + (Number(c.amount) || 0), 0) * 100) / 100;
+  // Total billed = base fee + any extra charges.
+  const fee = Math.round((baseFee + chargesTotal) * 100) / 100;
 
   // Build the monthly report bundle (with the INVOICE sheet) to attach.
   let attachment: { filename: string; content: string } | null = null;
@@ -246,11 +258,20 @@ export async function POST(request: Request) {
             <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(collected)}</td></tr>
         <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Rate</td>
             <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${rate}%</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Billing fee (${rate}% of collections)</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>
+        ${charges
+          .map(
+            (c) =>
+              `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">${String(c.label || "Charge").replace(/[<>&]/g, "")}</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(Number(c.amount) || 0)}</td></tr>`
+          )
+          .join("")}
         <tr><td style="padding:8px;font-weight:700">Amount Due</td>
             <td style="padding:8px;font-weight:700;text-align:right;color:#137333">${money(fee)}</td></tr>
       </tbody>
     </table>
-    <p style="font-size:12px;color:#777;margin-top:12px">Fee is ${rate}% of collections received in ${label}.</p>
+    <p style="font-size:12px;color:#777;margin-top:12px">Billing fee is ${rate}% of collections received in ${label}${chargesTotal !== 0 ? ", plus the charges listed above" : ""}.</p>
     ${
       payUrl
         ? `<p style="margin:16px 0 4px">

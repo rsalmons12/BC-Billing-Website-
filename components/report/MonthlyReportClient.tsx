@@ -184,6 +184,45 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const reminderLabel = (n: number) =>
     n <= 0 ? "—" : n === 1 ? "7-day sent" : n === 2 ? "7/14 sent" : "7/14/30 done";
 
+  // ---- Extra charges (late fees, adjustments) for the selected facility+month ----
+  type Charge = { id: string; label: string; amount: number };
+  const [charges, setCharges] = useState<Charge[]>([]);
+  const [chLabel, setChLabel] = useState("");
+  const [chAmount, setChAmount] = useState("");
+  const loadCharges = useCallback(async () => {
+    if (!facilityId || !month) {
+      setCharges([]);
+      return;
+    }
+    const { data } = await supabase
+      .from("invoice_charges")
+      .select("id,label,amount")
+      .eq("facility_id", facilityId)
+      .eq("period", month)
+      .order("created_at");
+    setCharges((data as Charge[]) ?? []);
+  }, [supabase, facilityId, month]);
+  useEffect(() => {
+    loadCharges();
+  }, [loadCharges]);
+  const addCharge = async () => {
+    const amt = parseFloat(chAmount);
+    if (!chLabel.trim() || isNaN(amt)) return;
+    const { data } = await supabase
+      .from("invoice_charges")
+      .insert({ facility_id: facilityId, period: month, label: chLabel.trim(), amount: amt })
+      .select("id,label,amount")
+      .single();
+    if (data) setCharges((prev) => [...prev, data as Charge]);
+    setChLabel("");
+    setChAmount("");
+  };
+  const removeCharge = async (id: string) => {
+    setCharges((prev) => prev.filter((c) => c.id !== id));
+    await supabase.from("invoice_charges").delete().eq("id", id);
+  };
+  const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
   const loadSummary = useCallback(async (m?: string) => {
     setAllLoading(true);
     try {
@@ -413,10 +452,63 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
             {billingRate != null && billingRate > 0 ? (
               <>
                 <div className="font-display text-2xl font-bold text-secured">
-                  {money(totalCollected * (billingRate / 100))}
+                  {money(totalCollected * (billingRate / 100) + chargesTotal)}
                 </div>
                 <div className="text-xs text-surface-muted">
-                  {billingRate}% of {money(totalCollected)} collected · included as an INVOICE sheet in the bundle
+                  {billingRate}% of {money(totalCollected)} = {money(totalCollected * (billingRate / 100))} billing fee
+                  {chargesTotal !== 0 ? ` + ${money(chargesTotal)} charges` : ""} · included as an INVOICE sheet
+                </div>
+
+                {/* Extra charges: late fees, adjustments. Added to the invoice total. */}
+                <div className="mt-3 rounded-md border border-surface-border bg-surface/60 p-2.5">
+                  <div className="label mb-1">Extra charges</div>
+                  {charges.length > 0 && (
+                    <ul className="mb-2 space-y-1">
+                      {charges.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between text-sm">
+                          <span className="text-surface-ink">{c.label}</span>
+                          <span className="flex items-center gap-2">
+                            <span className="font-mono font-semibold">{money(c.amount)}</span>
+                            <button
+                              onClick={() => removeCharge(c.id)}
+                              className="text-xs text-risk hover:underline"
+                              title="Remove charge"
+                            >
+                              remove
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={chLabel}
+                      onChange={(e) => setChLabel(e.target.value)}
+                      placeholder="e.g. Late fee"
+                      className="input h-8 flex-1 min-w-[8rem] text-sm"
+                    />
+                    <input
+                      value={chAmount}
+                      onChange={(e) => setChAmount(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addCharge()}
+                      type="number"
+                      step="0.01"
+                      placeholder="$"
+                      className="input h-8 w-24 text-sm"
+                    />
+                    <button
+                      onClick={addCharge}
+                      disabled={!chLabel.trim() || chAmount.trim() === ""}
+                      className="badge bg-surface px-3 py-1.5 text-xs font-semibold text-surface-ink hover:bg-surface-card disabled:opacity-50"
+                    >
+                      + Add charge
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-surface-muted">
+                    Charges are added to this facility&apos;s {monthLabel(month)} invoice total, the
+                    Square Pay amount, and any reminders. Use a negative amount for a credit.
+                  </p>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
