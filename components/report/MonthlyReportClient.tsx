@@ -189,6 +189,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const [charges, setCharges] = useState<Charge[]>([]);
   const [chLabel, setChLabel] = useState("");
   const [chAmount, setChAmount] = useState("");
+  const [chMsg, setChMsg] = useState("");
   const loadCharges = useCallback(async () => {
     if (!facilityId || !month) {
       setCharges([]);
@@ -207,15 +208,29 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   }, [loadCharges]);
   const addCharge = async () => {
     const amt = parseFloat(chAmount);
-    if (!chLabel.trim() || isNaN(amt)) return;
-    const { data } = await supabase
+    if (!chLabel.trim() || isNaN(amt)) {
+      setChMsg("Enter a label and a dollar amount.");
+      return;
+    }
+    setChMsg("Saving…");
+    const { data, error } = await supabase
       .from("invoice_charges")
       .insert({ facility_id: facilityId, period: month, label: chLabel.trim(), amount: amt })
       .select("id,label,amount")
       .single();
+    if (error) {
+      // Most common cause: migration 0052 not run yet, so the table is missing.
+      setChMsg(
+        /invoice_charges|relation|does not exist|schema cache/i.test(error.message)
+          ? "Couldn't save — run migration 0052_invoice_charges.sql in Supabase, then reload."
+          : `Couldn't save: ${error.message}`
+      );
+      return; // keep what you typed so nothing is lost
+    }
     if (data) setCharges((prev) => [...prev, data as Charge]);
     setChLabel("");
     setChAmount("");
+    setChMsg("");
   };
   const removeCharge = async (id: string) => {
     setCharges((prev) => prev.filter((c) => c.id !== id));
@@ -505,6 +520,13 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                       + Add charge
                     </button>
                   </div>
+                  {chMsg && (
+                    <div
+                      className={`mt-1 text-[11px] ${/couldn't|enter a/i.test(chMsg) ? "text-risk" : "text-surface-muted"}`}
+                    >
+                      {chMsg}
+                    </div>
+                  )}
                   <p className="mt-1 text-[11px] text-surface-muted">
                     Charges are added to this facility&apos;s {monthLabel(month)} invoice total, the
                     Square Pay amount, and any reminders. Use a negative amount for a credit.
