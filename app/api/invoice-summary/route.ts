@@ -67,6 +67,17 @@ export async function POST(request: Request) {
   }
   const facInvoiceIds = new Set(facInvoiceProfiles.map((p) => p.id));
 
+  // Extra charges (late fees, adjustments) for the selected month, per facility.
+  const chargesByFac = new Map<string, number>();
+  if (body.month) {
+    const { data: chg } = await supabase
+      .from("invoice_charges")
+      .select("facility_id, amount")
+      .eq("period", body.month);
+    for (const c of (chg ?? []) as { facility_id: string; amount: number }[])
+      chargesByFac.set(c.facility_id, (chargesByFac.get(c.facility_id) ?? 0) + (Number(c.amount) || 0));
+  }
+
   const payMonth = (p: Payment) =>
     periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "");
 
@@ -89,8 +100,10 @@ export async function POST(request: Request) {
       }
       const collected = body.month ? byMonth.get(body.month) ?? 0 : 0;
       const rate = f.billing_rate;
-      const fee =
+      const baseFee =
         rate != null && rate > 0 ? Math.round(collected * (rate / 100) * 100) / 100 : 0;
+      const extra = Math.round((chargesByFac.get(f.id) ?? 0) * 100) / 100;
+      const fee = Math.round((baseFee + extra) * 100) / 100;
 
       // Facility logins marked "Invoices" for THIS facility (primary or assigned).
       let toCount = 0;
