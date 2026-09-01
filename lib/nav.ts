@@ -6,6 +6,7 @@ export type Tab = {
   icon: string;
   roles: Role[]; // roles that may access at all
   ownerOnly?: boolean; // true = only management users flagged is_owner may see it
+  mobile?: boolean; // true = surfaced in the phone app's primary menu (rest go under "More")
 };
 
 // Single source of truth for navigation + per-user access.
@@ -13,20 +14,20 @@ export const TABS: Tab[] = [
   { href: "/home", label: "Home", icon: "⌂", roles: ["management"] },
   { href: "/overview", label: "Overview", icon: "▦", roles: ["management"] },
   { href: "/queue", label: "My Queue", icon: "◎", roles: ["management", "staff"] },
-  { href: "/collections", label: "Collections", icon: "▤", roles: ["management", "staff", "facility"] },
+  { href: "/collections", label: "Collections", icon: "▤", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/aged", label: "120+ Day Claims", icon: "◔", roles: ["management", "staff", "facility"] },
   { href: "/adjustments", label: "Adjustments", icon: "✎", roles: ["management", "staff"] },
   { href: "/auth-issues", label: "Auth Issues", icon: "✦", roles: ["management", "staff"] },
   { href: "/management", label: "Management", icon: "★", roles: ["management", "staff"] },
   { href: "/authorizations", label: "Authorization", icon: "✓", roles: ["management", "staff", "facility"] },
-  { href: "/negotiations", label: "Negotiations", icon: "⇄", roles: ["management", "staff", "facility"] },
+  { href: "/negotiations", label: "Negotiations", icon: "⇄", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/medical-records", label: "Medical Records", icon: "▥", roles: ["management", "staff", "facility"] },
-  { href: "/census", label: "Weekly Census", icon: "🗒", roles: ["management", "staff", "facility"] },
-  { href: "/billed", label: "Billed", icon: "❒", roles: ["management", "staff", "facility"] },
-  { href: "/payments", label: "Payments", icon: "$", roles: ["management", "staff", "facility"] },
+  { href: "/census", label: "Weekly Census", icon: "🗒", roles: ["management", "staff", "facility"], mobile: true },
+  { href: "/billed", label: "Billed", icon: "❒", roles: ["management", "staff", "facility"], mobile: true },
+  { href: "/payments", label: "Payments", icon: "$", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/insurance-payments", label: "Insurance Payments", icon: "🏦", roles: ["management", "staff", "facility"] },
   { href: "/repricing", label: "Repricing", icon: "◷", roles: ["management", "staff", "facility"] },
-  { href: "/historical", label: "Historical Data", icon: "≣", roles: ["management", "staff", "facility"] },
+  { href: "/historical", label: "Historical Data", icon: "≣", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/attachments", label: "Attachments", icon: "📎", roles: ["management", "staff"] },
   { href: "/notifications", label: "Email Notifications", icon: "✉", roles: ["management"] },
   { href: "/reporting", label: "Reporting & Analytics", icon: "▲", roles: ["management"] },

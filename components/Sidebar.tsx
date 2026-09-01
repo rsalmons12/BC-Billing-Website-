@@ -4,14 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Logo from "@/components/Logo";
-import { tabsForProfile } from "@/lib/nav";
+import { tabsForProfile, type Tab } from "@/lib/nav";
 import type { Profile } from "@/lib/types";
 
 export default function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname();
   const items = tabsForProfile(profile);
+  // Phone app: a short primary menu (the tabs flagged `mobile`) with the rest
+  // tucked under "More". Falls back to all tabs if none are flagged.
+  const primary = items.filter((t) => t.mobile);
+  const mobilePrimary = primary.length ? primary : items;
+  const mobileMore = primary.length ? items.filter((t) => !t.mobile) : [];
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false); // mobile drawer
+  const [showMore, setShowMore] = useState(false);
 
   useEffect(() => {
     setCollapsed(localStorage.getItem("rd_sidebar_collapsed") === "1");
@@ -28,9 +34,9 @@ export default function Sidebar({ profile }: { profile: Profile }) {
       return next;
     });
 
-  const NavLinks = ({ compact }: { compact: boolean }) => (
+  const NavLinks = ({ compact, list = items }: { compact: boolean; list?: Tab[] }) => (
     <nav className="flex-1 space-y-1 overflow-y-auto px-2.5">
-      {items.map((item) => {
+      {list.map((item) => {
         const active =
           pathname === item.href || pathname.startsWith(item.href + "/");
         return (
@@ -94,7 +100,21 @@ export default function Sidebar({ profile }: { profile: Profile }) {
                 ✕
               </button>
             </div>
-            <NavLinks compact={false} />
+            <div className="flex-1 overflow-y-auto">
+              <NavLinks compact={false} list={mobilePrimary} />
+              {mobileMore.length > 0 && (
+                <>
+                  <button
+                    onClick={() => setShowMore((s) => !s)}
+                    className="mx-2.5 mt-2 flex w-[calc(100%-1.25rem)] items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold uppercase tracking-wide text-command-muted hover:bg-command-surface/60"
+                  >
+                    <span>More</span>
+                    <span>{showMore ? "▲" : "▾"}</span>
+                  </button>
+                  {showMore && <NavLinks compact={false} list={mobileMore} />}
+                </>
+              )}
+            </div>
           </aside>
         </div>
       )}
