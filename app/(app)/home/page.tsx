@@ -40,14 +40,21 @@ export default async function HomeMenu() {
   // Facility logins have their own landing.
   if (profile.role === "facility") redirect("/facility");
   const tabs = tabsForProfile(profile).filter((t) => t.href !== "/home");
+  // First name if we have one, else the part before "@" of the email — never the
+  // whole email address (a long unbreakable string blows out the phone layout).
+  const greetName = profile.full_name?.trim()
+    ? profile.full_name.trim().split(/\s+/)[0]
+    : email
+      ? email.split("@")[0]
+      : "";
 
   return (
     <>
       <Header profile={profile} email={email} subtitle="Home" />
-      <main className="min-h-0 flex-1 overflow-auto p-6">
+      <main className="min-w-0 flex-1 overflow-auto p-6" style={{ minHeight: 0 }}>
         <div className="mx-auto max-w-5xl">
-          <h1 className="font-display text-2xl font-bold text-surface-ink">
-            Welcome{profile.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}
+          <h1 className="font-display text-2xl font-bold text-surface-ink break-words">
+            Welcome{greetName ? `, ${greetName}` : ""}
           </h1>
           <p className="mt-1 text-sm text-surface-muted">Pick a section to get started.</p>
 
