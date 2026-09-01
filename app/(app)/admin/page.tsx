@@ -7,8 +7,9 @@ import type { Profile, Facility, Assignment } from "@/lib/types";
 
 export default async function AdminPage() {
   const { profile, email } = await requireProfile();
-  // Admin is owner-only: managers run collections but don't manage users/facilities.
-  if (profile.role !== "management" || profile.is_owner !== true) redirect("/");
+  // Admin panel: owners OR admins (managers granted admin). Plain managers can't.
+  if (profile.role !== "management" || !(profile.is_owner === true || profile.is_admin === true))
+    redirect("/");
 
   const supabase = createClient();
   const [{ data: profiles }, { data: facilities }, { data: assignments }] =

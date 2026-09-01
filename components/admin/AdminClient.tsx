@@ -85,6 +85,17 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : is_owner ? "Owner — sees invoices" : "Manager — no invoices");
   };
 
+  const setAdmin = async (p: Profile, is_admin: boolean) => {
+    setProfiles((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, is_admin } : x))
+    );
+    const { error } = await supabase
+      .from("profiles")
+      .update({ is_admin })
+      .eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : is_admin ? "Admin — manages users" : "No admin access");
+  };
+
   const setJobTitle = async (p: Profile, job_title: string) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, job_title } : x))
@@ -206,6 +217,7 @@ export default function AdminClient({
           setDailyEmails={setDailyEmails}
           setInvoices={setInvoices}
           setOwner={setOwner}
+          setAdmin={setAdmin}
           setJobTitle={setJobTitle}
           setQueueTier={setQueueTier}
           setFacilityId={setFacilityId}
@@ -240,6 +252,7 @@ function UsersTab({
   setDailyEmails,
   setInvoices,
   setOwner,
+  setAdmin,
   setJobTitle,
   setQueueTier,
   setFacilityId,
@@ -255,6 +268,7 @@ function UsersTab({
   setDailyEmails: (p: Profile, on: boolean) => void;
   setInvoices: (p: Profile, on: boolean) => void;
   setOwner: (p: Profile, on: boolean) => void;
+  setAdmin: (p: Profile, on: boolean) => void;
   setJobTitle: (p: Profile, title: string) => void;
   setQueueTier: (p: Profile, tier: string) => void;
   setFacilityId: (p: Profile, id: string | null) => void;
@@ -357,6 +371,31 @@ function UsersTab({
                         : !selfIsOwner
                           ? " (owners only)"
                           : ""}
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {/* Admin = manages Users/Facilities but NOT invoices. Owners can
+                  grant it; an owner already has admin implicitly. */}
+              {p.role === "management" && (
+                <div>
+                  <span className="label">Admin</span>
+                  <label className="mt-1 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={p.is_admin === true || p.is_owner === true}
+                      disabled={!selfIsOwner || p.id === selfId || p.is_owner === true}
+                      onChange={(e) => setAdmin(p, e.target.checked)}
+                      className="h-4 w-4 disabled:opacity-40"
+                    />
+                    <span className="text-surface-muted">
+                      {p.is_owner === true
+                        ? "Via owner"
+                        : p.is_admin === true
+                          ? "Manages users/facilities"
+                          : "No admin"}
+                      {p.id === selfId ? " (locked — your own)" : !selfIsOwner ? " (owners only)" : ""}
                     </span>
                   </label>
                 </div>
