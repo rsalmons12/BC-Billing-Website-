@@ -14,8 +14,10 @@ export const TABS: Tab[] = [
   { href: "/home", label: "Home", icon: "⌂", roles: ["management"] },
   { href: "/overview", label: "Overview", icon: "▦", roles: ["management"] },
   { href: "/queue", label: "My Queue", icon: "◎", roles: ["management", "staff"] },
-  // Facility logins get exactly five tabs (AR, Billed, Payments, Census,
-  // Historical) and nothing else. "AR" is the read-only claims/receivables board.
+  // Facility landing: a read-only Overview (totals + auth + money outlook).
+  { href: "/facility", label: "Overview", icon: "▣", roles: ["facility"], mobile: true },
+  // Facility logins get AR, Billed, Payments, Census, Historical besides the
+  // Overview. "AR" is the read-only claims/receivables board.
   { href: "/collections", label: "AR", icon: "▤", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/aged", label: "120+ Day Claims", icon: "◔", roles: ["management", "staff"] },
   { href: "/adjustments", label: "Adjustments", icon: "✎", roles: ["management", "staff"] },
