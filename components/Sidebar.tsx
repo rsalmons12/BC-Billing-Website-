@@ -10,14 +10,12 @@ import type { Profile } from "@/lib/types";
 export default function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname();
   const items = tabsForProfile(profile);
-  // Phone app: a short primary menu (the tabs flagged `mobile`) with the rest
-  // tucked under "More". Falls back to all tabs if none are flagged.
+  // Phone app: a focused menu of just the tabs flagged `mobile` (falls back to
+  // all tabs if none are flagged). No "More" — only the essentials.
   const primary = items.filter((t) => t.mobile);
   const mobilePrimary = primary.length ? primary : items;
-  const mobileMore = primary.length ? items.filter((t) => !t.mobile) : [];
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false); // mobile drawer
-  const [showMore, setShowMore] = useState(false);
 
   useEffect(() => {
     setCollapsed(localStorage.getItem("rd_sidebar_collapsed") === "1");
@@ -102,18 +100,6 @@ export default function Sidebar({ profile }: { profile: Profile }) {
             </div>
             <div className="flex-1 overflow-y-auto">
               <NavLinks compact={false} list={mobilePrimary} />
-              {mobileMore.length > 0 && (
-                <>
-                  <button
-                    onClick={() => setShowMore((s) => !s)}
-                    className="mx-2.5 mt-2 flex w-[calc(100%-1.25rem)] items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold uppercase tracking-wide text-command-muted hover:bg-command-surface/60"
-                  >
-                    <span>More</span>
-                    <span>{showMore ? "▲" : "▾"}</span>
-                  </button>
-                  {showMore && <NavLinks compact={false} list={mobileMore} />}
-                </>
-              )}
             </div>
           </aside>
         </div>
