@@ -98,8 +98,9 @@ export async function POST(request: Request) {
         .eq("role", "facility")
         .eq("receives_invoices", true),
       admin.from("assignments").select("profile_id, facility_id"),
-      // Internal (non-facility) users marked "Invoices" → BCC copies on all.
-      admin.from("profiles").select("id").eq("receives_invoices", true).neq("role", "facility"),
+      // BCC copies go ONLY to owners (the business owner) — never other staff,
+      // even if they're marked "Invoices". Keeps internal collectors off the CC.
+      admin.from("profiles").select("id").eq("is_owner", true),
     ]);
 
     // Marked facility users for THIS facility (primary facility_id or assignment).

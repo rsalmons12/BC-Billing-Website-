@@ -57,7 +57,7 @@ export async function POST(request: Request) {
         .eq("role", "facility")
         .eq("receives_invoices", true),
       admin.from("assignments").select("profile_id, facility_id"),
-      admin.from("profiles").select("id").eq("receives_invoices", true).neq("role", "facility"),
+      admin.from("profiles").select("id").eq("is_owner", true),
     ]);
     facInvoiceProfiles = (facProfs ?? []) as typeof facInvoiceProfiles;
     assignments = (asgs ?? []) as typeof assignments;

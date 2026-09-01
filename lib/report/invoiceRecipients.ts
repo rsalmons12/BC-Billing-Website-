@@ -32,7 +32,8 @@ export async function resolveInvoiceRecipients(
       .eq("role", "facility")
       .eq("receives_invoices", true),
     admin.from("assignments").select("profile_id, facility_id"),
-    admin.from("profiles").select("id").eq("receives_invoices", true).neq("role", "facility"),
+    // BCC copies go ONLY to owners — never other internal staff.
+    admin.from("profiles").select("id").eq("is_owner", true),
   ]);
 
   const facIds = new Set((facProfs ?? []).map((p: any) => p.id));
