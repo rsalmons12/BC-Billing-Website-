@@ -8,6 +8,12 @@
   html,
   body {
     @apply bg-surface text-surface-ink font-sans antialiased;
+    /* On a phone, a single element wider than the screen expands the whole
+       layout and pushes content off the right edge. Clip any stray horizontal
+       overflow so the app never widens past the viewport. Wide data tables
+       still scroll inside their own .scroll-x containers. */
+    overflow-x: hidden;
+    max-width: 100%;
   }
   h1,
   h2,
