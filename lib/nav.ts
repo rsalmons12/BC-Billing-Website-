@@ -6,6 +6,7 @@ export type Tab = {
   icon: string;
   roles: Role[]; // roles that may access at all
   ownerOnly?: boolean; // true = only management users flagged is_owner may see it
+  adminOnly?: boolean; // true = only owners OR admins (is_owner || is_admin) may see it
   mobile?: boolean; // true = surfaced in the phone app's primary menu (rest go under "More")
 };
 
@@ -39,7 +40,7 @@ export const TABS: Tab[] = [
   { href: "/team", label: "Collector Status", icon: "◉", roles: ["management"] },
   { href: "/lookup", label: "Patient Lookup", icon: "🔎", roles: ["management"] },
   { href: "/import", label: "Weekly Import", icon: "↥", roles: ["management"] },
-  { href: "/admin", label: "Admin", icon: "⚙", roles: ["management"], ownerOnly: true },
+  { href: "/admin", label: "Admin", icon: "⚙", roles: ["management"], adminOnly: true },
 ];
 
 // Tabs a facility login can be granted (read-only). Management/staff get all
@@ -54,7 +55,10 @@ export function tabsForProfile(profile: Profile): Tab[] {
   // Owner-only tabs (the invoicing screen) are hidden from managers — only a
   // management user explicitly flagged is_owner sees them.
   const roleTabs = TABS.filter(
-    (t) => t.roles.includes(profile.role) && (!t.ownerOnly || profile.is_owner === true)
+    (t) =>
+      t.roles.includes(profile.role) &&
+      (!t.ownerOnly || profile.is_owner === true) &&
+      (!t.adminOnly || profile.is_owner === true || profile.is_admin === true)
   );
   if (!profile.allowed_tabs || profile.allowed_tabs.length === 0) return roleTabs;
   const set = new Set(profile.allowed_tabs);

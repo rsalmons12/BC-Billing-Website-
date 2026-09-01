@@ -84,6 +84,7 @@ export interface Profile {
   receives_daily_emails: boolean | null; // false = excluded from the daily emails
   receives_invoices: boolean | null; // true = receives facility invoice emails
   is_owner: boolean | null; // true = may see the Monthly Report / invoicing screen
+  is_admin: boolean | null; // true = may run the Admin panel (users/facilities), no invoices
   created_at: string;
 }
 
