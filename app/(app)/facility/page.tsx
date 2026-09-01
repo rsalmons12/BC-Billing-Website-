@@ -225,14 +225,34 @@ export default async function FacilityDashboard({
   const totalAR = claims.reduce((s, c) => s + arBalance(c.balance), 0);
   const expectedRevenue = totalAR * EXPECTED_RATE;
 
-  const arByPayer = new Map<string, number>();
-  for (const c of claims) {
-    const bal = arBalance(c.balance);
-    if (bal <= 0) continue;
-    const p = payerFromStatus(c.claim_status);
-    arByPayer.set(p, (arByPayer.get(p) ?? 0) + bal);
-  }
-  const arRows = Array.from(arByPayer.entries()).sort((a, b) => b[1] - a[1]);
+  // ---- Authorizations summary (active reviews) ----
+  const authToday = new Date();
+  authToday.setHours(0, 0, 0, 0);
+  const parseAuthDate = (v: unknown) => {
+    const t = Date.parse(String(v ?? ""));
+    if (isNaN(t)) return null;
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+  const activeAuths = allAuths.filter((a) => {
+    if (a.discharged) return false;
+    const dd = parseAuthDate(a.discharge_date);
+    return !(dd && dd.getTime() <= authToday.getTime());
+  });
+  const authPatients = new Set(
+    activeAuths.map((a) => (a.patient_name ?? "").trim().toLowerCase()).filter(Boolean)
+  ).size;
+  const authDue = activeAuths.filter((a) => {
+    const d = parseAuthDate(a.next_review_date);
+    return d != null && d.getTime() <= authToday.getTime();
+  }).length;
+  const authPastDue = activeAuths.filter((a) => {
+    const d = parseAuthDate(a.next_review_date);
+    return d != null && d.getTime() < authToday.getTime();
+  }).length;
+  const authApproved = activeAuths.filter((a) => /approv/i.test(a.status ?? "")).length;
+  const authPending = activeAuths.filter((a) => /pending/i.test(a.status ?? "")).length;
 
   // AR at risk of non-reimbursement (marketplace/exchange payers). Matched on
   // the claim status so it catches "Denied at Highmark", "at Independence", etc.
@@ -452,6 +472,29 @@ export default async function FacilityDashboard({
             <BigStat label={`Billed · ${monthLabel}${dayRange}`} value={money(billedThisMonth)} />
           </section>
 
+          {/* Authorizations — active review status */}
+          <section className="card p-5">
+            <div className="mb-3 font-semibold">Authorizations</div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              <BigStat label="Active patients" value={String(authPatients)} />
+              <BigStat
+                label="Due for review"
+                value={String(authDue)}
+                accent={authDue > 0 ? "gold" : undefined}
+              />
+              <BigStat
+                label="Past due"
+                value={String(authPastDue)}
+                accent={authPastDue > 0 ? "risk" : "recovered"}
+              />
+              <BigStat
+                label="Approved / Pending"
+                value={`${authApproved} / ${authPending}`}
+                accent="secured"
+              />
+            </div>
+          </section>
+
           {/* Billing vs last month — accurate, data-only trend (no generic text) */}
           {(billedThisMonth > 0 || billedLastMonth > 0) && (
             <section className="card p-5">
@@ -511,9 +554,6 @@ export default async function FacilityDashboard({
               )}
             </section>
           )}
-
-          {/* Money Outlook — why revenue is improving or declining */}
-          <MoneyOutlookPanel outlooks={outlooks} />
 
           {/* Facility census — current week: patients, missed groups, missed rev */}
           <CensusPanel summaries={censusSummaries} facName={censusName} />
@@ -607,16 +647,6 @@ export default async function FacilityDashboard({
             </section>
           )}
 
-          {/* AR by payer */}
-          <Breakdown
-            title="Outstanding AR by payer"
-            total={totalAR}
-            rows={arRows}
-            flagRisk
-            empty="No outstanding balance on file."
-            accent="gold"
-          />
-
           {/* Payments this month by payer */}
           <Breakdown
             title={`Payments collected · ${monthLabel} — by payer`}
@@ -655,6 +685,9 @@ export default async function FacilityDashboard({
               </div>
             )}
           </section>
+
+          {/* Money Outlook — moved to the bottom */}
+          <MoneyOutlookPanel outlooks={outlooks} />
         </div>
       </main>
     </>
