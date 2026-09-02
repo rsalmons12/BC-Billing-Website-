@@ -6,7 +6,7 @@ import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
-import { weekGroupDates, proratedRequirements } from "@/lib/report/census";
+import { weekGroupDates, proratedRequirements, missedGroupDetail } from "@/lib/report/census";
 import { normFacility } from "@/lib/import/parse";
 import {
   CENSUS_BILLING_STATUS,
@@ -317,6 +317,9 @@ export default function CensusClient({
     () => rows.filter((r) => r.week_start === week),
     [rows, week]
   );
+
+  // "Missed groups — who & why" for the selected week (same logic as the recap).
+  const missedDetail = useMemo(() => missedGroupDetail(null, weekRows), [weekRows]);
 
   // Day columns for the selected week (union of day keys across its rows). A
   // fresh, hand-keyed week with no codes yet still shows 7 day columns derived
@@ -966,6 +969,40 @@ export default function CensusClient({
               })}
             </tbody>
           </table>
+        )}
+
+        {/* Why groups are missing — same breakdown as the daily recap */}
+        {!loading && week && missedDetail.rows.length > 0 && (
+          <div className="border-t border-surface-border p-4">
+            <div className="mb-2 font-semibold">
+              Missed groups — who &amp; why · {missedDetail.weekLabel}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-surface-muted">
+                    <th className="th">Patient</th>
+                    <th className="th">Level</th>
+                    <th className="th text-center">Missed</th>
+                    <th className="th">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {missedDetail.rows.map((m, i) => (
+                    <tr key={`${m.patient}-${i}`}>
+                      <td className="td font-medium">{m.patient}</td>
+                      <td className="td text-surface-muted">{m.loc || "—"}</td>
+                      <td className="td text-center font-semibold text-risk">−{m.missed}</td>
+                      <td className="td text-surface-muted">{m.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-surface-muted">
+              Groups already held before a client&apos;s admit date aren&apos;t counted against them.
+            </p>
+          </div>
         )}
       </div>
     </div>

@@ -219,12 +219,21 @@ const mdOf = (iso: string): string => {
 // returned, worst shortfall first. Non-group levels of care (no weekly GN
 // requirement) are skipped.
 export function missedGroupDetail(
-  facilityId: string,
-  rows: CensusLike[]
+  facilityId: string | null,
+  rows: CensusLike[],
+  weekArg?: string | null
 ): { week: string | null; weekLabel: string; rows: MissedGroupRow[] } {
-  const fRows = rows.filter((r) => r.facility_id === facilityId && r.week_start);
+  // facilityId null = rows are already scoped by the caller (used by the Census
+  // page, which pre-filters to the selected facility + linked facilities).
+  const fRows = rows.filter(
+    (r) => (facilityId == null || r.facility_id === facilityId) && r.week_start
+  );
   if (fRows.length === 0) return { week: null, weekLabel: "—", rows: [] };
-  const week = Array.from(new Set(fRows.map((r) => r.week_start!))).sort().slice(-1)[0];
+  // Use the requested week when it has rows, else the most recent week present.
+  const week =
+    weekArg && fRows.some((r) => r.week_start === weekArg)
+      ? weekArg
+      : Array.from(new Set(fRows.map((r) => r.week_start!))).sort().slice(-1)[0];
   const weekRows = fRows.filter((r) => r.week_start === week);
   const groupDates = weekGroupDates(weekRows);
   const out: MissedGroupRow[] = [];
