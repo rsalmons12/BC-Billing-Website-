@@ -225,7 +225,8 @@ export default async function FacilityDashboard({
   const totalAR = claims.reduce((s, c) => s + arBalance(c.balance), 0);
   const expectedRevenue = totalAR * EXPECTED_RATE;
 
-  // ---- Authorizations summary (active reviews) ----
+  // ---- Authorizations summary — ONE current auth per patient (matches the
+  // Authorizations page), so counts reflect patients, not every historical row.
   const authToday = new Date();
   authToday.setHours(0, 0, 0, 0);
   const parseAuthDate = (v: unknown) => {
@@ -235,24 +236,39 @@ export default async function FacilityDashboard({
     d.setHours(0, 0, 0, 0);
     return d;
   };
-  const activeAuths = allAuths.filter((a) => {
-    if (a.discharged) return false;
+  // "Out" = discharged, or a discharge date that has arrived.
+  const authIsOut = (a: Authorization) => {
+    if (a.discharged) return true;
     const dd = parseAuthDate(a.discharge_date);
-    return !(dd && dd.getTime() <= authToday.getTime());
-  });
-  const authPatients = new Set(
-    activeAuths.map((a) => (a.patient_name ?? "").trim().toLowerCase()).filter(Boolean)
-  ).size;
-  const authDue = activeAuths.filter((a) => {
-    const d = parseAuthDate(a.next_review_date);
-    return d != null && d.getTime() <= authToday.getTime();
-  }).length;
-  const authPastDue = activeAuths.filter((a) => {
+    return dd != null && dd.getTime() <= authToday.getTime();
+  };
+  // Recency: latest of start/admit, else created_at — the current auth wins.
+  const authRecency = (a: Authorization) => {
+    const ds = [a.start_date, a.admit_date].map(parseAuthDate).filter(Boolean) as Date[];
+    if (ds.length) return Math.max(...ds.map((d) => d.getTime()));
+    const c = Date.parse(a.created_at || "");
+    return isNaN(c) ? 0 : c;
+  };
+  const currentByPatient = new Map<string, Authorization>();
+  for (const a of allAuths) {
+    const key = `${(a.patient_name ?? "").trim().toLowerCase()}|${a.facility_id ?? ""}`;
+    if (!key.replace("|", "").trim()) continue;
+    const cur = currentByPatient.get(key);
+    if (!cur || authRecency(a) > authRecency(cur)) currentByPatient.set(key, a);
+  }
+  const activeCurrents = Array.from(currentByPatient.values()).filter((a) => !authIsOut(a));
+  const authPatients = activeCurrents.length;
+  const authPastDue = activeCurrents.filter((a) => {
     const d = parseAuthDate(a.next_review_date);
     return d != null && d.getTime() < authToday.getTime();
   }).length;
-  const authApproved = activeAuths.filter((a) => /approv/i.test(a.status ?? "")).length;
-  const authPending = activeAuths.filter((a) => /pending/i.test(a.status ?? "")).length;
+  // "Due for review" = due today or overdue (needs a review now).
+  const authDue = activeCurrents.filter((a) => {
+    const d = parseAuthDate(a.next_review_date);
+    return d != null && d.getTime() <= authToday.getTime();
+  }).length;
+  const authApproved = activeCurrents.filter((a) => /approv/i.test(a.status ?? "")).length;
+  const authPending = activeCurrents.filter((a) => /pending/i.test(a.status ?? "")).length;
 
   // AR at risk of non-reimbursement (marketplace/exchange payers). Matched on
   // the claim status so it catches "Denied at Highmark", "at Independence", etc.
