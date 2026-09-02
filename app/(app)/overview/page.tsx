@@ -10,7 +10,7 @@ import CensusPanel from "@/components/overview/CensusPanel";
 import { censusByFacility } from "@/lib/report/census";
 import { bucketByStatus, lastWorkedLabel } from "@/lib/report/statusBuckets";
 import { money } from "@/lib/format";
-import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility, isExcludedFacility } from "@/lib/claims";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import {
   RISK_AGE_THRESHOLD,
@@ -186,13 +186,12 @@ export default async function OverviewPage() {
 
   // Demo facilities (App Store review data) are hidden from all management
   // reporting so they never pollute real network numbers.
-  const facilities = ((facData as Facility[]) ?? []).filter(
-    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
-  );
+  const hiddenFacility = (f: Facility) =>
+    isDemoFacility(f.name) || isDemoFacility(f.short_name) ||
+    isExcludedFacility(f.name) || isExcludedFacility(f.short_name);
+  const facilities = ((facData as Facility[]) ?? []).filter((f) => !hiddenFacility(f));
   const demoFacilityIds = new Set(
-    ((facData as Facility[]) ?? [])
-      .filter((f) => isDemoFacility(f.name) || isDemoFacility(f.short_name))
-      .map((f) => f.id)
+    ((facData as Facility[]) ?? []).filter(hiddenFacility).map((f) => f.id)
   );
   // Excluded plans (e.g. VMAH member ids) and demo facilities are hidden from every total.
   const claims = (claimsData ?? []).filter(

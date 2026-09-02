@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
-import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility, isExcludedFacility } from "@/lib/claims";
 import { PRIORITY_AGE_THRESHOLD, RISK_AGE_THRESHOLD } from "@/lib/types";
 import { censusByFacility, type CensusLike } from "@/lib/report/census";
 import { easternToday } from "@/lib/report/eodSummary";
@@ -151,7 +151,9 @@ export async function computeChiefBrief(client: Admin): Promise<ChiefBrief> {
 
   // Demo facilities (App Store review data) never appear in the brief.
   const realFacilities = facilities.filter(
-    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+    (f) =>
+      !isDemoFacility(f.name) && !isDemoFacility(f.short_name) &&
+      !isExcludedFacility(f.name) && !isExcludedFacility(f.short_name)
   );
 
   const claims = claimsRaw.filter(
