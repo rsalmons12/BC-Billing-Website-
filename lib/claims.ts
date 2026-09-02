@@ -39,6 +39,17 @@ export function arBalance(balance: unknown): number {
   return Number.isFinite(b) && b > 0 ? b : 0;
 }
 
+// Facilities fully hidden from the working app — no reporting, no Queue, no
+// Collections/AR, no collector can be assigned or work their claims. Their data
+// is PRESERVED (they still exist in the database and Admin), just excluded from
+// every working/reporting surface. Matched by facility name or short name.
+export const EXCLUDED_FACILITY_PATTERNS: RegExp[] = [/\bkingsway\b/i, /\brenewed\b/i];
+export function isExcludedFacility(name: unknown): boolean {
+  const s = String(name ?? "");
+  if (!s.trim()) return false;
+  return EXCLUDED_FACILITY_PATTERNS.some((p) => p.test(s));
+}
+
 // Payers whose marketplace / exchange plans carry a high risk of
 // non-reimbursement. AR tied to these is flagged on the facility screen.
 export const RISK_PAYER_PATTERNS: RegExp[] = [

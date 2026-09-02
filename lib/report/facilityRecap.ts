@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { money } from "@/lib/format";
-import { arBalance, isExcludedMember, isRiskPayer, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isRiskPayer, isStaleClaim, isDemoFacility, isExcludedFacility } from "@/lib/claims";
 import { computeOutlooks, type FacilityOutlook } from "./moneyOutlook";
 import {
   facilityCensusCompare,
@@ -501,7 +501,9 @@ export async function computeFacilityRecaps(
     ]);
 
   const facilities = (only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll).filter(
-    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+    (f) =>
+      !isDemoFacility(f.name) && !isDemoFacility(f.short_name) &&
+      !isExcludedFacility(f.name) && !isExcludedFacility(f.short_name)
   );
   const claims = claimsRaw.filter(
     (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)

@@ -229,9 +229,13 @@ export default function QueueClient({
       supabase.from("assignments").select("*").range(f, t)
     );
 
+    // Only facilities the app still surfaces — hidden ones (Kingsway, Renewed)
+    // are stripped from `facilities`, so a collector never gets their claims
+    // even if an old assignment still points there.
+    const allowedFacIds = new Set(facilities.map((f) => f.id));
     const myFacilities = Array.from(
       new Set(asg.filter((a) => a.profile_id === collectorId).map((a) => a.facility_id))
-    );
+    ).filter((id) => id != null && allowedFacIds.has(id));
     if (myFacilities.length === 0) {
       setRows([]);
       setDiag({

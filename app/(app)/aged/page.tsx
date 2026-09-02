@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import AgedBubbles, { type AgedFacility } from "@/components/aged/AgedBubbles";
-import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility, isExcludedFacility } from "@/lib/claims";
 import type { Claim, Facility } from "@/lib/types";
 
 // Claims sitting this many days or longer are the aged bucket we surface here.
@@ -46,6 +46,8 @@ export default async function AgedPage() {
     if (isExcludedMember(c.member_id) || isStaleClaim(c.age_days)) continue;
     if ((c.age_days ?? 0) < AGED_MIN_DAYS) continue;
     const fac = nameById.get(c.facility_id);
+    // Hidden facilities (Kingsway, Renewed) are excluded for everyone.
+    if (fac && (isExcludedFacility(fac.name) || isExcludedFacility(fac.short_name))) continue;
     if (isManagementView && fac && (isDemoFacility(fac.name) || isDemoFacility(fac.short_name)))
       continue;
     const a = agg.get(c.facility_id) ?? { balance: 0, lines: 0 };

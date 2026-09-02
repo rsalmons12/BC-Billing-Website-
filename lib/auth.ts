@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isExcludedFacility } from "@/lib/claims";
 import type { Profile, Facility } from "@/lib/types";
 
 // Loads the authenticated user's profile. Redirects to /login if not signed in.
@@ -54,5 +55,10 @@ export async function accessibleFacilities(): Promise<Facility[]> {
     .from("facilities")
     .select("*")
     .order("name", { ascending: true });
-  return (data as Facility[]) ?? [];
+  // Hidden facilities (Kingsway, Renewed Light) are stripped from every
+  // collector-facing list — Collections/AR, Queue, Negotiations, Census, etc.
+  // (Admin loads facilities directly, so they stay manageable there.)
+  return ((data as Facility[]) ?? []).filter(
+    (f) => !isExcludedFacility(f.name) && !isExcludedFacility(f.short_name)
+  );
 }
