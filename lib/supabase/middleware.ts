@@ -10,6 +10,7 @@ export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const isPublic =
     path === "/login" ||
+    path === "/reset" || // password-reset landing (recovery link creates its own session)
     path.startsWith("/auth") ||
     path.startsWith("/api/cron") || // scheduled-email endpoints; secured by CRON_SECRET, NOT a login session — must not redirect to /login or the timer can never fire
     path === "/privacy" ||
