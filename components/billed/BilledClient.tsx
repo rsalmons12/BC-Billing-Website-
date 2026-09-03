@@ -32,7 +32,6 @@ const config: TrackerConfig = {
   renderSummary: (rows) => {
     const billed = rows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0);
     const ar = rows.reduce((s, r) => s + (Number(r.balance) || 0), 0);
-    const collected = billed - ar;
 
     // Outstanding (AR) grouped by payer, biggest first.
     const byPayer = new Map<string, number>();
@@ -46,11 +45,10 @@ const config: TrackerConfig = {
 
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-3 gap-3">
           <SumCard label="Claims" value={String(rows.length)} />
           <SumCard label="Billed" value={money(billed)} accent="gold" />
           <SumCard label="Outstanding (AR)" value={money(ar)} accent="risk" />
-          <SumCard label="Collected" value={money(collected)} accent="recovered" />
         </div>
         {payers.length > 0 && (
           <div>
