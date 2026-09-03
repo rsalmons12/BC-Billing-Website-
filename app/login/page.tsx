@@ -12,6 +12,30 @@ export default function LoginPage() {
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function onForgot() {
+    setError(null);
+    setNotice(null);
+    const addr = email.trim();
+    if (!addr) {
+      setError("Enter your email above first, then tap “Forgot password?”.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const supabase = createClient();
+      await supabase.auth.resetPasswordForEmail(addr, {
+        redirectTo: `${window.location.origin}/reset`,
+      });
+      // Always show the same message (don't reveal whether an account exists).
+      setNotice(`If an account exists for ${addr}, a password-reset link is on its way. Check your email.`);
+    } catch {
+      setNotice(`If an account exists for ${addr}, a password-reset link is on its way. Check your email.`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -135,6 +159,11 @@ export default function LoginPage() {
               {error}
             </p>
           )}
+          {notice && (
+            <p className="mb-4 rounded-lg bg-gold/10 px-3 py-2 text-sm text-command-text">
+              {notice}
+            </p>
+          )}
 
           <button
             type="submit"
@@ -142,6 +171,15 @@ export default function LoginPage() {
             className="w-full rounded-lg bg-gold px-3.5 py-2.5 text-sm font-semibold text-command transition hover:brightness-105 disabled:opacity-60"
           >
             {loading ? "Signing in…" : "Sign in"}
+          </button>
+
+          <button
+            type="button"
+            onClick={onForgot}
+            disabled={loading}
+            className="mt-3 w-full text-center text-xs font-semibold text-command-muted underline hover:text-command-text disabled:opacity-60"
+          >
+            Forgot password?
           </button>
         </form>
 
