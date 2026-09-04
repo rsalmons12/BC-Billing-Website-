@@ -107,6 +107,18 @@ const config: TrackerConfig = {
   importMode: "replace_period",
   // Month dropdown so prior months (e.g. June) stay viewable, not just current.
   monthFrom: "deposit_date",
+  // One line per patient (not every date of service). Search a name to look a
+  // patient up and see their total reimbursement.
+  collapseBy: {
+    key: "patient_name",
+    keyLabel: "Patient",
+    textKeys: [{ key: "payment_source", label: "Payer" }],
+    sumKeys: [
+      { key: "charge_amount", label: "Charged" },
+      { key: "paid_amount", label: "Collected" },
+    ],
+    countLabel: "DOS lines",
+  },
   renderSummary,
   columns: [
     { key: "patient_name", label: "Patient", kind: "text", min: "min-w-[11rem]" },

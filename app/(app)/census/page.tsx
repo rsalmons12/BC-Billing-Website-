@@ -10,7 +10,7 @@ export default async function CensusPage() {
   return (
     <>
       <Header profile={profile} email={email} subtitle="Weekly Census" />
-      <main className="min-h-0 flex-1 overflow-hidden">
+      <main className="min-h-0 flex-1 overflow-auto md:overflow-hidden">
         <CensusClient
           facilities={facilities}
           userId={profile.id}
