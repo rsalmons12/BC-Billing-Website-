@@ -569,7 +569,7 @@ export default function CensusClient({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-full flex-col md:h-full">
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-surface-card px-6 py-3">
         <select
@@ -718,8 +718,9 @@ export default function CensusClient({
         </div>
       )}
 
-      {/* grid */}
-      <div className="scroll-x min-h-0 flex-1 overflow-auto">
+      {/* grid — on phones the whole page scrolls (see the wrapping toolbar +
+          tallies eat the viewport); on desktop it stays a confined scroll pane */}
+      <div className="scroll-x md:min-h-0 md:flex-1 md:overflow-auto">
         {loading ? (
           <p className="p-8 text-center text-sm text-surface-muted">Loading census…</p>
         ) : weeks.length === 0 ? (

@@ -39,9 +39,17 @@ const config: TrackerConfig = {
       const p = String(r.payer_name || "—").trim() || "—";
       byPayer.set(p, (byPayer.get(p) ?? 0) + (Number(r.balance) || 0));
     }
-    const payers = Array.from(byPayer.entries())
+    const sorted = Array.from(byPayer.entries())
       .filter(([, v]) => v > 0)
       .sort((a, b) => b[1] - a[1]);
+
+    // Just the visual — top payers as a simple bar chart, the long tail rolled
+    // into "Other" so the summary stays a glance, not a wall of chips.
+    const TOP = 6;
+    const top = sorted.slice(0, TOP);
+    const restTotal = sorted.slice(TOP).reduce((s, [, v]) => s + v, 0);
+    const bars = restTotal > 0 ? [...top, ["Other payers", restTotal] as [string, number]] : top;
+    const max = bars.length ? Math.max(...bars.map(([, v]) => v)) : 0;
 
     return (
       <div className="space-y-3">
@@ -50,16 +58,27 @@ const config: TrackerConfig = {
           <SumCard label="Billed" value={money(billed)} accent="gold" />
           <SumCard label="Outstanding (AR)" value={money(ar)} accent="risk" />
         </div>
-        {payers.length > 0 && (
+        {bars.length > 0 && (
           <div>
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
               Outstanding AR by payer
             </div>
-            <div className="flex flex-wrap gap-2">
-              {payers.map(([p, v]) => (
-                <span key={p} className="badge bg-surface-card text-surface-muted">
-                  {p}: <b className="ml-1 text-surface-ink">{money(v)}</b>
-                </span>
+            <div className="space-y-1.5">
+              {bars.map(([p, v]) => (
+                <div key={p} className="flex items-center gap-3">
+                  <div className="w-32 shrink-0 truncate text-xs text-surface-muted" title={p}>
+                    {p}
+                  </div>
+                  <div className="h-4 flex-1 overflow-hidden rounded bg-surface">
+                    <div
+                      className="h-full rounded bg-brand-blue"
+                      style={{ width: `${max > 0 ? Math.max(4, (v / max) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="w-24 shrink-0 text-right text-xs font-semibold text-surface-ink">
+                    {money(v)}
+                  </div>
+                </div>
               ))}
             </div>
           </div>

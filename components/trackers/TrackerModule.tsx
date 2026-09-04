@@ -102,6 +102,19 @@ export interface TrackerConfig {
   // When set, rows are displayed sorted A–Z (case-insensitive) by this column,
   // e.g. "patient_name". Purely a display order; import/export are unaffected.
   defaultSortKey?: string;
+  // When set, the table collapses to ONE line per distinct `key` value (scoped
+  // per facility) instead of one row per record — e.g. Payments shows each
+  // patient once with their summed reimbursement, not every date of service.
+  // Search / month / facility / payer filters still apply to the underlying
+  // rows first, so you can look a patient up and see their total. Editing is
+  // disabled in this view (it's a read-only rollup).
+  collapseBy?: {
+    key: string;
+    keyLabel: string;
+    sumKeys: { key: string; label: string }[];
+    textKeys?: { key: string; label: string }[];
+    countLabel: string;
+  };
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -300,6 +313,72 @@ export default function TrackerModule({
     }
     return kept;
   }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView]);
+
+  // Collapsed rollup: one line per distinct key value (per facility). Sums the
+  // money columns and gathers a few text columns (distinct values). Built from
+  // the already-filtered rows so search/month/facility all narrow it first.
+  const collapsed = useMemo(() => {
+    const cb = config.collapseBy;
+    if (!cb) return [] as Array<{
+      gid: string;
+      facility_id: string | null;
+      label: string;
+      count: number;
+      sums: Record<string, number>;
+      texts: Record<string, string>;
+    }>;
+    const map = new Map<
+      string,
+      {
+        gid: string;
+        facility_id: string | null;
+        label: string;
+        count: number;
+        sums: Record<string, number>;
+        textSets: Record<string, Set<string>>;
+      }
+    >();
+    for (const r of filtered) {
+      const kv = String(r[cb.key] ?? "—").trim() || "—";
+      const gid = `${r.facility_id ?? ""}::${kv.toLowerCase()}`;
+      let g = map.get(gid);
+      if (!g) {
+        g = {
+          gid,
+          facility_id: r.facility_id,
+          label: kv,
+          count: 0,
+          sums: {},
+          textSets: {},
+        };
+        map.set(gid, g);
+      }
+      g.count += 1;
+      for (const sk of cb.sumKeys) {
+        const n = typeof r[sk.key] === "number" ? (r[sk.key] as number) : 0;
+        g.sums[sk.key] = (g.sums[sk.key] ?? 0) + n;
+      }
+      for (const tk of cb.textKeys ?? []) {
+        const val = String(r[tk.key] ?? "").trim();
+        if (val) (g.textSets[tk.key] ??= new Set()).add(val);
+      }
+    }
+    return Array.from(map.values())
+      .map((g) => ({
+        gid: g.gid,
+        facility_id: g.facility_id,
+        label: g.label,
+        count: g.count,
+        sums: g.sums,
+        texts: Object.fromEntries(
+          Object.entries(g.textSets).map(([k, set]) => {
+            const arr = Array.from(set);
+            return [k, arr.length > 2 ? `${arr.slice(0, 2).join(", ")} +${arr.length - 2}` : arr.join(", ")];
+          })
+        ),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  }, [filtered, config.collapseBy]);
 
   // Payer families present in the data, for the payer dropdown.
   const payerOptions = useMemo(() => {
@@ -521,7 +600,17 @@ export default function TrackerModule({
             </b>
           </span>
           <span className="text-surface-muted">
-            <b className="text-surface-ink">{filtered.length}</b> rows
+            {config.collapseBy ? (
+              <>
+                <b className="text-surface-ink">{collapsed.length}</b>{" "}
+                {config.collapseBy.keyLabel.toLowerCase()}s ·{" "}
+                <b className="text-surface-ink">{filtered.length}</b> lines
+              </>
+            ) : (
+              <>
+                <b className="text-surface-ink">{filtered.length}</b> rows
+              </>
+            )}
           </span>
           {isManagement && !readOnly && filtered.length > 0 && (
             <select
@@ -582,7 +671,77 @@ export default function TrackerModule({
         </div>
       )}
 
+      {/* collapsed rollup table (one line per key, e.g. per patient) */}
+      {config.collapseBy && (
+        <div className="scroll-x min-h-0 flex-1 overflow-auto">
+          <table className="w-full border-separate border-spacing-0 text-sm">
+            <thead className="sticky top-0 z-10 bg-surface">
+              <tr>
+                <th className="th sticky left-0 bg-surface">Facility</th>
+                <th className="th">{config.collapseBy.keyLabel}</th>
+                {(config.collapseBy.textKeys ?? []).map((t) => (
+                  <th key={t.key} className="th">
+                    {t.label}
+                  </th>
+                ))}
+                {config.collapseBy.sumKeys.map((s) => (
+                  <th key={s.key} className="th text-right">
+                    {s.label}
+                  </th>
+                ))}
+                <th className="th text-right">{config.collapseBy.countLabel}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td className="td py-10 text-center text-surface-muted" colSpan={99}>
+                    Loading…
+                  </td>
+                </tr>
+              )}
+              {!loading && collapsed.length === 0 && (
+                <tr>
+                  <td className="td py-10 text-center text-surface-muted" colSpan={99}>
+                    No rows yet. Use “Import Excel” to load your tracker.
+                  </td>
+                </tr>
+              )}
+              {!loading &&
+                collapsed.slice(0, RENDER_CAP).map((g, i) => (
+                  <tr key={g.gid} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>
+                    <td className="td sticky left-0 bg-inherit text-xs text-surface-muted">
+                      {facName(g.facility_id)}
+                    </td>
+                    <td className="td font-medium">{g.label}</td>
+                    {(config.collapseBy!.textKeys ?? []).map((t) => (
+                      <td key={t.key} className="td text-surface-muted">
+                        {g.texts[t.key] || "—"}
+                      </td>
+                    ))}
+                    {config.collapseBy!.sumKeys.map((s) => (
+                      <td key={s.key} className="td text-right font-mono">
+                        {money(g.sums[s.key] ?? 0)}
+                      </td>
+                    ))}
+                    <td className="td text-right font-mono text-surface-muted">{g.count}</td>
+                  </tr>
+                ))}
+              {!loading && collapsed.length > RENDER_CAP && (
+                <tr>
+                  <td className="td py-3 text-center text-xs text-surface-muted" colSpan={99}>
+                    Showing the first {RENDER_CAP} of {collapsed.length} — search a
+                    name to jump to a patient.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* table */}
+      {!config.collapseBy && (
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">
@@ -688,6 +847,7 @@ export default function TrackerModule({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
