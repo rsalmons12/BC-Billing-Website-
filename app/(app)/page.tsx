@@ -8,9 +8,7 @@ export default async function Home() {
   const { profile } = await requireProfile();
   if (profile.role === "pending") redirect("/pending");
   const tabs = tabsForProfile(profile);
-  // Facility logins land on their dashboard when they have it.
-  if (profile.role === "facility" && tabs.some((t) => t.href === "/facility")) {
-    redirect("/facility");
-  }
+  // Everyone lands on the Network Overview dashboard when they can see it.
+  if (tabs.some((t) => t.href === "/overview")) redirect("/overview");
   redirect(tabs[0]?.href ?? "/pending");
 }

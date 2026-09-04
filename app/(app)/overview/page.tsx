@@ -1,543 +1,370 @@
 import { redirect } from "next/navigation";
-import { requireProfile } from "@/lib/auth";
+import { requireProfile, accessibleFacilities } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
-import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
-import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
-import FacilityRecapButtons from "@/components/overview/FacilityRecapButtons";
-import CensusPanel from "@/components/overview/CensusPanel";
-import { censusByFacility } from "@/lib/report/census";
-import { bucketByStatus, lastWorkedLabel } from "@/lib/report/statusBuckets";
+import RecapActions from "@/components/overview/RecapActions";
+import FacilityPicker from "@/components/overview/FacilityPicker";
 import { money } from "@/lib/format";
-import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility, isExcludedFacility } from "@/lib/claims";
-import { computeOutlooks } from "@/lib/report/moneyOutlook";
-import {
-  RISK_AGE_THRESHOLD,
-  PRIORITY_AGE_THRESHOLD,
-  type Claim,
-  type AuthIssue,
-  type Facility,
-} from "@/lib/types";
+import { periodOf } from "@/lib/import/parseTrackers";
+import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
+import { statusPayerName } from "@/lib/payer";
+import type { Claim, Payment, BilledClaim, Authorization, AuthIssue, Facility } from "@/lib/types";
 
-// Allow this data-heavy page more than the default 10s so a slow fetch returns
-// a real page instead of a hard 504 ("can't load") on a mobile connection.
-export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
-// First day of the month N months back, as { ym: "YYYY-MM", date: "YYYY-MM-01" }.
-// Used to bound the biggest tables (payments, billed) to recent months — the
-// Money Outlook only compares the current vs prior month, so older rows are dead
-// weight that slows the page.
-function monthsBack(n: number): { ym: string; date: string } {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - n);
-  const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  return { ym, date: `${ym}-01` };
-}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const num = (v: any) => (typeof v === "number" ? v : Number(v) || 0);
+const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const pct = (cur: number, prev: number) =>
+  prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
 
-// Never let one slow/failed query take down the whole overview.
-async function safe<T>(p: Promise<T[]>): Promise<T[]> {
-  try {
-    return await p;
-  } catch {
-    return [];
-  }
-}
-
-// Narrow row shapes for the Money Outlook fetches (only the columns it needs).
-type PayRow = {
-  facility_id: string | null;
-  paid_amount: number | null;
-  payment_source: string | null;
-  period: string | null;
-  deposit_date: string | null;
-  cpt_description: string | null;
-  dos_from: string | null;
-  patient_name: string | null;
-};
-type BilledRow = {
-  facility_id: string | null;
-  total_amount: number | null;
-  period: string | null;
-  loc_units: Record<string, number> | null;
-  patient_name: string | null;
-};
-type AuthRow = {
-  facility_id: string | null;
-  discharged: boolean | null;
-  discharge_date: string | null;
-  next_review_date: string | null;
-  created_at: string | null;
-};
-type CensusRow = {
-  facility_id: string | null;
-  level_of_care: string | null;
-  week_start: string | null;
-  gn_rate: number | null;
-  patient_name: string | null;
-  days: Record<string, string> | null;
-  admit_date: string | null;
-};
-type RepriceRow = {
-  facility_id: string | null;
-  total_amount: number | null;
-  amount_paid: number | null;
-  claim_status: string | null;
-};
-
-// Age band helpers. 100+ is the top priority tier; 65–99 is the risk band.
-const isPriority = (c: Claim) => (c.age_days ?? 0) >= PRIORITY_AGE_THRESHOLD;
-const isRisk65 = (c: Claim) =>
-  (c.age_days ?? 0) > RISK_AGE_THRESHOLD && (c.age_days ?? 0) < PRIORITY_AGE_THRESHOLD;
-
-export default async function OverviewPage() {
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: { facility?: string };
+}) {
   const { profile, email } = await requireProfile();
-  if (profile.role !== "management") redirect("/");
+  if (profile.role === "pending") redirect("/pending");
+  const isManagement = profile.role === "management";
 
   const supabase = createClient();
-  // Money Outlook only needs the current + prior month; bound the two biggest,
-  // fastest-growing tables to the last 5 months so the page doesn't drag the
-  // whole history (payments alone is ~80k rows) into every load.
-  const recent = monthsBack(5);
-  const [
-    { data: facData },
-    claimsData,
-    issuesData,
-    paymentsData,
-    billedData,
-    authsData,
-    censusData,
-    repricingData,
-    claimWorkData,
-  ] = await Promise.all([
-    supabase.from("facilities").select("*").order("name"),
-    // Only the columns the Overview actually uses — much smaller payload than
-    // select("*") over every open claim, so the page loads far faster.
-    selectAll<Claim>(
-      (f, t) =>
-        supabase
-          .from("claims")
-          .select(
-            "claim_id,facility_id,patient_name,member_id,dos_from,dos_to,charge_amount,balance,age_days,claim_status"
-          )
-          .eq("present", true)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .range(f, t) as any
+  const facilitiesAll = await accessibleFacilities();
+  const facilities = facilitiesAll.filter(
+    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+  );
+
+  // Optional single-facility scope (management/staff can pick one).
+  const picked =
+    searchParams.facility && facilities.some((f) => f.id === searchParams.facility)
+      ? searchParams.facility
+      : "all";
+  const scopedFacilities = picked === "all" ? facilities : facilities.filter((f) => f.id === picked);
+  const facIds = new Set(scopedFacilities.map((f) => f.id));
+  const inScope = <T extends { facility_id?: string | null }>(rows: T[]): T[] =>
+    rows.filter((r) => r.facility_id != null && facIds.has(r.facility_id));
+
+  const safeAll = <T,>(
+    build: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>
+  ) => selectAll<T>(build as never).catch(() => [] as T[]);
+
+  const [claimsRaw, paymentsRaw, billedRaw, authsRaw, issuesRaw] = await Promise.all([
+    safeAll<Claim>((f, t) =>
+      supabase.from("claims").select("*").eq("present", true).range(f, t)
     ),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    selectAll<AuthIssue>(
-      (f, t) =>
-        supabase.from("auth_issues").select("facility_id").neq("status", "Completed").range(f, t) as any
-    ),
-    safe(
-      selectAll<PayRow>((f, t) =>
-        supabase
-          .from("payments")
-          .select(
-            "facility_id,paid_amount,payment_source,period,deposit_date,cpt_description,dos_from,patient_name"
-          )
-          // Recent months only. A row counts if EITHER its period (YYYY-MM) or
-          // its deposit date is on/after the cutoff; older rows don't affect the
-          // current-vs-prior-month outlook.
-          .or(`period.gte.${recent.ym},deposit_date.gte.${recent.date}`)
-          .range(f, t)
-      )
-    ),
-    safe(
-      selectAll<BilledRow>((f, t) =>
-        supabase
-          .from("billed_claims")
-          .select("facility_id,total_amount,period,loc_units,patient_name")
-          .gte("period", recent.ym)
-          .range(f, t)
-      )
-    ),
-    safe(
-      selectAll<AuthRow>((f, t) =>
-        supabase
-          .from("authorizations")
-          .select("facility_id,discharged,discharge_date,next_review_date,created_at")
-          .range(f, t)
-      )
-    ),
-    safe(
-      selectAll<CensusRow>((f, t) =>
-        supabase
-          .from("census")
-          .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,admit_date")
-          .range(f, t)
-      )
-    ),
-    safe(
-      selectAll<RepriceRow>((f, t) =>
-        supabase
-          .from("repricing")
-          .select("facility_id,total_amount,amount_paid,claim_status")
-          .range(f, t)
-      )
-    ),
-    safe(
-      selectAll<{ claim_id: string | null; date_worked: string | null }>((f, t) =>
-        supabase.from("claim_work").select("claim_id,date_worked").range(f, t)
-      )
-    ),
+    safeAll<Payment>((f, t) => supabase.from("payments").select("*").range(f, t)),
+    safeAll<BilledClaim>((f, t) => supabase.from("billed_claims").select("*").range(f, t)),
+    safeAll<Authorization>((f, t) => supabase.from("authorizations").select("*").range(f, t)),
+    safeAll<AuthIssue>((f, t) => supabase.from("auth_issues").select("*").range(f, t)),
   ]);
 
-  // Demo facilities (App Store review data) are hidden from all management
-  // reporting so they never pollute real network numbers.
-  const hiddenFacility = (f: Facility) =>
-    isDemoFacility(f.name) || isDemoFacility(f.short_name) ||
-    isExcludedFacility(f.name) || isExcludedFacility(f.short_name);
-  const facilities = ((facData as Facility[]) ?? []).filter((f) => !hiddenFacility(f));
-  const demoFacilityIds = new Set(
-    ((facData as Facility[]) ?? []).filter(hiddenFacility).map((f) => f.id)
+  const claims = inScope(claimsRaw).filter(
+    (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
   );
-  // Excluded plans (e.g. VMAH member ids) and demo facilities are hidden from every total.
-  const claims = (claimsData ?? []).filter(
-    (c) =>
-      !isExcludedMember(c.member_id) &&
-      !isStaleClaim(c.age_days) &&
-      !(c.facility_id && demoFacilityIds.has(c.facility_id))
-  );
-  const issues = issuesData ?? [];
+  const payments = inScope(paymentsRaw);
+  const billed = inScope(billedRaw);
+  const auths = inScope(authsRaw);
+  const issues = inScope(issuesRaw);
 
-  // claim_id → last date_worked, for status buckets + 14-day work coverage.
-  const workedByClaim = new Map<string, string>();
-  for (const w of (claimWorkData ?? []) as { claim_id: string | null; date_worked: string | null }[]) {
-    if (w.claim_id && w.date_worked) workedByClaim.set(w.claim_id, w.date_worked);
+  // ---- Month keys ----
+  const now = new Date();
+  const thisKey = ymOf(now);
+  const lastDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastKey = ymOf(lastDate);
+  const monthLabel = now.toLocaleString("en-US", { month: "short", year: "numeric" });
+  const lastLabel = lastDate.toLocaleString("en-US", { month: "short", year: "numeric" });
+
+  const bilMonth = (b: BilledClaim) => b.period || periodOf(b.entered_date ?? "");
+  const payMonth = (p: Payment) =>
+    periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "");
+
+  const billedThisRows = billed.filter((b) => bilMonth(b) === thisKey);
+  const billedLastRows = billed.filter((b) => bilMonth(b) === lastKey);
+  const totalBilled = billedThisRows.reduce((s, b) => s + num(b.total_amount), 0);
+  const totalBilledLast = billedLastRows.reduce((s, b) => s + num(b.total_amount), 0);
+  const totalCollected = payments
+    .filter((p) => payMonth(p) === thisKey)
+    .reduce((s, p) => s + num(p.paid_amount), 0);
+  const totalCollectedLast = payments
+    .filter((p) => payMonth(p) === lastKey)
+    .reduce((s, p) => s + num(p.paid_amount), 0);
+  const collectionRate =
+    totalBilled > 0 ? totalCollected / totalBilled : totalCollected > 0 ? 1 : 0;
+  const totalAR = claims.reduce((s, c) => s + arBalance(c.balance), 0);
+
+  // ---- Authorizations (current auth per patient) ----
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+  const pAuthDate = (v: unknown) => {
+    const t = Date.parse(String(v ?? ""));
+    if (isNaN(t)) return null;
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+  const authRecency = (a: Authorization) => {
+    const ds = [a.start_date, a.admit_date].map(pAuthDate).filter(Boolean) as Date[];
+    if (ds.length) return Math.max(...ds.map((d) => d.getTime()));
+    const c = Date.parse(a.created_at || "");
+    return isNaN(c) ? 0 : c;
+  };
+  const authIsOut = (a: Authorization) => {
+    if (a.discharged) return true;
+    const dd = pAuthDate(a.discharge_date);
+    return dd != null && dd.getTime() <= today0.getTime();
+  };
+  const currentAuth = new Map<string, Authorization>();
+  for (const a of auths) {
+    const key = `${(a.patient_name ?? "").trim().toLowerCase()}|${a.facility_id ?? ""}`;
+    if (!key.replace("|", "").trim()) continue;
+    const cur = currentAuth.get(key);
+    if (!cur || authRecency(a) > authRecency(cur)) currentAuth.set(key, a);
   }
-  // Network-wide AR by payer + status (e.g. "Horizon · Claim At").
-  const statusBuckets = bucketByStatus(
-    claims.map((c) => ({ claim_id: c.claim_id, claim_status: c.claim_status, balance: c.balance })),
-    workedByClaim
-  ).slice(0, 20);
-  // Per-facility work coverage: of all active claims, how many worked in 14 days.
-  const worked14Cutoff = Date.now() - 14 * 86400000;
-  const isWorked14 = (claimId: string | null | undefined): boolean => {
-    const dw = claimId ? workedByClaim.get(claimId) : null;
-    if (!dw) return false;
-    const t = Date.parse(dw);
-    return !isNaN(t) && t >= worked14Cutoff;
-  };
+  const activeAuths = Array.from(currentAuth.values()).filter((a) => !authIsOut(a));
+  const activeAuthCount = activeAuths.length;
+  const authDue = activeAuths.filter((a) => {
+    const d = pAuthDate(a.next_review_date);
+    return d != null && d.getTime() <= today0.getTime();
+  }).length;
+  const openAuthIssues = issues.filter((i) => !/complete/i.test(i.status ?? "")).length;
 
-  const facName = (id: string) => {
-    const f = facilities.find((x) => x.id === id);
-    return f?.short_name || f?.name || "—";
-  };
+  // ---- Snapshot metrics ----
+  const agedAR = claims
+    .filter((c) => (c.age_days ?? 0) >= 60)
+    .reduce((s, c) => s + arBalance(c.balance), 0);
+  const payerUnknownAR = claims
+    .filter((c) => !statusPayerName(c.claim_status))
+    .reduce((s, c) => s + arBalance(c.balance), 0);
 
-  // Per-facility aggregation, split into the 100+ and 65–99 bands.
-  type Agg = {
-    id: string;
-    name: string;
-    charged: number;
-    balance: number;
-    recovered: number;
-    pri100Count: number;
-    pri100Balance: number;
-    risk65Count: number;
-    risk65Balance: number;
-    openIssues: number;
-    claimCount: number;
-    worked14: number;
-  };
-  const aggMap: Record<string, Agg> = {};
-  for (const f of facilities) {
-    aggMap[f.id] = {
-      id: f.id,
-      name: f.short_name || f.name,
-      charged: 0,
-      balance: 0,
-      recovered: 0,
-      pri100Count: 0,
-      pri100Balance: 0,
-      risk65Count: 0,
-      risk65Balance: 0,
-      openIssues: 0,
-      claimCount: 0,
-      worked14: 0,
-    };
-  }
+  // Payer concentration of AR (mix health).
+  const arByPayer = new Map<string, number>();
   for (const c of claims) {
-    const a = aggMap[c.facility_id];
-    if (!a) continue;
-    a.charged += c.charge_amount ?? 0;
-    a.balance += arBalance(c.balance);
-    a.claimCount++;
-    if (isWorked14(c.claim_id)) a.worked14++;
-    if (isPriority(c)) {
-      a.pri100Count++;
-      a.pri100Balance += arBalance(c.balance);
-    } else if (isRisk65(c)) {
-      a.risk65Count++;
-      a.risk65Balance += arBalance(c.balance);
-    }
+    const p = statusPayerName(c.claim_status) || "Unknown";
+    arByPayer.set(p, (arByPayer.get(p) ?? 0) + arBalance(c.balance));
   }
-  for (const a of Object.values(aggMap)) a.recovered = a.charged - a.balance;
-  for (const i of issues) {
-    if (i.facility_id && aggMap[i.facility_id]) aggMap[i.facility_id].openIssues++;
-  }
-  const aggs = Object.values(aggMap).sort((a, b) => b.balance - a.balance);
+  const topShare =
+    totalAR > 0 ? Math.max(0, ...Array.from(arByPayer.values())) / totalAR : 0;
+  const mixHealth = topShare <= 0.45 ? "Diversified" : topShare <= 0.65 ? "Balanced" : "Concentrated";
 
-  // Network totals.
-  const totals = aggs.reduce(
-    (s, a) => ({
-      charged: s.charged + a.charged,
-      balance: s.balance + a.balance,
-      recovered: s.recovered + a.recovered,
-      pri100Count: s.pri100Count + a.pri100Count,
-      pri100Balance: s.pri100Balance + a.pri100Balance,
-      risk65Count: s.risk65Count + a.risk65Count,
-      risk65Balance: s.risk65Balance + a.risk65Balance,
-      openIssues: s.openIssues + a.openIssues,
-    }),
-    {
-      charged: 0, balance: 0, recovered: 0,
-      pri100Count: 0, pri100Balance: 0,
-      risk65Count: 0, risk65Balance: 0, openIssues: 0,
+  // ---- Level-of-care sessions this vs last month (from billed loc_units) ----
+  const LOC_ORDER = ["PHP", "IOP", "OP", "SUD"];
+  const locAgg = (rows: BilledClaim[]) => {
+    const sess: Record<string, number> = {};
+    const clients: Record<string, Set<string>> = {};
+    for (const b of rows) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lu = (b as any).loc_units as Record<string, number> | null;
+      if (!lu) continue;
+      const name = String(b.patient_name ?? "").trim().toLowerCase();
+      for (const [loc, u] of Object.entries(lu)) {
+        sess[loc] = (sess[loc] ?? 0) + (Number(u) || 0);
+        (clients[loc] ??= new Set()).add(name);
+      }
     }
-  );
+    return { sess, clients };
+  };
+  const curLoc = locAgg(billedThisRows);
+  const priorLoc = locAgg(billedLastRows);
+  const locKeys = [
+    ...LOC_ORDER.filter((k) => k in curLoc.sess || k in priorLoc.sess),
+    ...Object.keys({ ...curLoc.sess, ...priorLoc.sess }).filter((k) => !LOC_ORDER.includes(k)),
+  ];
+  const locRows = locKeys.map((k) => ({
+    loc: k,
+    cur: curLoc.sess[k] ?? 0,
+    prior: priorLoc.sess[k] ?? 0,
+    clientsCur: curLoc.clients[k]?.size ?? 0,
+    clientsPrior: priorLoc.clients[k]?.size ?? 0,
+  }));
+  const locTotal = {
+    cur: locRows.reduce((s, r) => s + r.cur, 0),
+    prior: locRows.reduce((s, r) => s + r.prior, 0),
+    clientsCur: locRows.reduce((s, r) => s + r.clientsCur, 0),
+    clientsPrior: locRows.reduce((s, r) => s + r.clientsPrior, 0),
+  };
 
-  // Money Outlook — month-over-month forecast with the reasons behind it.
-  const outlooks = computeOutlooks({
-    facilities: facilities.map((f) => ({
-      id: f.id,
-      name: f.name,
-      short_name: f.short_name,
-    })),
-    payments: paymentsData,
-    billed: billedData,
-    claims,
-    auths: authsData,
-    census: censusData,
-    repricing: repricingData,
-  });
+  const billedPct = pct(totalBilled, totalBilledLast);
+  const doingWell = collectionRate >= 0.9 && openAuthIssues === 0;
+  const heroThird = collectionRate >= 0.9 ? "Ahead of the Curve." : "On the Right Track.";
 
-  // Current-week census per facility (patients, missed groups, missed revenue).
-  const censusSummaries = censusByFacility(
-    facilities.map((f) => f.id),
-    censusData
-  );
-
-  const byBalance = (a: Claim, b: Claim) => (b.balance ?? 0) - (a.balance ?? 0);
-  const worst100 = claims.filter(isPriority).sort(byBalance).slice(0, 30);
-  const worst65 = claims.filter(isRisk65).sort(byBalance).slice(0, 30);
-
-  const toExport = (list: Claim[]): ExportRow[] =>
-    list.map((c) => ({
-      Facility: facName(c.facility_id),
-      "Claim ID": c.claim_id,
-      Patient: c.patient_name ?? "",
-      "Member ID": c.member_id ?? "",
-      "DOS From": c.dos_from ?? "",
-      "DOS To": c.dos_to ?? "",
-      "Age (Days)": c.age_days ?? 0,
-      Charge: c.charge_amount ?? 0,
-      Balance: c.balance ?? 0,
-      Status: c.claim_status ?? "",
-    }));
-  const export100 = toExport(claims.filter(isPriority).sort(byBalance));
-  const export65 = toExport(claims.filter(isRisk65).sort(byBalance));
+  const pickerFacilities = facilities.map((f) => ({ id: f.id, label: f.short_name || f.name }));
 
   return (
     <>
       <Header profile={profile} email={email} subtitle="Network Overview" />
-      <main className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="mx-auto max-w-7xl space-y-6">
-          {/* Facility daily-recap controls (also runs automatically 5:30 PM ET) */}
-          <section className="card flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-            <div className="text-sm text-surface-muted">
-              Facilities get this recap automatically every day at 5:30 PM ET.
+      <main className="min-w-0 flex-1 overflow-auto">
+        <div className="mx-auto max-w-6xl space-y-5 p-5">
+          {/* Banner (management only) */}
+          {isManagement && (
+            <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-surface-ink">
+                <span className="text-recovered">✔</span>
+                {doingWell
+                  ? "Your facilities are performing great. Keep up the excellent work!"
+                  : "Here's where your facilities stand this month."}
+              </div>
+              <RecapActions />
             </div>
-            <FacilityRecapButtons />
-          </section>
-
-          {/* Network totals */}
-          <section className="grid grid-cols-2 gap-4 md:grid-cols-6">
-            <Stat label="Charged" value={money(totals.charged)} />
-            <Stat label="Recovered" value={money(totals.recovered)} accent="recovered" />
-            <Stat label="Outstanding" value={money(totals.balance)} accent="gold" />
-            <Stat label="100+ Priority" value={String(totals.pri100Count)} accent="risk" />
-            <Stat label="65–99 Risk" value={String(totals.risk65Count)} accent="gold" />
-            <Stat label="Open Auth Issues" value={String(totals.openIssues)} accent="secured" />
-          </section>
-
-          {/* Money Outlook — why revenue is improving or declining */}
-          <MoneyOutlookPanel outlooks={outlooks} />
-
-          {/* Facility census — current week: patients, missed groups, missed rev */}
-          <CensusPanel summaries={censusSummaries} facName={facName} />
-
-          {/* AR by status — payer + status action, with 14-day work coverage */}
-          {statusBuckets.length > 0 && (
-            <section className="card overflow-hidden">
-              <div className="border-b border-surface-border px-5 py-3 font-semibold">
-                AR by Status
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[40rem] text-sm">
-                  <thead>
-                    <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wide text-surface-muted">
-                      <th className="px-5 py-2">Status</th>
-                      <th className="px-3 py-2 text-right">Claims</th>
-                      <th className="px-3 py-2 text-right">Balance</th>
-                      <th className="px-5 py-2 text-right">Last worked</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {statusBuckets.map((b) => (
-                      <tr key={b.key} className="border-b border-surface-border last:border-0">
-                        <td className="px-5 py-2 font-medium">{b.label}</td>
-                        <td className="px-3 py-2 text-right font-mono">{b.count}</td>
-                        <td className="px-3 py-2 text-right font-mono font-semibold">
-                          {money(b.balance)}
-                        </td>
-                        <td className="px-5 py-2 text-right text-surface-muted">
-                          {lastWorkedLabel(b.lastWorked)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
           )}
 
-          {/* Work coverage — of each facility's claims, how many worked in 14 days */}
-          <section className="card overflow-hidden">
-            <div className="border-b border-surface-border px-5 py-3 font-semibold">
-              Work Coverage · last 14 days
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[36rem] text-sm">
-                <thead>
-                  <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wide text-surface-muted">
-                    <th className="px-5 py-2">Facility</th>
-                    <th className="px-3 py-2 text-right">Claims</th>
-                    <th className="px-3 py-2 text-right">Worked (14d)</th>
-                    <th className="px-5 py-2 text-right">Coverage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {aggs
-                    .filter((a) => a.claimCount > 0)
-                    .map((a) => {
-                      const pct = Math.round((a.worked14 / a.claimCount) * 100);
-                      return (
-                        <tr key={a.id} className="border-b border-surface-border last:border-0">
-                          <td className="px-5 py-2 font-medium">{a.name}</td>
-                          <td className="px-3 py-2 text-right font-mono">{a.claimCount}</td>
-                          <td className="px-3 py-2 text-right font-mono">{a.worked14}</td>
-                          <td
-                            className={`px-5 py-2 text-right font-mono font-semibold ${
-                              pct >= 50 ? "text-recovered" : pct >= 25 ? "text-gold" : "text-risk"
-                            }`}
-                          >
-                            {pct}%
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+          {/* Top KPIs */}
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <Kpi label="Total Billed" value={money(totalBilled)} sub={monthLabel} accent="command" />
+            <Kpi label="Total Collected" value={money(totalCollected)} sub={monthLabel} accent="recovered" />
+            <Kpi
+              label="Collection Rate"
+              value={`${(collectionRate * 100).toFixed(1)}%`}
+              sub={monthLabel}
+              accent="secured"
+            />
+            <Kpi label="Total Outstanding" value={money(totalAR)} sub="Across facilities" accent="gold" />
+            <Kpi
+              label="Active Authorizations"
+              value={activeAuthCount.toLocaleString()}
+              sub={authDue > 0 ? `${authDue} due for review` : "Up to date"}
+              accent="command"
+            />
+            <Kpi
+              label="Open Auth Issues"
+              value={openAuthIssues.toLocaleString()}
+              sub={openAuthIssues === 0 ? "All caught up" : "Need attention"}
+              accent={openAuthIssues === 0 ? "recovered" : "risk"}
+            />
           </section>
 
-          {/* 100+ priority panel */}
-          <RiskPanel
-            title="Priority · 100+ Days"
-            accent="risk"
-            count={totals.pri100Count}
-            balance={totals.pri100Balance}
-            rows={worst100}
-            facName={facName}
-            emptyMsg="No claims 100+ days. 🎉"
-            exportRows={export100}
-            exportName="priority-100day.xlsx"
-            exportSheet="Priority 100+"
-            exportLabel="Export 100+ to Excel"
-          />
-
-          {/* 65–99 risk panel */}
-          <RiskPanel
-            title="Risk · 65–99 Days"
-            accent="gold"
-            count={totals.risk65Count}
-            balance={totals.risk65Balance}
-            rows={worst65}
-            facName={facName}
-            emptyMsg="No claims in the 65–99 day band. 🎉"
-            exportRows={export65}
-            exportName="risk-65to99day.xlsx"
-            exportSheet="Risk 65-99"
-            exportLabel="Export 65–99 to Excel"
-          />
-
-          {/* Per-facility table */}
-          <section className="card overflow-hidden">
-            <div className="border-b border-surface-border px-5 py-3 font-semibold">
-              Per-Facility Breakdown
+          {/* Performance Snapshot */}
+          <section className="card p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="font-display text-lg font-bold">Performance Snapshot</div>
+                <div className="text-xs text-surface-muted">
+                  {monthLabel} vs {lastLabel}
+                </div>
+              </div>
+              <FacilityPicker facilities={pickerFacilities} value={picked} />
             </div>
-            <div className="scroll-x overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-surface">
-                  <tr>
-                    <th className="th">Facility</th>
-                    <th className="th text-right">Charged</th>
-                    <th className="th text-right">Recovered</th>
-                    <th className="th text-right">Outstanding</th>
-                    <th className="th text-right">100+</th>
-                    <th className="th text-right">65–99</th>
-                    <th className="th text-right">Open Issues</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {aggs.map((a, idx) => (
-                    <tr key={a.id} className={idx % 2 ? "bg-surface/40" : ""}>
-                      <td className="td font-medium">{a.name}</td>
-                      <td className="td text-right font-mono">{money(a.charged)}</td>
-                      <td className="td text-right font-mono text-recovered">
-                        {money(a.recovered)}
-                      </td>
-                      <td className="td text-right font-mono">{money(a.balance)}</td>
-                      <td className="td text-right">
-                        {a.pri100Count > 0 ? (
-                          <span className="font-bold text-risk">{a.pri100Count}</span>
-                        ) : (
-                          <span className="text-surface-muted">0</span>
-                        )}
-                      </td>
-                      <td className="td text-right">
-                        {a.risk65Count > 0 ? (
-                          <span className="font-semibold text-gold">{a.risk65Count}</span>
-                        ) : (
-                          <span className="text-surface-muted">0</span>
-                        )}
-                      </td>
-                      <td className="td text-right">
-                        {a.openIssues > 0 ? (
-                          <span className="font-semibold text-secured">{a.openIssues}</span>
-                        ) : (
-                          <span className="text-surface-muted">0</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-surface-border bg-surface font-semibold">
-                    <td className="td">Network total</td>
-                    <td className="td text-right font-mono">{money(totals.charged)}</td>
-                    <td className="td text-right font-mono text-recovered">
-                      {money(totals.recovered)}
-                    </td>
-                    <td className="td text-right font-mono">{money(totals.balance)}</td>
-                    <td className="td text-right text-risk">{totals.pri100Count}</td>
-                    <td className="td text-right text-gold">{totals.risk65Count}</td>
-                    <td className="td text-right text-secured">{totals.openIssues}</td>
-                  </tr>
-                </tfoot>
-              </table>
+
+            <div className="grid gap-5 lg:grid-cols-[1fr_2fr]">
+              {/* Hero */}
+              <div className="flex flex-col justify-center">
+                <div className="font-display text-2xl font-extrabold leading-tight text-surface-ink">
+                  On Track.
+                  <br />
+                  On Point.
+                  <br />
+                  <span className="text-command">{heroThird}</span>
+                </div>
+                <p className="mt-3 text-sm text-surface-muted">
+                  {billedPct != null && billedPct >= 0
+                    ? "Billing is up and collections are landing — the team keeps your revenue moving forward."
+                    : "Steady performance across the board — the team keeps your revenue moving forward."}
+                </p>
+              </div>
+
+              {/* Snapshot cards */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Snap
+                  label="Billed (Pipeline)"
+                  value={money(totalBilled)}
+                  delta={billedPct}
+                  deltaLabel="vs last month"
+                />
+                <Snap
+                  label="Collections Aging (60+)"
+                  value={money(agedAR)}
+                  note={totalAR > 0 ? `${Math.round((agedAR / totalAR) * 100)}% of AR` : "—"}
+                />
+                <SnapLabel label="Payer Mix Health" value={mixHealth} note="AR spread across payers" />
+                <Snap
+                  label="Payer Unknown"
+                  value={money(payerUnknownAR)}
+                  note={totalAR > 0 ? `${Math.round((payerUnknownAR / totalAR) * 100)}% of AR` : "—"}
+                />
+                <Snap
+                  label="Authorization Pipeline"
+                  value={authDue.toLocaleString()}
+                  note="due for review"
+                />
+                <SnapLabel
+                  label="Level-of-Care Mix"
+                  value={locTotal.cur > 0 ? "Optimal" : "—"}
+                  note="Higher acuity. Higher value."
+                />
+              </div>
+            </div>
+
+            {/* Services billed by level of care */}
+            {locRows.length > 0 && (
+              <div className="mt-6">
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                  Services billed by level of care · {monthLabel} vs {lastLabel}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-surface-muted">
+                        <th className="th">Level of Care</th>
+                        <th className="th text-right">Services · {monthLabel}</th>
+                        <th className="th text-right">Services · {lastLabel}</th>
+                        <th className="th text-center">Trend</th>
+                        <th className="th text-right">Clients (this / last)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {locRows.map((r) => (
+                        <tr key={r.loc} className="border-t border-surface-border">
+                          <td className="td font-semibold">{r.loc}</td>
+                          <td className="td text-right font-mono">{r.cur}</td>
+                          <td className="td text-right font-mono text-surface-muted">{r.prior}</td>
+                          <td className="td text-center">
+                            {r.cur > r.prior ? (
+                              <span className="text-recovered">▲</span>
+                            ) : r.cur < r.prior ? (
+                              <span className="text-risk">▼</span>
+                            ) : (
+                              <span className="text-surface-muted">—</span>
+                            )}
+                          </td>
+                          <td className="td text-right font-mono">
+                            {r.clientsCur} / {r.clientsPrior}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-surface-border font-semibold">
+                        <td className="td">TOTAL</td>
+                        <td className="td text-right font-mono">{locTotal.cur}</td>
+                        <td className="td text-right font-mono text-surface-muted">{locTotal.prior}</td>
+                        <td className="td text-center">
+                          {locTotal.cur >= locTotal.prior ? (
+                            <span className="text-recovered">▲</span>
+                          ) : (
+                            <span className="text-risk">▼</span>
+                          )}
+                        </td>
+                        <td className="td text-right font-mono">
+                          {locTotal.clientsCur} / {locTotal.clientsPrior}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Brand footer */}
+          <section className="rounded-xl bg-command p-5 text-command-text">
+            <div className="font-display text-lg font-extrabold">
+              SUPERIOR INSIGHTS. <span className="text-brand-blue">STRONGER RESULTS.</span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4 text-xs md:grid-cols-4">
+              <Value title="Real-Time Visibility" body="Live data. Clear trends. Smarter decisions." />
+              <Value title="Revenue Focused" body="Maximizing collections. Minimizing leakage." />
+              <Value title="Dedicated" body="Your team, on your revenue, every day." />
+              <Value title="Better Outcomes" body="Healthier revenue cycle. Stronger bottom line." />
+            </div>
+            <div className="mt-3 text-sm italic text-command-muted">
+              We don&apos;t just manage revenue. We maximize it.
             </div>
           </section>
         </div>
@@ -546,108 +373,81 @@ export default async function OverviewPage() {
   );
 }
 
-function RiskPanel({
-  title,
-  accent,
-  count,
-  balance,
-  rows,
-  facName,
-  emptyMsg,
-  exportRows,
-  exportName,
-  exportSheet,
-  exportLabel,
-}: {
-  title: string;
-  accent: "risk" | "gold";
-  count: number;
-  balance: number;
-  rows: Claim[];
-  facName: (id: string) => string;
-  emptyMsg: string;
-  exportRows: ExportRow[];
-  exportName: string;
-  exportSheet: string;
-  exportLabel: string;
-}) {
-  const text = accent === "risk" ? "text-risk" : "text-gold";
-  const bg = accent === "risk" ? "bg-risk/5" : "bg-gold/5";
-  const badge = accent === "risk" ? "bg-risk/12 text-risk" : "bg-gold/15 text-gold";
-  return (
-    <section className={`card overflow-hidden ${accent === "risk" ? "border-risk/30" : "border-gold/30"}`}>
-      <div className={`flex flex-wrap items-center justify-between gap-3 border-b border-surface-border ${bg} px-5 py-4`}>
-        <div>
-          <h2 className={`font-display text-lg font-bold ${text}`}>{title}</h2>
-          <p className="text-sm text-surface-muted">
-            {count} claims ·{" "}
-            <span className={`font-semibold ${text}`}>{money(balance)}</span> across the network
-          </p>
-        </div>
-        <ExportButton rows={exportRows} filename={exportName} sheet={exportSheet} label={exportLabel} />
-      </div>
-      <div className="scroll-x max-h-[24rem] overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-surface-card">
-            <tr>
-              <th className="th">Patient</th>
-              <th className="th">Facility</th>
-              <th className="th">Age</th>
-              <th className="th">DOS</th>
-              <th className="th text-right">Balance</th>
-              <th className="th">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((c, idx) => (
-              <tr key={c.claim_id} className={idx % 2 ? "bg-surface/40" : ""}>
-                <td className="td font-medium">{c.patient_name || "—"}</td>
-                <td className="td text-xs text-surface-muted">{facName(c.facility_id)}</td>
-                <td className="td">
-                  <span className={`badge font-mono ${badge}`}>{c.age_days ?? 0}d</span>
-                </td>
-                <td className="td text-xs text-surface-muted">{c.dos_from || "—"}</td>
-                <td className="td text-right font-mono font-semibold">{money(c.balance)}</td>
-                <td className="td text-xs">{c.claim_status || "—"}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="td py-8 text-center text-surface-muted">
-                  {emptyMsg}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function Stat({
+function Kpi({
   label,
   value,
+  sub,
   accent,
 }: {
   label: string;
   value: string;
-  accent?: "recovered" | "risk" | "gold" | "secured";
+  sub: string;
+  accent: "command" | "recovered" | "secured" | "gold" | "risk";
 }) {
-  const color =
-    accent === "recovered"
-      ? "text-recovered"
-      : accent === "risk"
-        ? "text-risk"
-        : accent === "gold"
-          ? "text-gold"
-          : accent === "secured"
-            ? "text-secured"
-            : "text-surface-ink";
+  const color = {
+    command: "text-command",
+    recovered: "text-recovered",
+    secured: "text-secured",
+    gold: "text-gold",
+    risk: "text-risk",
+  }[accent];
   return (
     <div className="card p-4">
-      <div className="label">{label}</div>
-      <div className={`font-display text-2xl font-bold ${color}`}>{value}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+        {label}
+      </div>
+      <div className={`mt-1 font-display text-xl font-bold ${color}`}>{value}</div>
+      <div className="mt-0.5 text-[11px] text-surface-muted">{sub}</div>
+    </div>
+  );
+}
+
+function Snap({
+  label,
+  value,
+  delta,
+  deltaLabel,
+  note,
+}: {
+  label: string;
+  value: string;
+  delta?: number | null;
+  deltaLabel?: string;
+  note?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-surface-border p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+        {label}
+      </div>
+      <div className="mt-1 font-display text-lg font-bold text-surface-ink">{value}</div>
+      {delta != null && (
+        <div className={`text-[11px] ${delta >= 0 ? "text-recovered" : "text-risk"}`}>
+          {delta >= 0 ? "▲" : "▼"} {Math.abs(delta)}% {deltaLabel}
+        </div>
+      )}
+      {note && <div className="text-[11px] text-surface-muted">{note}</div>}
+    </div>
+  );
+}
+
+function SnapLabel({ label, value, note }: { label: string; value: string; note: string }) {
+  return (
+    <div className="rounded-lg border border-surface-border p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+        {label}
+      </div>
+      <div className="mt-1 font-display text-lg font-bold text-recovered">{value}</div>
+      <div className="text-[11px] text-surface-muted">{note}</div>
+    </div>
+  );
+}
+
+function Value({ title, body }: { title: string; body: string }) {
+  return (
+    <div>
+      <div className="font-bold text-command-text">{title}</div>
+      <div className="text-command-muted">{body}</div>
     </div>
   );
 }
