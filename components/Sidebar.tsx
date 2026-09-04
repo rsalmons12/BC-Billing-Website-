@@ -10,20 +10,11 @@ import type { Profile } from "@/lib/types";
 export default function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname();
   const items = tabsForProfile(profile);
-  // Phone app: a focused menu of just the tabs flagged `mobile` (falls back to
-  // all tabs if none are flagged). No "More" — only the essentials.
-  const primary = items.filter((t) => t.mobile);
-  const mobilePrimary = primary.length ? primary : items;
   const [collapsed, setCollapsed] = useState(false);
-  const [open, setOpen] = useState(false); // mobile drawer
 
   useEffect(() => {
     setCollapsed(localStorage.getItem("rd_sidebar_collapsed") === "1");
   }, []);
-  // Close the mobile drawer whenever the route changes.
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
 
   const toggle = () =>
     setCollapsed((c) => {
@@ -64,48 +55,7 @@ export default function Sidebar({ profile }: { profile: Profile }) {
 
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="flex items-center gap-3 bg-command px-4 py-3 text-command-text md:hidden">
-        <button
-          onClick={() => setOpen(true)}
-          aria-label="Open menu"
-          className="text-2xl leading-none"
-        >
-          ≡
-        </button>
-        <Logo size={26} />
-        <span className="font-display text-sm font-bold">BC Billing</span>
-      </div>
-
-      {/* Mobile drawer */}
-      {open && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setOpen(false)}
-          />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-command py-3 text-command-text">
-            <div className="mb-2 flex items-center justify-between px-4 py-1">
-              <div className="flex items-center gap-2">
-                <Logo size={30} />
-                <span className="font-display text-sm font-bold">BC Billing</span>
-              </div>
-              <button
-                onClick={() => setOpen(false)}
-                aria-label="Close menu"
-                className="text-command-muted"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <NavLinks compact={false} list={mobilePrimary} />
-            </div>
-          </aside>
-        </div>
-      )}
-
-      {/* Desktop sidebar */}
+      {/* Desktop sidebar (phone uses the bottom nav instead) */}
       <aside
         className={`hidden shrink-0 flex-col bg-command text-command-text transition-[width] duration-200 md:flex ${
           collapsed ? "w-16" : "w-60"

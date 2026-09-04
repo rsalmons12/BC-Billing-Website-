@@ -1,6 +1,7 @@
 import { requireProfile } from "@/lib/auth";
 import { tabsForProfile } from "@/lib/nav";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import TabGuard from "@/components/TabGuard";
 
 export default async function AppLayout({
@@ -19,6 +20,8 @@ export default async function AppLayout({
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {children}
       </div>
+      {/* Phone nav sits at the bottom; hidden on desktop (Sidebar takes over). */}
+      <MobileBottomNav profile={profile} />
     </div>
   );
 }
