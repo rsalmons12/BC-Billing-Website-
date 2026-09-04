@@ -198,7 +198,7 @@ export default async function OverviewPage({
           {isManagement && (
             <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex items-center gap-2 text-sm font-medium text-surface-ink">
-                <span className="text-recovered">✔</span>
+                <span className="text-brand-green">✔</span>
                 {doingWell
                   ? "Your facilities are performing great. Keep up the excellent work!"
                   : "Here's where your facilities stand this month."}
@@ -209,26 +209,42 @@ export default async function OverviewPage({
 
           {/* Top KPIs */}
           <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-            <Kpi label="Total Billed" value={money(totalBilled)} sub={monthLabel} accent="command" />
-            <Kpi label="Total Collected" value={money(totalCollected)} sub={monthLabel} accent="recovered" />
+            <Kpi label="Total Billed" value={money(totalBilled)} sub={monthLabel} icon="$" badge="blue" />
+            <Kpi
+              label="Total Collected"
+              value={money(totalCollected)}
+              sub={monthLabel}
+              icon="📈"
+              badge="green"
+              green
+            />
             <Kpi
               label="Collection Rate"
               value={`${(collectionRate * 100).toFixed(1)}%`}
               sub={monthLabel}
-              accent="secured"
+              icon="🛡"
+              badge="green"
             />
-            <Kpi label="Total Outstanding" value={money(totalAR)} sub="Across facilities" accent="gold" />
+            <Kpi
+              label="Total Outstanding"
+              value={money(totalAR)}
+              sub="Across facilities"
+              icon="🧾"
+              badge="blue"
+            />
             <Kpi
               label="Active Authorizations"
               value={activeAuthCount.toLocaleString()}
               sub={authDue > 0 ? `${authDue} due for review` : "Up to date"}
-              accent="command"
+              icon="🛡"
+              badge="blue"
             />
             <Kpi
               label="Open Auth Issues"
               value={openAuthIssues.toLocaleString()}
               sub={openAuthIssues === 0 ? "All caught up" : "Need attention"}
-              accent={openAuthIssues === 0 ? "recovered" : "risk"}
+              icon={openAuthIssues === 0 ? "✓" : "!"}
+              badge={openAuthIssues === 0 ? "green" : "red"}
             />
           </section>
 
@@ -252,7 +268,7 @@ export default async function OverviewPage({
                   <br />
                   On Point.
                   <br />
-                  <span className="text-command">{heroThird}</span>
+                  <span className="text-brand-blue">{heroThird}</span>
                 </div>
                 <p className="mt-3 text-sm text-surface-muted">
                   {billedPct != null && billedPct >= 0
@@ -318,7 +334,7 @@ export default async function OverviewPage({
                           <td className="td text-right font-mono text-surface-muted">{r.prior}</td>
                           <td className="td text-center">
                             {r.cur > r.prior ? (
-                              <span className="text-recovered">▲</span>
+                              <span className="text-brand-green">▲</span>
                             ) : r.cur < r.prior ? (
                               <span className="text-risk">▼</span>
                             ) : (
@@ -336,7 +352,7 @@ export default async function OverviewPage({
                         <td className="td text-right font-mono text-surface-muted">{locTotal.prior}</td>
                         <td className="td text-center">
                           {locTotal.cur >= locTotal.prior ? (
-                            <span className="text-recovered">▲</span>
+                            <span className="text-brand-green">▲</span>
                           ) : (
                             <span className="text-risk">▼</span>
                           )}
@@ -355,7 +371,7 @@ export default async function OverviewPage({
           {/* Brand footer */}
           <section className="rounded-xl bg-command p-5 text-command-text">
             <div className="font-display text-lg font-extrabold">
-              SUPERIOR INSIGHTS. <span className="text-brand-blue">STRONGER RESULTS.</span>
+              SUPERIOR INSIGHTS. <span className="text-brand-green">STRONGER RESULTS.</span>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-4 text-xs md:grid-cols-4">
               <Value title="Real-Time Visibility" body="Live data. Clear trends. Smarter decisions." />
@@ -377,27 +393,42 @@ function Kpi({
   label,
   value,
   sub,
-  accent,
+  icon,
+  badge,
+  green,
 }: {
   label: string;
   value: string;
   sub: string;
-  accent: "command" | "recovered" | "secured" | "gold" | "risk";
+  icon: string;
+  badge: "blue" | "green" | "red";
+  green?: boolean;
 }) {
-  const color = {
-    command: "text-command",
-    recovered: "text-recovered",
-    secured: "text-secured",
-    gold: "text-gold",
-    risk: "text-risk",
-  }[accent];
+  const badgeCls = {
+    blue: "bg-brand-blue/10 text-brand-blue",
+    green: "bg-brand-green/10 text-brand-green",
+    red: "bg-risk/10 text-risk",
+  }[badge];
   return (
     <div className="card p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
-        {label}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+            {label}
+          </div>
+          <div
+            className={`mt-1 font-display text-xl font-bold ${green ? "text-brand-green" : "text-surface-ink"}`}
+          >
+            {value}
+          </div>
+          <div className="mt-0.5 text-[11px] text-surface-muted">{sub}</div>
+        </div>
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base ${badgeCls}`}
+        >
+          {icon}
+        </div>
       </div>
-      <div className={`mt-1 font-display text-xl font-bold ${color}`}>{value}</div>
-      <div className="mt-0.5 text-[11px] text-surface-muted">{sub}</div>
     </div>
   );
 }
@@ -422,7 +453,7 @@ function Snap({
       </div>
       <div className="mt-1 font-display text-lg font-bold text-surface-ink">{value}</div>
       {delta != null && (
-        <div className={`text-[11px] ${delta >= 0 ? "text-recovered" : "text-risk"}`}>
+        <div className={`text-[11px] ${delta >= 0 ? "text-brand-green" : "text-risk"}`}>
           {delta >= 0 ? "▲" : "▼"} {Math.abs(delta)}% {deltaLabel}
         </div>
       )}
@@ -437,7 +468,7 @@ function SnapLabel({ label, value, note }: { label: string; value: string; note:
       <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
         {label}
       </div>
-      <div className="mt-1 font-display text-lg font-bold text-recovered">{value}</div>
+      <div className="mt-1 font-display text-lg font-bold text-brand-green">{value}</div>
       <div className="text-[11px] text-surface-muted">{note}</div>
     </div>
   );
