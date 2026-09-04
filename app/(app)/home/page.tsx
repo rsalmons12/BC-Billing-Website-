@@ -37,8 +37,8 @@ const BLURB: Record<string, string> = {
 export default async function HomeMenu() {
   const { profile, email } = await requireProfile();
   if (profile.role === "pending") redirect("/pending");
-  // Facility logins land on their read-only Overview dashboard.
-  if (profile.role === "facility") redirect("/facility");
+  // Facility logins use the shared Network Overview dashboard.
+  if (profile.role === "facility") redirect("/overview");
   const tabs = tabsForProfile(profile).filter((t) => t.href !== "/home");
   // First name if we have one, else the part before "@" of the email — never the
   // whole email address (a long unbreakable string blows out the phone layout).

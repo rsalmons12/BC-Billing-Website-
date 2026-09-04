@@ -12,11 +12,11 @@ export type Tab = {
 
 // Single source of truth for navigation + per-user access.
 export const TABS: Tab[] = [
+  // Shared landing for everyone — the Network Overview dashboard, scoped by role
+  // (facility → own, staff → assigned, management → whole network).
+  { href: "/overview", label: "Overview", icon: "▦", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/home", label: "Home", icon: "⌂", roles: ["management"] },
-  { href: "/overview", label: "Overview", icon: "▦", roles: ["management"] },
   { href: "/queue", label: "My Queue", icon: "◎", roles: ["management", "staff"] },
-  // Facility landing: a read-only Overview (totals + auth + money outlook).
-  { href: "/facility", label: "Overview", icon: "▣", roles: ["facility"], mobile: true },
   // Facility logins get AR, Billed, Payments, Census, Historical besides the
   // Overview. "AR" is the read-only claims/receivables board.
   { href: "/collections", label: "AR", icon: "▤", roles: ["management", "staff", "facility"], mobile: true },
