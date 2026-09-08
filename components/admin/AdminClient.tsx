@@ -8,7 +8,7 @@ import { JOB_TITLES, type Profile, type Facility, type Assignment, type Role } f
 
 type Tab = "users" | "facilities" | "create";
 
-const ROLES: Role[] = ["management", "staff", "facility", "pending"];
+const ROLES: Role[] = ["management", "staff", "facility", "pending", "suspended"];
 
 export default function AdminClient({
   initialProfiles,
