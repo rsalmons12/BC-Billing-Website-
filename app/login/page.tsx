@@ -109,7 +109,7 @@ export default function LoginPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mb-4 w-full rounded-lg border border-command-border bg-command px-3 py-2 text-sm text-command-text outline-none focus:border-gold"
+            className="mb-4 w-full rounded-lg border border-command-border bg-command px-3 py-2 text-sm text-command-text outline-none focus:border-brand-blue"
           />
 
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-command-muted">
@@ -121,7 +121,7 @@ export default function LoginPage() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mb-4 w-full rounded-lg border border-command-border bg-command px-3 py-2 text-sm text-command-text outline-none focus:border-gold"
+            className="mb-4 w-full rounded-lg border border-command-border bg-command px-3 py-2 text-sm text-command-text outline-none focus:border-brand-blue"
           />
 
           <label className="mb-4 flex items-start gap-2 text-xs leading-snug text-command-muted">
@@ -129,7 +129,7 @@ export default function LoginPage() {
               type="checkbox"
               checked={agreed}
               onChange={(e) => setAgreed(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-gold"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-brand-blue"
             />
             <span>
               I have read and agree to the{" "}
@@ -168,7 +168,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading || !agreed}
-            className="w-full rounded-lg bg-gold px-3.5 py-2.5 text-sm font-semibold text-command transition hover:brightness-105 disabled:opacity-60"
+            className="w-full rounded-lg bg-gradient-to-r from-brand-blue to-brand-green px-3.5 py-2.5 text-sm font-semibold text-white shadow-brand transition hover:brightness-110 disabled:opacity-60"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>

@@ -33,14 +33,17 @@ export default function Sidebar({ profile }: { profile: Profile }) {
             key={item.href}
             href={item.href}
             title={compact ? item.label : undefined}
-            className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+            className={`relative flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               compact ? "justify-center" : ""
             } ${
               active
-                ? "bg-command-surface text-command-text"
+                ? "bg-brand-blue/15 text-command-text"
                 : "text-command-muted hover:bg-command-surface/60 hover:text-command-text"
             }`}
           >
+            {active && (
+              <span className="absolute inset-y-1.5 left-0 w-1 rounded-full bg-brand-blue" aria-hidden />
+            )}
             <span
               className={`text-base ${active ? "text-brand-blue" : "text-command-muted"}`}
             >
@@ -57,11 +60,11 @@ export default function Sidebar({ profile }: { profile: Profile }) {
     <>
       {/* Desktop sidebar (phone uses the bottom nav instead) */}
       <aside
-        className={`hidden shrink-0 flex-col bg-command text-command-text transition-[width] duration-200 md:flex ${
+        className={`hidden shrink-0 flex-col border-r border-command-border bg-command text-command-text transition-[width] duration-200 md:flex ${
           collapsed ? "w-16" : "w-60"
         }`}
       >
-        <div className="flex items-center gap-3 px-4 py-5">
+        <div className="flex items-center gap-3 border-b border-command-border/70 px-4 py-5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center">
             <Logo size={34} />
           </div>

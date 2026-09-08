@@ -7,7 +7,15 @@
 @layer base {
   html,
   body {
-    @apply bg-surface text-surface-ink font-sans antialiased;
+    @apply text-surface-ink font-sans antialiased;
+    /* Vibrant, on-brand backdrop: faint blue + green light in the corners over
+       the light work surface. The content area (main) is transparent, so this
+       tint shows softly behind the cards and gives the app depth. */
+    background-color: #eef1f6;
+    background-image:
+      radial-gradient(1100px 560px at 100% -8%, rgba(25, 168, 224, 0.1), transparent 58%),
+      radial-gradient(950px 520px at -8% 108%, rgba(55, 166, 53, 0.08), transparent 58%);
+    background-attachment: fixed;
     /* On a phone, a single element wider than the screen expands the whole
        layout and pushes content off the right edge. Clip any stray horizontal
        overflow so the app never widens past the viewport. Wide data tables
@@ -24,28 +32,42 @@
 
 @layer components {
   .card {
-    @apply rounded-xl border border-surface-border bg-surface-card shadow-card;
+    @apply rounded-2xl border border-surface-border bg-surface-card shadow-card;
+  }
+  /* Interactive cards (links / clickable tiles) lift on hover. */
+  .card-hover {
+    @apply transition-all duration-150 hover:-translate-y-0.5 hover:border-brand-blue/30 hover:shadow-cardhover;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50 active:translate-y-px;
   }
+  /* Primary = vibrant brand blue. This is the app's main call-to-action color. */
   .btn-primary {
-    @apply btn bg-command text-command-text hover:bg-command-surface;
+    @apply btn bg-brand-blue text-white shadow-sm hover:brightness-[1.07] hover:shadow-brand;
+  }
+  .btn-brand {
+    @apply btn-primary;
+  }
+  .btn-success {
+    @apply btn bg-brand-green text-white shadow-sm hover:brightness-[1.07];
   }
   .btn-gold {
-    @apply btn bg-gold text-command hover:brightness-105;
+    @apply btn bg-gold text-command shadow-sm hover:brightness-105;
+  }
+  .btn-dark {
+    @apply btn bg-command text-command-text hover:bg-command-surface;
   }
   .btn-ghost {
-    @apply btn border border-surface-border bg-surface-card text-surface-ink hover:bg-surface;
+    @apply btn border border-surface-border bg-surface-card text-surface-ink hover:border-brand-blue/40 hover:bg-surface hover:text-brand-blue;
   }
   .btn-danger {
-    @apply btn bg-risk text-white hover:brightness-105;
+    @apply btn bg-risk text-white shadow-sm hover:brightness-105;
   }
   .input {
-    @apply w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm outline-none focus:border-gold focus:ring-2 focus:ring-gold/20;
+    @apply w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20;
   }
   .cell-input {
-    @apply w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none hover:border-surface-border focus:border-gold focus:bg-white focus:ring-1 focus:ring-gold/30;
+    @apply w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none hover:border-surface-border focus:border-brand-blue focus:bg-white focus:ring-1 focus:ring-brand-blue/30;
   }
   .label {
     @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-surface-muted;
@@ -54,14 +76,33 @@
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold;
   }
   .th {
-    @apply whitespace-nowrap px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-surface-muted;
+    @apply whitespace-nowrap px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-surface-muted;
   }
   .td {
     @apply whitespace-nowrap px-3 py-2 align-middle;
+  }
+  /* Consistent section heading used across dashboards/panels. */
+  .section-title {
+    @apply font-display text-lg font-bold text-surface-ink;
+  }
+  /* A slim brand accent bar (e.g. before a page/section title). */
+  .accent-bar {
+    @apply inline-block h-5 w-1.5 rounded-full bg-gradient-to-b from-brand-blue to-brand-green;
   }
 }
 
 /* dense table scrollbars */
 .scroll-x {
   scrollbar-width: thin;
+}
+.scroll-x::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.scroll-x::-webkit-scrollbar-thumb {
+  background: rgba(26, 31, 43, 0.18);
+  border-radius: 9999px;
+}
+.scroll-x::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 31, 43, 0.3);
 }

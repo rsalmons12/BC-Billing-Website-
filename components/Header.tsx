@@ -5,6 +5,7 @@ const ROLE_LABELS: Record<string, string> = {
   staff: "Staff · Collector",
   facility: "Facility",
   pending: "Pending",
+  suspended: "Suspended",
 };
 
 export default function Header({
@@ -27,8 +28,9 @@ export default function Header({
       .toUpperCase();
 
   return (
-    <header className="flex items-center justify-between gap-3 border-b border-surface-border bg-surface-card px-4 py-3 sm:px-6">
-      <div className="min-w-0">
+    <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-surface-border bg-surface-card/90 px-4 py-3 backdrop-blur-sm sm:px-6">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="accent-bar" aria-hidden />
         <div className="truncate font-display text-base font-bold text-surface-ink sm:text-lg">
           {subtitle ?? "Recovery Desk"}
         </div>
@@ -40,13 +42,13 @@ export default function Header({
             {ROLE_LABELS[profile.role] ?? profile.role}
           </div>
         </div>
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-command text-xs font-bold text-command-text">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-blue to-brand-green text-xs font-bold text-white shadow-sm">
           {initials}
         </div>
         <form action="/auth/signout" method="post">
           <button
             type="submit"
-            className="rounded-lg border border-surface-border px-3 py-1.5 text-sm font-semibold text-surface-muted transition hover:bg-surface hover:text-surface-ink"
+            className="rounded-lg border border-surface-border px-3 py-1.5 text-sm font-semibold text-surface-muted transition-colors hover:border-brand-blue/40 hover:bg-surface hover:text-brand-blue"
           >
             Sign out
           </button>

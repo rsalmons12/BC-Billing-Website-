@@ -369,17 +369,25 @@ export default async function OverviewPage({
           </section>
 
           {/* Brand footer */}
-          <section className="rounded-xl bg-command p-5 text-command-text">
-            <div className="font-display text-lg font-extrabold">
+          <section className="relative overflow-hidden rounded-2xl bg-command p-5 text-command-text shadow-card">
+            <div
+              className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-brand-blue/20 blur-3xl"
+              aria-hidden
+            />
+            <div
+              className="pointer-events-none absolute -bottom-16 -left-10 h-56 w-56 rounded-full bg-brand-green/15 blur-3xl"
+              aria-hidden
+            />
+            <div className="relative z-10 font-display text-lg font-extrabold">
               SUPERIOR INSIGHTS. <span className="text-brand-green">STRONGER RESULTS.</span>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-4 text-xs md:grid-cols-4">
+            <div className="relative z-10 mt-3 grid grid-cols-2 gap-4 text-xs md:grid-cols-4">
               <Value title="Real-Time Visibility" body="Live data. Clear trends. Smarter decisions." />
               <Value title="Revenue Focused" body="Maximizing collections. Minimizing leakage." />
               <Value title="Dedicated" body="Your team, on your revenue, every day." />
               <Value title="Better Outcomes" body="Healthier revenue cycle. Stronger bottom line." />
             </div>
-            <div className="mt-3 text-sm italic text-command-muted">
+            <div className="relative z-10 mt-3 text-sm italic text-command-muted">
               We don&apos;t just manage revenue. We maximize it.
             </div>
           </section>
@@ -405,26 +413,35 @@ function Kpi({
   green?: boolean;
 }) {
   const badgeCls = {
-    blue: "bg-brand-blue/10 text-brand-blue",
-    green: "bg-brand-green/10 text-brand-green",
-    red: "bg-risk/10 text-risk",
+    blue: "bg-brand-blue/12 text-brand-blue",
+    green: "bg-brand-green/12 text-brand-green",
+    red: "bg-risk/12 text-risk",
+  }[badge];
+  const topCls = {
+    blue: "from-brand-blue/70",
+    green: "from-brand-green/70",
+    red: "from-risk/70",
   }[badge];
   return (
-    <div className="card p-4">
+    <div className="card card-hover relative overflow-hidden p-4">
+      <div
+        className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${topCls} to-transparent`}
+        aria-hidden
+      />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
             {label}
           </div>
           <div
-            className={`mt-1 font-display text-xl font-bold ${green ? "text-brand-green" : "text-surface-ink"}`}
+            className={`mt-1 font-display text-2xl font-bold ${green ? "text-brand-green" : "text-surface-ink"}`}
           >
             {value}
           </div>
           <div className="mt-0.5 text-[11px] text-surface-muted">{sub}</div>
         </div>
         <div
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base ${badgeCls}`}
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base ${badgeCls}`}
         >
           {icon}
         </div>
