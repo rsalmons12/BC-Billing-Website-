@@ -24,10 +24,16 @@ export default function MobileBottomNav({ profile }: { profile: Profile }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex min-w-[4.25rem] flex-1 flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-semibold leading-tight ${
+              className={`relative flex min-w-[4.25rem] flex-1 flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-semibold leading-tight transition-colors ${
                 active ? "text-brand-blue" : "text-command-muted"
               }`}
             >
+              {active && (
+                <span
+                  className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-brand-blue"
+                  aria-hidden
+                />
+              )}
               <span className={`text-lg ${active ? "text-brand-blue" : "text-command-muted"}`}>
                 {item.icon}
               </span>
