@@ -144,6 +144,9 @@ export default function AuthorizationsClient({
   const [showImport, setShowImport] = useState(false);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  // Current-week census head count (per selected facility, or summed across all),
+  // shown next to the auth counts so "8 active auths vs 16 on census" is visible.
+  const [censusActive, setCensusActive] = useState<number | null>(null);
 
   const facName = useCallback(
     (id: string | null) => {
@@ -170,6 +173,39 @@ export default function AuthorizationsClient({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load the current-week census head count for the same facility scope. For
+  // each facility we take its most recent census week and count those clients;
+  // "All facilities" sums each facility's latest week.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const rows = await selectAll<{ facility_id: string | null; week_start: string | null }>(
+        (f, t) => {
+          let q = supabase.from("census").select("facility_id,week_start");
+          if (facilityFilter !== "all") q = q.eq("facility_id", facilityFilter);
+          return q.range(f, t);
+        }
+      ).catch(() => [] as { facility_id: string | null; week_start: string | null }[]);
+      // Newest week per facility, then count that week's rows.
+      const latestWeek = new Map<string, string>();
+      for (const r of rows) {
+        const fid = r.facility_id ?? "";
+        const w = r.week_start ?? "";
+        if (!fid || !w) continue;
+        if (!latestWeek.has(fid) || w > latestWeek.get(fid)!) latestWeek.set(fid, w);
+      }
+      let count = 0;
+      for (const r of rows) {
+        const fid = r.facility_id ?? "";
+        if (fid && latestWeek.get(fid) === (r.week_start ?? "")) count++;
+      }
+      if (!cancelled) setCensusActive(count);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, facilityFilter]);
 
   // Update one auth field (optimistic).
   const saveField = useCallback(
@@ -487,13 +523,31 @@ export default function AuthorizationsClient({
 
       {!loading && (
         <div className="border-b border-surface-border bg-surface px-6 py-3">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <SumCard label="Patients" value={String(summary.patients)} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+            <SumCard
+              label={view === "active" ? "Active Auths" : "Patients"}
+              value={String(summary.patients)}
+              accent="secured"
+            />
+            <SumCard
+              label="Active Census"
+              value={censusActive == null ? "…" : String(censusActive)}
+            />
             <SumCard label="Past Due" value={String(summary.pastDue)} accent="risk" />
             <SumCard label="Next Review" value={String(summary.due)} accent="gold" />
             <SumCard label="Approved" value={String(summary.approved)} accent="recovered" />
             <SumCard label="Pending" value={String(summary.pending)} accent="gold" />
           </div>
+          {view === "active" && censusActive != null && censusActive !== summary.patients && (
+            <p className="mt-1 text-[11px] text-surface-muted">
+              {summary.patients} active authorization{summary.patients === 1 ? "" : "s"} vs{" "}
+              {censusActive} client{censusActive === 1 ? "" : "s"} on the latest census
+              {censusActive > summary.patients
+                ? ` — ${censusActive - summary.patients} on census without an active auth.`
+                : ` — ${summary.patients - censusActive} active auth${summary.patients - censusActive === 1 ? "" : "s"} not on the latest census.`}
+              {" "}Open the Census tab for the client-by-client breakdown.
+            </p>
+          )}
           {/* Totals by level of care: patients + days (OP, IOP, PHP, MH …) */}
           <div className="mt-3">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">

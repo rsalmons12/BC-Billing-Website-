@@ -16,6 +16,7 @@ import {
   censusLocRate,
   type Census,
   type Facility,
+  type Authorization,
 } from "@/lib/types";
 
 const chunk = <T,>(arr: T[], n: number): T[][] => {
@@ -231,6 +232,9 @@ export default function CensusClient({
   const [payRows, setPayRows] = useState<
     { patient_name: string | null; dos_from: string | null; paid_amount: number | null }[]
   >([]);
+  // Active authorizations for this facility, so the census can reconcile "who is
+  // authorized" against "who is on census" (e.g. 8 active auths vs 16 clients).
+  const [authRows, setAuthRows] = useState<Authorization[]>([]);
   const [week, setWeek] = useState("");
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -261,7 +265,7 @@ export default function CensusClient({
   const load = useCallback(async () => {
     if (!facilityId) return;
     setLoading(true);
-    const [data, pays] = await Promise.all([
+    const [data, pays, auths] = await Promise.all([
       selectAll<Census>((f, t) =>
         supabase
           .from("census")
@@ -280,9 +284,15 @@ export default function CensusClient({
             .in("facility_id", linkedFacilityIds)
             .range(f, t)
       ).catch(() => []),
+      // Authorizations for the same facility record(s), to reconcile against the
+      // census head count (active auths vs clients on census).
+      selectAll<Authorization>((f, t) =>
+        supabase.from("authorizations").select("*").in("facility_id", linkedFacilityIds).range(f, t)
+      ).catch(() => [] as Authorization[]),
     ]);
     setRows(data);
     setPayRows(pays);
+    setAuthRows(auths);
     setLoading(false);
   }, [supabase, facilityId, linkedFacilityIds]);
 
@@ -348,6 +358,66 @@ export default function CensusClient({
 
   // "Missed groups — who & why" for the selected week (same logic as the recap).
   const missedDetail = useMemo(() => missedGroupDetail(null, weekRows), [weekRows]);
+
+  // ---- Authorizations vs census reconciliation --------------------------
+  // Same "current auth per patient" rule as the Network Overview: keep only the
+  // most recent auth per patient, then count the ones that are still active
+  // (not discharged / discharge date not yet passed). Lets the census explain
+  // "8 active auths but 16 on census".
+  const activeAuths = useMemo(() => {
+    const today0 = new Date();
+    today0.setHours(0, 0, 0, 0);
+    const authDate = (v: unknown): number => {
+      const t = Date.parse(String(v ?? ""));
+      return isNaN(t) ? 0 : new Date(t).setHours(0, 0, 0, 0);
+    };
+    const recency = (a: Authorization) =>
+      Math.max(authDate(a.start_date), authDate(a.admit_date), authDate(a.created_at));
+    const isOut = (a: Authorization) => {
+      if (a.discharged) return true;
+      const dd = a.discharge_date ? authDate(a.discharge_date) : 0;
+      return dd > 0 && dd <= today0.getTime();
+    };
+    const current = new Map<string, Authorization>();
+    for (const a of authRows) {
+      const key = normName(a.patient_name);
+      if (!key) continue;
+      const cur = current.get(key);
+      if (!cur || recency(a) > recency(cur)) current.set(key, a);
+    }
+    return Array.from(current.values()).filter((a) => !isOut(a));
+  }, [authRows]);
+
+  // Reconcile the active auths against THIS week's census clients (by name).
+  const authRecon = useMemo(() => {
+    const authByName = new Map(activeAuths.map((a) => [normName(a.patient_name), a]));
+    const censusNames = new Set(weekRows.map((r) => normName(r.patient_name)).filter(Boolean));
+    const onCensusNoAuth = weekRows
+      .filter((r) => {
+        const k = normName(r.patient_name);
+        return k && !authByName.has(k);
+      })
+      .map((r) => r.patient_name || "—")
+      .sort((a, b) => a.localeCompare(b));
+    const authNoCensus = activeAuths
+      .filter((a) => {
+        const k = normName(a.patient_name);
+        return k && !censusNames.has(k);
+      })
+      .map((a) => a.patient_name || "—")
+      .sort((a, b) => a.localeCompare(b));
+    const matched = weekRows.filter((r) => {
+      const k = normName(r.patient_name);
+      return k && authByName.has(k);
+    }).length;
+    return {
+      activeCount: activeAuths.length,
+      censusCount: weekRows.length,
+      matched,
+      onCensusNoAuth,
+      authNoCensus,
+    };
+  }, [activeAuths, weekRows]);
 
   // Day columns for the selected week (union of day keys across its rows). A
   // fresh, hand-keyed week with no codes yet still shows 7 day columns derived
@@ -1062,6 +1132,70 @@ export default function CensusClient({
             </div>
             <p className="mt-2 text-xs text-surface-muted">
               Groups already held before a client&apos;s admit date aren&apos;t counted against them.
+            </p>
+          </div>
+        )}
+
+        {/* Authorizations vs census — reconcile "who's authorized" against
+            "who's on census" so a mismatch (e.g. 8 active auths, 16 clients)
+            is explained by name. */}
+        {!loading && week && (weekRows.length > 0 || activeAuths.length > 0) && (
+          <div className="border-t border-surface-border p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <div className="font-semibold">Authorizations vs census</div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="badge bg-secured/10 text-secured">
+                  Active auths: <b className="ml-1">{authRecon.activeCount}</b>
+                </span>
+                <span className="badge bg-command/10 text-command">
+                  On census: <b className="ml-1">{authRecon.censusCount}</b>
+                </span>
+                <span className="badge bg-recovered/10 text-recovered">
+                  Matched: <b className="ml-1">{authRecon.matched}</b>
+                </span>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border border-surface-border p-3">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-risk">
+                  On census · no active auth ({authRecon.onCensusNoAuth.length})
+                </div>
+                {authRecon.onCensusNoAuth.length === 0 ? (
+                  <p className="text-xs text-surface-muted">
+                    Every census client has an active authorization. ✓
+                  </p>
+                ) : (
+                  <ul className="space-y-0.5 text-sm">
+                    {authRecon.onCensusNoAuth.map((n, i) => (
+                      <li key={`${n}-${i}`} className="text-surface-ink">
+                        {n}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="rounded-lg border border-surface-border p-3">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gold">
+                  Active auth · not on this week&apos;s census ({authRecon.authNoCensus.length})
+                </div>
+                {authRecon.authNoCensus.length === 0 ? (
+                  <p className="text-xs text-surface-muted">
+                    Every active authorization appears on this week&apos;s census. ✓
+                  </p>
+                ) : (
+                  <ul className="space-y-0.5 text-sm">
+                    {authRecon.authNoCensus.map((n, i) => (
+                      <li key={`${n}-${i}`} className="text-surface-ink">
+                        {n}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-surface-muted">
+              Matched by patient name (first + last). “Active auth” = the client&apos;s most recent
+              authorization that isn&apos;t discharged and whose discharge date hasn&apos;t passed.
             </p>
           </div>
         )}
