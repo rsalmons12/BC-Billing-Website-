@@ -64,6 +64,23 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
+    // Suspended users are locked out of the whole app — bounce every request
+    // (except the suspended notice itself) to /suspended. This is the single
+    // choke point, so a suspended login can't reach any page or API by URL.
+    if (user && !isPublic && path !== "/suspended") {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (prof?.role === "suspended") {
+        const url = request.nextUrl.clone();
+        url.pathname = "/suspended";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+    }
+
     return supabaseResponse;
   } catch (err) {
     // A transient auth/network failure should never take the whole site down.

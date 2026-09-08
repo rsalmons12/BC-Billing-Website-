@@ -17,7 +17,7 @@ export default function TabGuard({
   const router = useRouter();
 
   useEffect(() => {
-    if (pathname === "/" || pathname === "/pending") return;
+    if (pathname === "/" || pathname === "/pending" || pathname === "/suspended") return;
     const ok = allowed.some(
       (href) => pathname === href || pathname.startsWith(href + "/")
     );
