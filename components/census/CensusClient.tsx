@@ -106,14 +106,41 @@ function rateFor(r: Census): number {
 
 // Canonical name key for cross-matching census ↔ payments regardless of order
 // or punctuation: "James Mccarthy" and "MCCARTHY, JAMES" both → "james mccarthy".
-const normName = (s: unknown) =>
-  String(s ?? "")
+// Match a census client to their payments by FIRST + LAST name only, so the
+// link survives the format differences between the two imports:
+//   • "Bryant, Neal"  ↔  "Neal Bryant"      (Last, First vs First Last)
+//   • "Smith, John A" ↔  "John Smith"        (a middle initial on one side)
+//   • "Lopez Jr, Ana" ↔  "Ana Lopez"         (a suffix on one side)
+// A comma means "Last, First"; without one we assume "First … Last". Middle
+// names/initials and suffixes are dropped, then first+last are sorted so the
+// order can't matter. (The old key sorted EVERY token, so any extra middle
+// token made the two sides disagree and Paid $ came back blank.)
+const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+const nameParts = (s: string): string[] =>
+  s
     .toLowerCase()
     .replace(/[^a-z\s]/g, " ")
     .split(/\s+/)
-    .filter(Boolean)
-    .sort()
-    .join(" ");
+    .filter((t) => t.length > 1 && !NAME_SUFFIXES.has(t));
+const normName = (s: unknown): string => {
+  const raw = String(s ?? "");
+  const comma = raw.indexOf(",");
+  let first = "";
+  let last = "";
+  if (comma >= 0) {
+    last = nameParts(raw.slice(0, comma))[0] ?? "";
+    first = nameParts(raw.slice(comma + 1))[0] ?? "";
+  } else {
+    const t = nameParts(raw);
+    if (t.length >= 2) {
+      first = t[0];
+      last = t[t.length - 1];
+    } else if (t.length === 1) {
+      first = t[0];
+    }
+  }
+  return [first, last].filter(Boolean).sort().join(" ");
+};
 
 // A date string → midnight epoch ms (or null).
 function dayMs(v: unknown): number | null {
