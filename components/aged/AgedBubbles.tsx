@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { money } from "@/lib/format";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 
 export type AgedFacility = {
   facilityId: string;
@@ -21,12 +22,28 @@ export default function AgedBubbles({
 }) {
   return (
     <div className="mx-auto max-w-5xl p-6">
-      <div className="mb-5">
-        <h1 className="font-display text-xl font-bold">{minDays}+ Day Claims</h1>
-        <p className="mt-1 text-sm text-surface-muted">
-          Every facility with claims sitting {minDays} days or longer. Click a box to open those
-          claims and start working them.
-        </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-xl font-bold">{minDays}+ Day Claims</h1>
+          <p className="mt-1 text-sm text-surface-muted">
+            Every facility with claims sitting {minDays} days or longer. Click a box to open those
+            claims and start working them.
+          </p>
+        </div>
+        {items.length > 0 && (
+          <ExportButton
+            label="Export"
+            filename={`aged-${minDays}plus-by-facility.xlsx`}
+            sheet="120+ Claims"
+            rows={items.map(
+              (f): ExportRow => ({
+                Facility: f.name,
+                "Outstanding Balance": f.balance,
+                "Claim Lines": f.lines,
+              })
+            )}
+          />
+        )}
       </div>
 
       {items.length === 0 ? (

@@ -7,6 +7,7 @@ import Header from "@/components/Header";
 import MoneyOutlookPanel from "@/components/overview/MoneyOutlookPanel";
 import CensusPanel from "@/components/overview/CensusPanel";
 import MyRecapButton from "@/components/facility/MyRecapButton";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { censusByFacility, missedGroupDetail } from "@/lib/report/census";
 import { computeBelowFloor, type BelowFloorRow } from "@/lib/report/facilityRecap";
 import { money } from "@/lib/format";
@@ -431,7 +432,26 @@ export default async function FacilityDashboard({
         <div className="mx-auto max-w-6xl space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-secured/8 px-4 py-2">
             <span className="text-xs font-medium text-secured">Read-only overview · {viewLabel}</span>
-            <MyRecapButton />
+            <div className="flex items-center gap-2">
+              <ExportButton
+                label="Export"
+                filename={`facility-overview-${viewLabel}-${monthLabel}.xlsx`.replace(/[^\w.-]+/g, "_")}
+                sheet="Overview"
+                rows={[
+                  { Metric: "Facility", Value: viewLabel },
+                  { Metric: "Month", Value: monthLabel },
+                  { Metric: "Collected", Value: money(collectedThisMonth) },
+                  { Metric: "Billed", Value: money(billedThisMonth) },
+                  { Metric: "Total Outstanding (AR)", Value: money(totalAR) },
+                  { Metric: "" },
+                  { Metric: "Level of Care", Value: "This Month", "Last Month": "Last Month" },
+                  ...locRows.map(
+                    (r): ExportRow => ({ Metric: r.loc, Value: r.cur, "Last Month": r.prior })
+                  ),
+                ]}
+              />
+              <MyRecapButton />
+            </div>
           </div>
 
           {excludedClaims.length > 0 && (

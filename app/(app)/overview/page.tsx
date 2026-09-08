@@ -5,6 +5,7 @@ import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import RecapActions from "@/components/overview/RecapActions";
 import FacilityPicker from "@/components/overview/FacilityPicker";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
 import { periodOf } from "@/lib/import/parseTrackers";
 import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
@@ -189,6 +190,39 @@ export default async function OverviewPage({
 
   const pickerFacilities = facilities.map((f) => ({ id: f.id, label: f.short_name || f.name }));
 
+  // Export: the headline KPIs followed by the level-of-care table, one sheet.
+  const scopeLabel = picked === "all" ? "All facilities" : scopedFacilities[0]?.short_name || scopedFacilities[0]?.name || "Facility";
+  const overviewExport: ExportRow[] = [
+    { Metric: "Scope", Value: scopeLabel },
+    { Metric: `Total Billed (${monthLabel})`, Value: money(totalBilled) },
+    { Metric: `Total Collected (${monthLabel})`, Value: money(totalCollected) },
+    { Metric: "Collection Rate", Value: `${(collectionRate * 100).toFixed(1)}%` },
+    { Metric: "Total Outstanding (AR)", Value: money(totalAR) },
+    { Metric: "Active Authorizations", Value: activeAuthCount },
+    { Metric: "Auth Due For Review", Value: authDue },
+    { Metric: "Open Auth Issues", Value: openAuthIssues },
+    { Metric: "Collections Aging 60+", Value: money(agedAR) },
+    { Metric: "Payer Unknown AR", Value: money(payerUnknownAR) },
+    { Metric: "" },
+    { Metric: "Level of Care", Value: `Services ${monthLabel}`, "Last Month": `Services ${lastLabel}`, "Clients (This)": "Clients This", "Clients (Last)": "Clients Last" },
+    ...locRows.map(
+      (r): ExportRow => ({
+        Metric: r.loc,
+        Value: r.cur,
+        "Last Month": r.prior,
+        "Clients (This)": r.clientsCur,
+        "Clients (Last)": r.clientsPrior,
+      })
+    ),
+    {
+      Metric: "TOTAL",
+      Value: locTotal.cur,
+      "Last Month": locTotal.prior,
+      "Clients (This)": locTotal.clientsCur,
+      "Clients (Last)": locTotal.clientsPrior,
+    },
+  ];
+
   return (
     <>
       <Header profile={profile} email={email} subtitle="Network Overview" />
@@ -257,7 +291,15 @@ export default async function OverviewPage({
                   {monthLabel} vs {lastLabel}
                 </div>
               </div>
-              <FacilityPicker facilities={pickerFacilities} value={picked} />
+              <div className="flex items-center gap-2">
+                <FacilityPicker facilities={pickerFacilities} value={picked} />
+                <ExportButton
+                  label="Export"
+                  filename={`network-overview-${monthLabel.replace(/\s+/g, "-")}.xlsx`}
+                  sheet="Overview"
+                  rows={overviewExport}
+                />
+              </div>
             </div>
 
             <div className="grid gap-5 lg:grid-cols-[1fr_2fr]">

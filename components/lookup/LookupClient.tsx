@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/format";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import type { Claim, ClaimWork, FacilityMessage, Facility } from "@/lib/types";
 
 type AssignRow = Pick<
@@ -113,11 +114,30 @@ export default function LookupClient({ facilities }: { facilities: Facility[] })
           <>
             {/* ---- Assigned collector(s) ---- */}
             <section className="card overflow-hidden">
-              <div className="border-b border-surface-border px-5 py-3 font-semibold">
-                Assigned collector{" "}
-                <span className="text-sm font-normal text-surface-muted">
-                  ({assignments.length} claim{assignments.length === 1 ? "" : "s"})
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-5 py-3 font-semibold">
+                <span>
+                  Assigned collector{" "}
+                  <span className="text-sm font-normal text-surface-muted">
+                    ({assignments.length} claim{assignments.length === 1 ? "" : "s"})
+                  </span>
                 </span>
+                <ExportButton
+                  label="Export"
+                  filename={`patient-lookup-${q.trim().replace(/[^\w.-]+/g, "_") || "results"}.xlsx`}
+                  sheet="Claims"
+                  rows={assignments.map(
+                    (a): ExportRow => ({
+                      Patient: a.patient_name || "",
+                      Claim: a.claim_id,
+                      Facility: facName(a.facility_id),
+                      Balance: a.balance ?? 0,
+                      Status: a.claim_status || "",
+                      Collector: a.work?.claimed_by ? who(a.work.claimed_by) : "Unassigned",
+                      "Held on": a.work?.claimed_at || "",
+                      Worked: a.work?.date_worked || "",
+                    })
+                  )}
+                />
               </div>
               {!loading && assignments.length === 0 ? (
                 <p className="px-5 py-6 text-sm text-surface-muted">

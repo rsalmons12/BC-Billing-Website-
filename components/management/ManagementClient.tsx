@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import type { Claim, ClaimWork, AuthIssue, Facility } from "@/lib/types";
 
 type Escalation = {
@@ -105,11 +106,29 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
 
         {/* From Collections */}
         <section className="card overflow-hidden">
-          <div className="border-b border-surface-border px-5 py-3 font-semibold">
-            From Collections{" "}
-            <span className="text-sm font-normal text-surface-muted">
-              ({collections.length})
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-5 py-3 font-semibold">
+            <span>
+              From Collections{" "}
+              <span className="text-sm font-normal text-surface-muted">
+                ({collections.length})
+              </span>
             </span>
+            <ExportButton
+              label="Export"
+              filename="management-collections.xlsx"
+              sheet="Collections"
+              rows={collections.map(
+                (e): ExportRow => ({
+                  Patient: e.patient_name || "",
+                  Facility: facName(e.facility_id),
+                  Claim: e.claim_id,
+                  "Age (days)": e.age_days ?? 0,
+                  Balance: e.balance ?? 0,
+                  Status: e.claim_status || "",
+                  Notes: e.notes || "",
+                })
+              )}
+            />
           </div>
           {loading ? (
             <p className="px-5 py-6 text-sm text-surface-muted">Loading…</p>
@@ -158,9 +177,26 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
 
         {/* From Auth Issues */}
         <section className="card overflow-hidden">
-          <div className="border-b border-surface-border px-5 py-3 font-semibold">
-            From Auth Issues{" "}
-            <span className="text-sm font-normal text-surface-muted">({authEsc.length})</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-5 py-3 font-semibold">
+            <span>
+              From Auth Issues{" "}
+              <span className="text-sm font-normal text-surface-muted">({authEsc.length})</span>
+            </span>
+            <ExportButton
+              label="Export"
+              filename="management-auth-issues.xlsx"
+              sheet="Auth Issues"
+              rows={authEsc.map(
+                (e): ExportRow => ({
+                  Patient: e.patient_name || "",
+                  Facility: facName(e.facility_id),
+                  Amount: e.charge_amount ?? 0,
+                  Status: e.status || "",
+                  "Collector Notes": e.collector_notes || "",
+                  "Auth Notes": e.notes || "",
+                })
+              )}
+            />
           </div>
           {!loading && authEsc.length === 0 ? (
             <p className="px-5 py-6 text-sm text-surface-muted">Nothing flagged.</p>
