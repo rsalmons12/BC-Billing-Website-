@@ -184,6 +184,43 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const reminderLabel = (n: number) =>
     n <= 0 ? "—" : n === 1 ? "7-day sent" : n === 2 ? "7/14 sent" : "7/14/30 done";
 
+  // Manually fire a payment reminder for one invoice, right now.
+  const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [remindMsg, setRemindMsg] = useState("");
+  const sendReminder = async (r: InvoiceLedger) => {
+    if (
+      !confirm(
+        `Send a payment reminder to ${facName(r.facility_id)} for ${monthLabel(
+          r.period
+        )} (${money(r.amount)})?`
+      )
+    )
+      return;
+    setRemindingId(r.id);
+    setRemindMsg("");
+    try {
+      const res = await fetch("/api/invoice-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceId: r.id }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setRemindMsg(d.error || "Could not send the reminder.");
+      } else {
+        setRemindMsg(
+          `✓ Reminder sent to ${facName(r.facility_id)} (${d.recipients} recipient${
+            d.recipients === 1 ? "" : "s"
+          }).`
+        );
+      }
+    } catch {
+      setRemindMsg("Could not send the reminder.");
+    } finally {
+      setRemindingId(null);
+    }
+  };
+
   // ---- Extra charges (late fees, adjustments) for the selected facility+month ----
   type Charge = { id: string; label: string; amount: number };
   const [charges, setCharges] = useState<Charge[]>([]);
@@ -721,8 +758,12 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         <h2 className="font-display text-lg font-bold">Invoice tracker &amp; reminders</h2>
         <p className="mt-1 text-sm text-surface-muted">
           Every invoice you&apos;ve emailed. Mark one <b>Paid</b> when the money comes in — unpaid
-          ones automatically get a reminder at <b>7, 14, and 30 days</b>, then stop.
+          ones automatically get a reminder at <b>7, 14, and 30 days</b>, then stop. Need to nudge
+          sooner? Hit <b>Send reminder</b> on any unpaid invoice.
         </p>
+        {remindMsg && (
+          <p className="mt-2 text-sm font-medium text-secured">{remindMsg}</p>
+        )}
         {ledger.length === 0 ? (
           <div className="mt-4 text-sm text-surface-muted">
             No invoices sent yet. Email one above and it&apos;ll show here.
@@ -738,6 +779,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                   <th className="px-2 py-1.5">Sent</th>
                   <th className="px-2 py-1.5">Reminders</th>
                   <th className="px-2 py-1.5 text-center">Paid</th>
+                  <th className="px-2 py-1.5 text-right">Remind</th>
                 </tr>
               </thead>
               <tbody>
@@ -767,6 +809,19 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                         className="h-4 w-4"
                         aria-label={`Mark ${facName(r.facility_id)} ${monthLabel(r.period)} paid`}
                       />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      {r.paid ? (
+                        <span className="text-xs text-surface-muted">—</span>
+                      ) : (
+                        <button
+                          onClick={() => sendReminder(r)}
+                          disabled={remindingId === r.id}
+                          className="btn-ghost px-2.5 py-1 text-xs"
+                        >
+                          {remindingId === r.id ? "Sending…" : "Send reminder"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
