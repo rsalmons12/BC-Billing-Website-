@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
 import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
 import type { Payment, BilledClaim, Claim, Negotiation, Facility } from "@/lib/types";
 
@@ -755,7 +756,26 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
 
       {/* ---- Invoice tracker: who still owes + reminder status ---- */}
       <div className="card p-5">
-        <h2 className="font-display text-lg font-bold">Invoice tracker &amp; reminders</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-bold">Invoice tracker &amp; reminders</h2>
+          {ledger.length > 0 && (
+            <ExportButton
+              label="Export"
+              filename="invoice-tracker.xlsx"
+              sheet="Invoices"
+              rows={ledger.map(
+                (r): ExportRow => ({
+                  Facility: facName(r.facility_id),
+                  Month: monthLabel(r.period),
+                  Amount: r.amount ?? 0,
+                  Sent: new Date(r.sent_at).toLocaleDateString("en-US"),
+                  Reminders: r.paid ? "—" : reminderLabel(r.reminders_sent),
+                  Paid: r.paid ? "Yes" : "No",
+                })
+              )}
+            />
+          )}
+        </div>
         <p className="mt-1 text-sm text-surface-muted">
           Every invoice you&apos;ve emailed. Mark one <b>Paid</b> when the money comes in — unpaid
           ones automatically get a reminder at <b>7, 14, and 30 days</b>, then stop. Need to nudge

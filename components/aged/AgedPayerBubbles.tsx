@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { money } from "@/lib/format";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 
 export type AgedPayer = {
   payer: string;
@@ -26,17 +27,33 @@ export default function AgedPayerBubbles({
 
   return (
     <div className="mx-auto max-w-5xl p-6">
-      <div className="mb-5">
-        <Link href="/aged" className="text-xs font-semibold text-command hover:underline">
-          ← All facilities
-        </Link>
-        <h1 className="mt-1 font-display text-xl font-bold">
-          {facilityName} — {minDays}+ Day Claims by Payer
-        </h1>
-        <p className="mt-1 text-sm text-surface-muted">
-          {money(totalBal)} across {totalLines.toLocaleString()} claim line
-          {totalLines === 1 ? "" : "s"}. Click a payer to open and work those claims.
-        </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Link href="/aged" className="text-xs font-semibold text-command hover:underline">
+            ← All facilities
+          </Link>
+          <h1 className="mt-1 font-display text-xl font-bold">
+            {facilityName} — {minDays}+ Day Claims by Payer
+          </h1>
+          <p className="mt-1 text-sm text-surface-muted">
+            {money(totalBal)} across {totalLines.toLocaleString()} claim line
+            {totalLines === 1 ? "" : "s"}. Click a payer to open and work those claims.
+          </p>
+        </div>
+        {payers.length > 0 && (
+          <ExportButton
+            label="Export"
+            filename={`aged-${minDays}plus-${facilityName}-by-payer.xlsx`.replace(/[^\w.-]+/g, "_")}
+            sheet="By Payer"
+            rows={payers.map(
+              (p): ExportRow => ({
+                Payer: p.payer,
+                "Outstanding Balance": p.balance,
+                "Claim Lines": p.lines,
+              })
+            )}
+          />
+        )}
       </div>
 
       {payers.length === 0 ? (

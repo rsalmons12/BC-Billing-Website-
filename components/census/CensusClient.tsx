@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { SumCard } from "@/components/trackers/TrackerModule";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
 import { parseCensus, tallySessions, CENSUS_SESSION_CODES } from "@/lib/import/parseCensus";
 import { weekGroupDates, proratedRequirements, missedGroupDetail } from "@/lib/report/census";
@@ -633,6 +634,38 @@ export default function CensusClient({
           >
             ⧉ Copy to next week
           </button>
+        )}
+
+        {week && weekRows.length > 0 && (
+          <ExportButton
+            label="Export"
+            filename={`census-${facName || "facility"}-${week}.xlsx`.replace(/[^\w.-]+/g, "_")}
+            sheet="Census"
+            rows={weekRows.map((r): ExportRow => {
+              const req = requirementsFor(r.level_of_care);
+              const act = actualsFor(r.days);
+              const row: ExportRow = {
+                LOC: r.level_of_care || "",
+                Name: r.patient_name || "",
+                Admit: r.admit_date || "",
+                Insurance: r.insurance || "",
+                "Member ID": r.member_id || "",
+                Auth: r.auth || "",
+                "Step-Up": r.step_up ? "Yes" : "",
+                Repriced: r.repriced ? "Yes" : "",
+              };
+              for (const d of dayCols) row[dayHeader(d)] = (r.days ?? {})[d] ?? "";
+              row["Expected Sessions"] = REQ_CODES.reduce((s, c) => s + (req[c] ?? 0), 0);
+              row["Missed Sessions"] = REQ_CODES.reduce(
+                (s, c) => s + Math.max(0, (req[c] ?? 0) - (act[c] ?? 0)),
+                0
+              );
+              row["Paid $"] = effectivePaid(r);
+              row["Billing Status"] = r.billing_status || "";
+              row["Comments"] = r.comments || "";
+              return row;
+            })}
+          />
         )}
 
         <div className="flex items-center gap-1 rounded-lg border border-surface-border px-2 py-1">

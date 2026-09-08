@@ -8,6 +8,7 @@ import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { payerBucket, matchesPayer, statusAction, matchesStatusAction } from "@/lib/payer";
 import { FLAG_OPTIONS, AUTH_FLAG_OPTIONS } from "@/lib/constants";
 import AddNote from "@/components/AddNote";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import {
   WATCH_AGE_THRESHOLD,
   RISK_AGE_THRESHOLD,
@@ -1117,6 +1118,23 @@ export default function QueueClient({
         >
           65+ only
         </button>
+
+        <ExportButton
+          label="Export"
+          filename={`queue-${collector.full_name || "collector"}.xlsx`.replace(/[^\w.-]+/g, "_")}
+          sheet="Queue"
+          rows={shown.map(
+            (r): ExportRow => ({
+              Patient: r.patient_name || "",
+              Claim: r.claim_id,
+              Facility: facName(r.facility_id),
+              "Member ID": r.member_id || "",
+              "Age (days)": r.age_days ?? 0,
+              Balance: r.balance ?? 0,
+              Status: r.claim_status || "",
+            })
+          )}
+        />
 
         {/* risk-first enforcement (management can lift it) */}
         {isManagement && (

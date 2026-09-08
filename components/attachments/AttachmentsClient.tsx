@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
+import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import type { Attachment, Facility } from "@/lib/types";
 
 const BUCKET = "attachments";
@@ -211,6 +212,19 @@ export default function AttachmentsClient({
             <b className="text-surface-ink">{filtered.length}</b> file
             {filtered.length === 1 ? "" : "s"}
           </span>
+          <ExportButton
+            label="Export list"
+            filename={`attachments-${active.label}.xlsx`.replace(/[^\w.-]+/g, "_")}
+            sheet="Files"
+            rows={filtered.map(
+              (r): ExportRow => ({
+                Name: r.name || "",
+                Facility: facName(r.facility_id),
+                "Size (bytes)": r.size_bytes ?? 0,
+                Uploaded: (r.created_at || "").slice(0, 10),
+              })
+            )}
+          />
           <select
             value={uploadFacility}
             onChange={(e) => setUploadFacility(e.target.value)}
