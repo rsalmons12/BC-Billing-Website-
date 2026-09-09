@@ -178,6 +178,45 @@ export default function AdminClient({
     setAllowedTabs(p, isAll ? null : next);
   };
 
+  // Download a spreadsheet of all collectors (role = staff) from live data:
+  // name, job title, daily target, queue tier, and assigned facilities.
+  const facLabel = (id: string | null) => {
+    const f = facilities.find((x) => x.id === id);
+    return f?.short_name || f?.name || "";
+  };
+  const exportCollectors = async () => {
+    const collectors = profiles.filter((p) => p.role === "staff");
+    if (collectors.length === 0) {
+      flash("No collectors found (role = Staff · Collector).");
+      return;
+    }
+    const rows = collectors
+      .map((p) => {
+        const assigned = assignments
+          .filter((a) => a.profile_id === p.id)
+          .map((a) => facLabel(a.facility_id))
+          .filter(Boolean);
+        return {
+          Name: p.full_name || "",
+          Initials: p.initials || "",
+          "Job Title": p.job_title || "Collector",
+          "Daily Target": p.daily_target ?? "",
+          "Queue Tier": p.queue_tier || "",
+          "Primary Facility": facLabel(p.facility_id),
+          "Assigned Facilities": assigned.join(", "),
+        };
+      })
+      .sort((a, b) => a.Name.localeCompare(b.Name));
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Collectors");
+    XLSX.writeFile(wb, "collectors.xlsx");
+    flash(`Exported ${collectors.length} collectors`);
+  };
+
+  const collectorCount = profiles.filter((p) => p.role === "staff").length;
+
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div className="flex items-center gap-2">
@@ -202,6 +241,13 @@ export default function AdminClient({
         ))}
         <div className="ml-auto flex items-center gap-3">
           {msg && <span className="text-sm font-medium text-secured">{msg}</span>}
+          <button
+            onClick={exportCollectors}
+            className="btn-ghost"
+            title="Download a spreadsheet of all collectors (role = Staff · Collector)"
+          >
+            ↓ Export collectors{collectorCount ? ` (${collectorCount})` : ""}
+          </button>
           <BackupButton />
         </div>
       </div>
