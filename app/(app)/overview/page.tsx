@@ -225,9 +225,30 @@ export default async function OverviewPage({
 
   return (
     <>
-      <Header profile={profile} email={email} subtitle="Network Overview" />
+      <Header
+        profile={profile}
+        email={email}
+        subtitle={picked === "all" ? "Network Overview" : `${scopeLabel} · Overview`}
+      />
       <main className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl space-y-5 p-5">
+          {/* Facility scope — filter the whole dashboard to one facility */}
+          {pickerFacilities.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-border bg-surface-card px-4 py-3 shadow-card">
+              <span className="text-xs font-semibold uppercase tracking-wide text-surface-muted">
+                Viewing
+              </span>
+              <FacilityPicker facilities={pickerFacilities} value={picked} />
+              {picked === "all" ? (
+                <span className="text-xs text-surface-muted">All facilities combined</span>
+              ) : (
+                <span className="badge bg-brand-blue/10 text-brand-blue">
+                  {scopeLabel} only
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Banner (management only) */}
           {isManagement && (
             <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
@@ -291,15 +312,12 @@ export default async function OverviewPage({
                   {monthLabel} vs {lastLabel}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <FacilityPicker facilities={pickerFacilities} value={picked} />
-                <ExportButton
-                  label="Export"
-                  filename={`network-overview-${monthLabel.replace(/\s+/g, "-")}.xlsx`}
-                  sheet="Overview"
-                  rows={overviewExport}
-                />
-              </div>
+              <ExportButton
+                label="Export"
+                filename={`network-overview-${monthLabel.replace(/\s+/g, "-")}.xlsx`}
+                sheet="Overview"
+                rows={overviewExport}
+              />
             </div>
 
             <div className="grid gap-5 lg:grid-cols-[1fr_2fr]">
