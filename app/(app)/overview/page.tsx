@@ -5,6 +5,7 @@ import { selectAll } from "@/lib/supabase/page";
 import Header from "@/components/Header";
 import RecapActions from "@/components/overview/RecapActions";
 import FacilityPicker from "@/components/overview/FacilityPicker";
+import AnnouncementBanner from "@/components/overview/AnnouncementBanner";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
 import { periodOf } from "@/lib/import/parseTrackers";
@@ -232,6 +233,9 @@ export default async function OverviewPage({
       />
       <main className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl space-y-5 p-5">
+          {/* Persistent platform announcement */}
+          <AnnouncementBanner />
+
           {/* Facility scope — filter the whole dashboard to one facility */}
           {pickerFacilities.length > 1 && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-border bg-surface-card px-4 py-3 shadow-card">
