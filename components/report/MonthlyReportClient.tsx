@@ -166,6 +166,17 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     },
     [facilities]
   );
+  // Ledger-specific: if the invoice points at a facility record that no longer
+  // exists (deleted/merged), don't hide it behind a generic "Facility" — surface
+  // the id fragment so the orphaned invoice can be traced and remapped.
+  const ledgerFacName = useCallback(
+    (id: string) => {
+      const f = facilities.find((x) => x.id === id);
+      if (f) return f.short_name || f.name;
+      return `Unknown facility · ${String(id ?? "").slice(0, 8)}…`;
+    },
+    [facilities]
+  );
   const loadLedger = useCallback(async () => {
     // select("*") so this still works before the paid_amount migration is run.
     const { data } = await supabase
@@ -819,7 +830,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               sheet="Invoices"
               rows={ledger.map(
                 (r): ExportRow => ({
-                  Facility: facName(r.facility_id),
+                  Facility: ledgerFacName(r.facility_id),
                   Month: monthLabel(r.period),
                   Amount: r.amount ?? 0,
                   "Paid to date": r.paid_amount ?? 0,
@@ -868,7 +879,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                     className={`border-t border-surface-border ${r.paid ? "opacity-55" : ""}`}
                   >
                     <td className="px-2 py-1.5 font-medium text-surface-ink">
-                      {facName(r.facility_id)}
+                      {ledgerFacName(r.facility_id)}
                     </td>
                     <td className="px-2 py-1.5">{monthLabel(r.period)}</td>
                     <td className="px-2 py-1.5 text-right font-semibold text-secured">
