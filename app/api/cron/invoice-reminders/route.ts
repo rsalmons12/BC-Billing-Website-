@@ -42,9 +42,11 @@ export async function GET(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email not configured." }, { status: 503 });
 
+  // select("*") so paid_amount is included when present (tolerated when the
+  // partial-payments migration hasn't run yet).
   const { data: rows } = await admin
     .from("invoices")
-    .select("id, facility_id, period, amount, sent_at, reminders_sent")
+    .select("*")
     .eq("paid", false)
     .lt("reminders_sent", 3);
   const invoices = (rows ?? []) as {
@@ -52,6 +54,7 @@ export async function GET(request: Request) {
     facility_id: string;
     period: string;
     amount: number;
+    paid_amount?: number;
     sent_at: string;
     reminders_sent: number;
   }[];
@@ -81,7 +84,18 @@ export async function GET(request: Request) {
     const fac = facById.get(inv.facility_id);
     const facilityName = fac?.short_name || fac?.name || "Facility";
     const label = monthLabel(inv.period);
-    const amount = Number(inv.amount) || 0;
+    // Remind for the remaining balance when a partial payment is on file.
+    const paidSoFar = Number(inv.paid_amount) || 0;
+    const amount = Math.max(0, (Number(inv.amount) || 0) - paidSoFar);
+    // Fully covered by partials but not flagged paid — advance so it stops.
+    if (amount <= 0) {
+      await admin
+        .from("invoices")
+        .update({ reminders_sent: 3, last_reminder_at: new Date().toISOString() })
+        .eq("id", inv.id);
+      advanced++;
+      continue;
+    }
 
     let to: string[] = [];
     let bcc: string[] = [];

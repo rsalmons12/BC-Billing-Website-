@@ -55,9 +55,11 @@ export async function POST(request: Request) {
     );
   }
 
+  // select("*") so paid_amount is picked up when present (and tolerated when the
+  // partial-payments migration hasn't run yet).
   const { data: inv } = await admin
     .from("invoices")
-    .select("id, facility_id, period, amount, paid")
+    .select("*")
     .eq("id", body.invoiceId)
     .maybeSingle();
   if (!inv) return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
@@ -70,7 +72,11 @@ export async function POST(request: Request) {
     .maybeSingle();
   const facilityName = fac?.short_name || fac?.name || "Facility";
   const label = monthLabel(inv.period);
-  const amount = Number(inv.amount) || 0;
+  // Remind for the REMAINING balance when a partial payment is on file.
+  const paidSoFar = Number(inv.paid_amount) || 0;
+  const amount = Math.max(0, (Number(inv.amount) || 0) - paidSoFar);
+  if (amount <= 0)
+    return NextResponse.json({ error: "That invoice is already paid in full." }, { status: 400 });
 
   let to: string[] = [];
   let bcc: string[] = [];
@@ -111,7 +117,15 @@ export async function POST(request: Request) {
     <p style="margin:0 0 14px;color:#555">Your ${label} invoice is still showing an outstanding balance.</p>
     <table style="border-collapse:collapse;width:100%;max-width:520px;font-size:14px">
       <tbody>
-        <tr><td style="padding:8px;font-weight:700">Amount Due</td>
+        ${
+          paidSoFar > 0
+            ? `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Invoice total</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(Number(inv.amount) || 0)}</td></tr>
+               <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Paid to date</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;color:#137333">−${money(paidSoFar)}</td></tr>`
+            : ""
+        }
+        <tr><td style="padding:8px;font-weight:700">${paidSoFar > 0 ? "Balance Due" : "Amount Due"}</td>
             <td style="padding:8px;font-weight:700;text-align:right;color:#b00020">${money(amount)}</td></tr>
       </tbody>
     </table>

@@ -154,9 +154,11 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     amount: number;
     sent_at: string;
     paid: boolean;
+    paid_amount: number;
     reminders_sent: number;
   };
   const [ledger, setLedger] = useState<InvoiceLedger[]>([]);
+  const [payMsg, setPayMsg] = useState("");
   const facName = useCallback(
     (id: string) => {
       const f = facilities.find((x) => x.id === id);
@@ -165,22 +167,74 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     [facilities]
   );
   const loadLedger = useCallback(async () => {
+    // select("*") so this still works before the paid_amount migration is run.
     const { data } = await supabase
       .from("invoices")
-      .select("id,facility_id,period,amount,sent_at,paid,reminders_sent")
+      .select("*")
       .order("paid", { ascending: true })
       .order("sent_at", { ascending: false });
-    setLedger((data as InvoiceLedger[]) ?? []);
+    setLedger(
+      ((data as (InvoiceLedger & { paid_amount?: number })[]) ?? []).map((r) => ({
+        ...r,
+        paid_amount: Number(r.paid_amount ?? 0),
+      }))
+    );
   }, [supabase]);
   useEffect(() => {
     loadLedger();
   }, [loadLedger]);
+  const balanceOf = (r: InvoiceLedger) =>
+    Math.max(0, Math.round(((r.amount ?? 0) - (r.paid_amount ?? 0)) * 100) / 100);
   const setPaid = async (id: string, paid: boolean) => {
-    setLedger((prev) => prev.map((r) => (r.id === id ? { ...r, paid } : r)));
+    const row = ledger.find((r) => r.id === id);
+    // Checking "paid" records the full amount; unchecking reopens the balance.
+    const paid_amount = paid ? row?.amount ?? 0 : row?.paid_amount ?? 0;
+    setLedger((prev) => prev.map((r) => (r.id === id ? { ...r, paid, paid_amount } : r)));
     await supabase
       .from("invoices")
-      .update({ paid, paid_at: paid ? new Date().toISOString() : null })
+      .update({ paid, paid_amount, paid_at: paid ? new Date().toISOString() : null })
       .eq("id", id);
+  };
+  // Record a partial (or full) payment: set the total paid-so-far amount. When
+  // it covers the invoice, the row flips to fully paid automatically.
+  const recordPayment = async (r: InvoiceLedger, raw: string) => {
+    const amt = parseFloat(raw.replace(/[$,]/g, ""));
+    if (isNaN(amt) || amt < 0) {
+      setPayMsg("Enter a valid dollar amount.");
+      setTimeout(() => setPayMsg(""), 4000);
+      return;
+    }
+    const paidAmount = Math.round(amt * 100) / 100;
+    const nowFullyPaid = paidAmount >= (r.amount ?? 0) - 0.005;
+    setLedger((prev) =>
+      prev.map((x) =>
+        x.id === r.id ? { ...x, paid_amount: paidAmount, paid: nowFullyPaid } : x
+      )
+    );
+    const { error } = await supabase
+      .from("invoices")
+      .update({
+        paid_amount: paidAmount,
+        paid: nowFullyPaid,
+        paid_at: nowFullyPaid ? new Date().toISOString() : null,
+      })
+      .eq("id", r.id);
+    if (error) {
+      setPayMsg(
+        /paid_amount/.test(error.message)
+          ? "Run migration 0054 (partial payments) in Supabase first."
+          : `Error: ${error.message}`
+      );
+      setTimeout(() => setPayMsg(""), 8000);
+      loadLedger();
+    } else {
+      setPayMsg(
+        nowFullyPaid
+          ? `${facName(r.facility_id)} paid in full.`
+          : `Recorded — ${facName(r.facility_id)} balance ${money(balanceOf({ ...r, paid_amount: paidAmount }))}.`
+      );
+      setTimeout(() => setPayMsg(""), 5000);
+    }
   };
   const reminderLabel = (n: number) =>
     n <= 0 ? "—" : n === 1 ? "7-day sent" : n === 2 ? "7/14 sent" : "7/14/30 done";
@@ -768,21 +822,24 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                   Facility: facName(r.facility_id),
                   Month: monthLabel(r.period),
                   Amount: r.amount ?? 0,
+                  "Paid to date": r.paid_amount ?? 0,
+                  Balance: balanceOf(r),
                   Sent: new Date(r.sent_at).toLocaleDateString("en-US"),
                   Reminders: r.paid ? "—" : reminderLabel(r.reminders_sent),
-                  Paid: r.paid ? "Yes" : "No",
+                  Status: r.paid ? "Paid" : r.paid_amount > 0 ? "Partial" : "Unpaid",
                 })
               )}
             />
           )}
         </div>
         <p className="mt-1 text-sm text-surface-muted">
-          Every invoice you&apos;ve emailed. Mark one <b>Paid</b> when the money comes in — unpaid
-          ones automatically get a reminder at <b>7, 14, and 30 days</b>, then stop. Need to nudge
-          sooner? Hit <b>Send reminder</b> on any unpaid invoice.
+          Every invoice you&apos;ve emailed. Record a <b>partial payment</b> and the <b>Balance</b>
+          updates automatically; when the balance hits $0 the invoice flips to fully <b>Paid</b>.
+          Unpaid balances get a reminder at <b>7, 14, and 30 days</b>, then stop — or hit{" "}
+          <b>Send reminder</b> to nudge sooner.
         </p>
-        {remindMsg && (
-          <p className="mt-2 text-sm font-medium text-secured">{remindMsg}</p>
+        {(remindMsg || payMsg) && (
+          <p className="mt-2 text-sm font-medium text-secured">{remindMsg || payMsg}</p>
         )}
         {ledger.length === 0 ? (
           <div className="mt-4 text-sm text-surface-muted">
@@ -796,9 +853,11 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                   <th className="px-2 py-1.5">Facility</th>
                   <th className="px-2 py-1.5">Month</th>
                   <th className="px-2 py-1.5 text-right">Amount</th>
-                  <th className="px-2 py-1.5">Sent</th>
+                  <th className="px-2 py-1.5 text-right">Paid</th>
+                  <th className="px-2 py-1.5 text-right">Balance</th>
+                  <th className="px-2 py-1.5">Record payment</th>
                   <th className="px-2 py-1.5">Reminders</th>
-                  <th className="px-2 py-1.5 text-center">Paid</th>
+                  <th className="px-2 py-1.5 text-center">Paid in full</th>
                   <th className="px-2 py-1.5 text-right">Remind</th>
                 </tr>
               </thead>
@@ -815,8 +874,22 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                     <td className="px-2 py-1.5 text-right font-semibold text-secured">
                       {money(r.amount)}
                     </td>
-                    <td className="px-2 py-1.5 text-xs text-surface-muted">
-                      {new Date(r.sent_at).toLocaleDateString("en-US")}
+                    <td className="px-2 py-1.5 text-right font-mono text-recovered">
+                      {money(r.paid_amount)}
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-right font-mono font-semibold ${
+                        balanceOf(r) > 0 ? "text-risk" : "text-surface-muted"
+                      }`}
+                    >
+                      {money(balanceOf(r))}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {r.paid ? (
+                        <span className="text-xs text-surface-muted">Paid in full</span>
+                      ) : (
+                        <PaymentInput current={r.paid_amount} onSave={(v) => recordPayment(r, v)} />
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-xs text-surface-muted">
                       {r.paid ? "—" : reminderLabel(r.reminders_sent)}
@@ -827,7 +900,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                         checked={r.paid}
                         onChange={(e) => setPaid(r.id, e.target.checked)}
                         className="h-4 w-4"
-                        aria-label={`Mark ${facName(r.facility_id)} ${monthLabel(r.period)} paid`}
+                        aria-label={`Mark ${facName(r.facility_id)} ${monthLabel(r.period)} paid in full`}
                       />
                     </td>
                     <td className="px-2 py-1.5 text-right">
@@ -856,6 +929,35 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         then come here to package them. Re-import a month anytime — the bundle always reflects the
         latest.
       </p>
+    </div>
+  );
+}
+
+// Inline control to record how much a facility has paid on an invoice so far.
+// Holds its own draft so typing doesn't re-render the whole ledger.
+function PaymentInput({
+  current,
+  onSave,
+}: {
+  current: number;
+  onSave: (value: string) => void;
+}) {
+  const [v, setV] = useState(current ? String(current) : "");
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-xs text-surface-muted">$</span>
+      <input
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onSave(v);
+        }}
+        placeholder="paid to date"
+        className="input w-28 px-2 py-1 text-xs"
+      />
+      <button onClick={() => onSave(v)} className="btn-ghost px-2 py-1 text-xs">
+        Save
+      </button>
     </div>
   );
 }
