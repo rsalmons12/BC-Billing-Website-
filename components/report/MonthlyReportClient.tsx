@@ -250,6 +250,48 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const reminderLabel = (n: number) =>
     n <= 0 ? "—" : n === 1 ? "7-day sent" : n === 2 ? "7/14 sent" : "7/14/30 done";
 
+  // ---- Square payments: live read of what facilities actually paid ----
+  type SquarePayment = {
+    id: string;
+    createdAt: string;
+    amount: number;
+    status: string;
+    note: string | null;
+    receiptUrl: string | null;
+  };
+  const [sqPayments, setSqPayments] = useState<SquarePayment[]>([]);
+  const [sqLoading, setSqLoading] = useState(false);
+  const [sqErr, setSqErr] = useState("");
+  const [sqLoaded, setSqLoaded] = useState(false);
+  const loadSquare = useCallback(async () => {
+    setSqLoading(true);
+    setSqErr("");
+    try {
+      const res = await fetch("/api/square-payments?days=60");
+      const d = await res.json();
+      if (!res.ok) {
+        setSqErr(d.error || "Could not load Square payments.");
+        setSqPayments([]);
+      } else {
+        setSqPayments((d.payments ?? []) as SquarePayment[]);
+        if (d.error) setSqErr(d.error);
+      }
+    } catch {
+      setSqErr("Could not reach Square.");
+    } finally {
+      setSqLoading(false);
+      setSqLoaded(true);
+    }
+  }, []);
+  // Best-effort match of a Square payment to an unpaid invoice by exact balance.
+  const matchInvoice = useCallback(
+    (amount: number) => {
+      const hits = ledger.filter((r) => !r.paid && Math.abs(balanceOf(r) - amount) < 0.01);
+      return hits.length === 1 ? hits[0] : null;
+    },
+    [ledger]
+  );
+
   // Manually fire a payment reminder for one invoice, right now.
   const [remindingId, setRemindingId] = useState<string | null>(null);
   const [remindMsg, setRemindMsg] = useState("");
@@ -931,6 +973,111 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* ---- Square payments: what facilities actually paid (live) ---- */}
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-lg font-bold">Square payments</h2>
+            <p className="mt-1 text-sm text-surface-muted">
+              Live from Square — payments received in the last 60 days. Match one to an invoice and
+              hit <b>Apply</b> to mark it paid.
+            </p>
+          </div>
+          <button onClick={loadSquare} disabled={sqLoading} className="btn-primary">
+            {sqLoading ? "Loading…" : sqLoaded ? "↻ Refresh" : "Load Square payments"}
+          </button>
+        </div>
+
+        {sqErr && (
+          <p className="mt-3 rounded-lg bg-risk/10 px-3 py-2 text-sm text-risk">{sqErr}</p>
+        )}
+
+        {sqLoaded && !sqErr && sqPayments.length === 0 && (
+          <p className="mt-3 text-sm text-surface-muted">
+            No Square payments in the last 60 days.
+          </p>
+        )}
+
+        {sqPayments.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-muted">
+                  <th className="px-2 py-1.5">Date</th>
+                  <th className="px-2 py-1.5 text-right">Amount</th>
+                  <th className="px-2 py-1.5">Status</th>
+                  <th className="px-2 py-1.5">Note</th>
+                  <th className="px-2 py-1.5">Matches invoice</th>
+                  <th className="px-2 py-1.5">Receipt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sqPayments.map((p) => {
+                  const match = matchInvoice(p.amount);
+                  const done = /COMPLETED|APPROVED/i.test(p.status);
+                  return (
+                    <tr key={p.id} className="border-t border-surface-border">
+                      <td className="px-2 py-1.5 text-xs text-surface-muted">
+                        {p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-US") : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono font-semibold text-recovered">
+                        {money(p.amount)}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span
+                          className={`badge ${
+                            done ? "bg-recovered/15 text-recovered" : "bg-gold/15 text-gold"
+                          }`}
+                        >
+                          {p.status || "—"}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-xs text-surface-muted">{p.note || "—"}</td>
+                      <td className="px-2 py-1.5 text-xs">
+                        {match ? (
+                          <span className="flex items-center gap-2">
+                            <span className="text-surface-ink">
+                              {facName(match.facility_id)} · {monthLabel(match.period)}
+                            </span>
+                            <button
+                              onClick={() => recordPayment(match, String(match.amount))}
+                              className="btn-ghost px-2 py-0.5 text-[11px]"
+                            >
+                              Apply
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="text-surface-muted">—</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 text-xs">
+                        {p.receiptUrl ? (
+                          <a
+                            href={p.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-brand-blue hover:underline"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="mt-2 text-xs text-surface-muted">
+              &ldquo;Matches invoice&rdquo; shows when a payment&apos;s amount equals an unpaid
+              invoice&apos;s remaining balance. Always confirm it&apos;s the right facility before
+              applying.
+            </p>
           </div>
         )}
       </div>
