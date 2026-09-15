@@ -9,10 +9,13 @@ export default function RecapActions() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
-  const call = async (body: Record<string, unknown>, confirmText?: string) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+  const call = async (
+    body: Record<string, unknown>,
+    opts?: { confirmText?: string; okMsg?: (d: Record<string, unknown>) => string; workingMsg?: string }
+  ) => {
+    if (opts?.confirmText && !window.confirm(opts.confirmText)) return;
     setBusy(true);
-    setMsg(confirmText ? "Sending…" : "Preparing preview…");
+    setMsg(opts?.workingMsg ?? (opts?.confirmText ? "Sending…" : "Preparing preview…"));
     try {
       const res = await fetch("/api/facility-recap", {
         method: "POST",
@@ -22,9 +25,11 @@ export default function RecapActions() {
       const d = await res.json().catch(() => ({}));
       setMsg(
         res.ok
-          ? confirmText
-            ? `✓ Sent to ${d.facilities ?? 0} facility recap(s).`
-            : `✓ Preview emailed to you (${d.facilities ?? 0} facilities).`
+          ? opts?.okMsg
+            ? opts.okMsg(d)
+            : opts?.confirmText
+              ? `✓ Sent to ${d.facilities ?? 0} facility recap(s).`
+              : `✓ Preview emailed to you (${d.facilities ?? 0} facilities).`
           : `Error: ${d.error || "failed"}`
       );
     } catch {
@@ -46,7 +51,25 @@ export default function RecapActions() {
       </button>
       <button
         onClick={() =>
-          call({}, "Send every facility their recap now? This emails all facilities.")
+          call(
+            { demo: true },
+            {
+              workingMsg: "Sending demo…",
+              okMsg: () => "✓ Demo daily recap emailed to you.",
+            }
+          )
+        }
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-green/40 bg-brand-green/10 px-3 py-1.5 text-sm font-semibold text-brand-green hover:bg-brand-green/15 disabled:opacity-50"
+      >
+        🎬 Send demo daily recap
+      </button>
+      <button
+        onClick={() =>
+          call(
+            {},
+            { confirmText: "Send every facility their recap now? This emails all facilities." }
+          )
         }
         disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg bg-brand-blue px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 hover:shadow-brand disabled:opacity-50"
