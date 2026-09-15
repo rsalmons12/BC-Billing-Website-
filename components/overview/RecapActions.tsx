@@ -8,6 +8,7 @@ import { useState } from "react";
 export default function RecapActions() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [demoTo, setDemoTo] = useState("");
 
   const call = async (
     body: Record<string, unknown>,
@@ -49,21 +50,30 @@ export default function RecapActions() {
       >
         👁 Preview facility recap
       </button>
-      <button
-        onClick={() =>
-          call(
-            { demo: true },
-            {
-              workingMsg: "Sending demo…",
-              okMsg: () => "✓ Demo daily recap emailed to you.",
-            }
-          )
-        }
-        disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-green/40 bg-brand-green/10 px-3 py-1.5 text-sm font-semibold text-brand-green hover:bg-brand-green/15 disabled:opacity-50"
-      >
-        🎬 Send demo daily recap
-      </button>
+      <span className="inline-flex items-center gap-1.5">
+        <input
+          type="email"
+          value={demoTo}
+          onChange={(e) => setDemoTo(e.target.value)}
+          placeholder="demo → email (blank = me)"
+          className="w-52 rounded-lg border border-surface-border bg-surface-card px-2.5 py-1.5 text-sm outline-none focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
+        />
+        <button
+          onClick={() =>
+            call(
+              { demo: true, to: demoTo.trim() },
+              {
+                workingMsg: "Sending demo…",
+                okMsg: (d) => `✓ Demo daily recap sent to ${d.sentTo ?? "you"}.`,
+              }
+            )
+          }
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-brand-green/40 bg-brand-green/10 px-3 py-1.5 text-sm font-semibold text-brand-green hover:bg-brand-green/15 disabled:opacity-50"
+        >
+          🎬 Send demo daily recap
+        </button>
+      </span>
       <button
         onClick={() =>
           call(
