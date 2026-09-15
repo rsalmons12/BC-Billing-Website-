@@ -32,3 +32,11 @@ services:
         sync: false
       - key: SQUARE_ENV
         value: production
+      # Twilio — weekly census text recap to each facility. SID/token/from-number
+      # are secrets entered in the dashboard.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
