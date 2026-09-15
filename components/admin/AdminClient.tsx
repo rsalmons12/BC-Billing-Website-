@@ -661,6 +661,7 @@ function FacilitiesTab({
               <th className="th">Square pay link</th>
               <th className="th">Email (for Messages)</th>
               <th className="th">Recap BCC</th>
+              <th className="th">SMS # (census text)</th>
               <th className="th"></th>
             </tr>
           </thead>
@@ -793,6 +794,19 @@ function FacilitiesTab({
                     className="cell-input min-w-[16rem]"
                     placeholder="bcc@example.com (blank = none)"
                     title="Extra address(es) BCC'd on THIS facility's daily recap only. Comma-separated. Leave blank for no extra BCC."
+                  />
+                </td>
+                <td className="td">
+                  <input
+                    type="tel"
+                    defaultValue={f.sms_phone ?? ""}
+                    onBlur={(e) =>
+                      e.target.value !== (f.sms_phone ?? "") &&
+                      save(f, { sms_phone: e.target.value.trim() || null })
+                    }
+                    className="cell-input min-w-[10rem]"
+                    placeholder="(555) 123-4567"
+                    title="Mobile number that receives this facility's weekly census text. Blank = no text."
                   />
                 </td>
                 <td className="td text-right">

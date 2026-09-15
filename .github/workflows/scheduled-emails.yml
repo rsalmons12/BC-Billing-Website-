@@ -18,6 +18,9 @@ on:
     - cron: "50 21 * * *"
     # Invoice reminders — once a day (~9 AM ET). Idempotent (milestone-tracked).
     - cron: "15 14 * * *"
+    # Weekly census text — Monday ~9 AM ET. 13:xx UTC = 9 AM EDT, 14:xx = 9 AM EST.
+    - cron: "10 13 * * 1"
+    - cron: "10 14 * * 1"
   workflow_dispatch: {} # run the morning brief on demand (forced) from the Actions tab
 
 jobs:
@@ -48,4 +51,13 @@ jobs:
       - name: Send 7/14/30-day invoice reminders (unpaid only)
         run: |
           curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/invoice-reminders" \
+            -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"
+
+  census-text:
+    if: endsWith(github.event.schedule, '* * 1')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Text each facility its weekly census summary
+        run: |
+          curl -fsS -X GET "https://bc-billing.onrender.com/api/cron/census-text" \
             -H "Authorization: Bearer x" -w "\nHTTP %{http_code}\n"

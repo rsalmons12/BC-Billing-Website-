@@ -14,6 +14,7 @@ export interface Facility {
   iop_floor: number | null; // per-day reimbursement floor for IOP (recap flag)
   op_floor: number | null; // per-day reimbursement floor for OP (recap flag)
   recap_bcc: string | null; // extra BCC(s) on THIS facility's daily recap (comma-separated)
+  sms_phone: string | null; // mobile number that receives this facility's weekly census text
   created_at: string;
 }
 
