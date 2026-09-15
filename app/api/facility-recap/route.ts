@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let body: { test?: boolean; dryRun?: boolean; demo?: boolean } = {};
+  let body: { test?: boolean; dryRun?: boolean; demo?: boolean; to?: string } = {};
   try {
     body = await request.json();
   } catch {
@@ -45,12 +45,16 @@ export async function POST(request: Request) {
   const date = easternToday();
 
   // DEMO: send a sample daily recap built from FAKE data (billed / collected /
-  // AR / negotiations) to the caller only — a "here's what the daily update
-  // looks like" email. No real facility is read or emailed. Management only.
+  // AR / negotiations) — a "here's what the daily update looks like" email.
+  // Goes to a recipient you name (a prospect), or to yourself when blank. No
+  // real facility is read or emailed. Management only.
   if (body.demo) {
     if (me.role !== "management")
       return NextResponse.json({ error: "Management only." }, { status: 403 });
-    const to = [user.email ?? ""].filter((e) => e.includes("@"));
+    const requested = String(body.to ?? "").trim();
+    if (requested && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(requested))
+      return NextResponse.json({ error: "That doesn't look like a valid email address." }, { status: 400 });
+    const to = requested ? [requested] : [user.email ?? ""].filter((e) => e.includes("@"));
     if (to.length === 0)
       return NextResponse.json({ error: "Your account has no email to send to." }, { status: 400 });
     const recap = demoFacilityRecap();
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, demo: true, recipients: to.length });
+    return NextResponse.json({ ok: true, demo: true, recipients: to.length, sentTo: to[0] });
   }
 
   // FACILITY login: email THIS facility login its own recap(s) to its own
