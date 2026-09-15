@@ -1086,3 +1086,69 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     <p style="font-size:11px;color:${FAINT}">Automated daily recap from BC Billing. Contains PHI — handle per HIPAA.</p>
   </div>`;
 }
+
+// A fully fake FacilityRecap for demos — realistic Billed / Collected / AR /
+// negotiation / level-of-care numbers so a "Send demo recap" button produces an
+// email that looks exactly like a real daily recap without touching any real
+// facility's data. Rendered through renderFacilityRecap like any other recap.
+export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
+  const monthLabel = now.toLocaleString("en-US", { month: "short", year: "numeric" });
+  const prior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const priorMonthLabel = prior.toLocaleString("en-US", { month: "short", year: "numeric" });
+  const dayRange = `1–${now.getDate()}`;
+  const billedThisMonth = 468200;
+  const billedLastMonth = 421050;
+  const billedDelta = billedThisMonth - billedLastMonth;
+  const billedPct = Math.round((billedDelta / billedLastMonth) * 100);
+  return {
+    facilityId: "demo",
+    name: "Summit Ridge Recovery (Demo)",
+    monthLabel,
+    priorMonthLabel,
+    dayRange,
+    totalAR: 1284500,
+    expectedRevenue: 96400,
+    collectedThisMonth: 312800,
+    billedThisMonth,
+    billedLastMonth,
+    billedDelta,
+    billedPct,
+    locRows: [
+      { loc: "PHP", cur: 1284, prior: 1190, delta: 94 },
+      { loc: "IOP", cur: 2046, prior: 1988, delta: 58 },
+      { loc: "OP", cur: 612, prior: 640, delta: -28 },
+    ],
+    billingNote:
+      "Billing is up on stronger PHP volume — collections should follow over the next few weeks as those claims get paid.",
+    riskAR: 214700,
+    arRows: [
+      ["Aetna", 342000],
+      ["BCBS", 298500],
+      ["Cigna", 176200],
+      ["UnitedHealthcare", 151300],
+      ["Horizon", 121800],
+    ],
+    payRows: [
+      ["Aetna", 96400],
+      ["BCBS", 81200],
+      ["Cigna", 58900],
+      ["UnitedHealthcare", 44300],
+      ["Horizon", 31900],
+    ],
+    negOpen: 8,
+    negExpected: 74500,
+    negDueSoon: 3,
+    approvedNegCount: 5,
+    outlook: null,
+    census: null,
+    missedGroups: [],
+    belowFloor: [],
+    censusReceivables: [],
+    statusBuckets: [
+      { key: "aetna|claim-at", payer: "Aetna", action: "Claim At", label: "Aetna · Claim At", count: 22, balance: 142300, lastWorked: null },
+      { key: "bcbs|denied-at", payer: "BCBS", action: "Denied At", label: "BCBS · Denied At", count: 14, balance: 98600, lastWorked: null },
+      { key: "cigna|user-print", payer: "Cigna", action: "User Print", label: "Cigna · User Print", count: 9, balance: 61200, lastWorked: null },
+    ],
+    workCoverage: { total: 214, worked14: 182 },
+  };
+}

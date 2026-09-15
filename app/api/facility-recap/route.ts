@@ -7,6 +7,7 @@ import {
   facilityRecipients,
   recapBccByFacility,
   renderFacilityRecap,
+  demoFacilityRecap,
 } from "@/lib/report/facilityRecap";
 
 // Manual "send now" for the facility daily recap. Management only.
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let body: { test?: boolean; dryRun?: boolean } = {};
+  let body: { test?: boolean; dryRun?: boolean; demo?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -42,6 +43,31 @@ export async function POST(request: Request) {
   }
 
   const date = easternToday();
+
+  // DEMO: send a sample daily recap built from FAKE data (billed / collected /
+  // AR / negotiations) to the caller only — a "here's what the daily update
+  // looks like" email. No real facility is read or emailed. Management only.
+  if (body.demo) {
+    if (me.role !== "management")
+      return NextResponse.json({ error: "Management only." }, { status: 403 });
+    const to = [user.email ?? ""].filter((e) => e.includes("@"));
+    if (to.length === 0)
+      return NextResponse.json({ error: "Your account has no email to send to." }, { status: 400 });
+    const recap = demoFacilityRecap();
+    const html =
+      `<div style="font-family:Arial,sans-serif;font-size:13px;color:#555;padding:10px 0">` +
+      `<b>DEMO</b> — sample daily recap with example numbers. Not real facility data.</div>` +
+      `<div style="border:1px solid #ddd;border-radius:10px;padding:14px">${renderFacilityRecap(
+        recap,
+        date
+      )}</div>`;
+    try {
+      await sendResend(to, `[DEMO] Daily Recap — ${recap.name} (${date})`, html);
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true, demo: true, recipients: to.length });
+  }
 
   // FACILITY login: email THIS facility login its own recap(s) to its own
   // session email. Reads through the caller's OWN session (RLS scopes it to
