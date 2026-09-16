@@ -7,6 +7,7 @@ import { periodOf } from "@/lib/import/parseTrackers";
 import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
 import ExportButton, { type ExportRow } from "@/components/overview/ExportButton";
 import { money } from "@/lib/format";
+import { periodLabel, halfLabel } from "@/lib/invoicePeriod";
 import type { Payment, BilledClaim, Claim, Negotiation, Facility } from "@/lib/types";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -138,6 +139,9 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   };
   type SendResult = { name: string; ok: boolean; recipients?: number; error?: string; squareError?: string | null };
   const [allMonth, setAllMonth] = useState("");
+  // Billing period for the batch: 0 = full month, 1 = mid-month (1st–15th),
+  // 2 = second half (16th–end). Mid-month invoices let you bill twice a month.
+  const [allHalf, setAllHalf] = useState<0 | 1 | 2>(0);
   const [allMonths, setAllMonths] = useState<string[]>([]);
   const [allRows, setAllRows] = useState<InvoiceRow[]>([]);
   const [allLoading, setAllLoading] = useState(false);
@@ -410,7 +414,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       const res = await fetch("/api/invoice-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(m ? { month: m } : {}),
+        body: JSON.stringify(m ? { month: m, half: allHalf || undefined } : {}),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -428,7 +432,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     } finally {
       setAllLoading(false);
     }
-  }, []);
+  }, [allHalf]);
 
   // Discover months once, then reload whenever the batch month changes.
   useEffect(() => {
@@ -455,9 +459,10 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const sendAll = async () => {
     const toSend = selectedRows;
     if (!toSend.length) return;
+    const periodText = allHalf ? `${monthLabel(allMonth)} (${halfLabel(allHalf)})` : monthLabel(allMonth);
     if (
       !confirm(
-        `Send ${toSend.length} invoice(s) for ${monthLabel(allMonth)} — total ${money(selectedTotal)}?\n\n` +
+        `Send ${toSend.length} ${allHalf ? "MID-MONTH " : ""}invoice(s) for ${periodText} — total ${money(selectedTotal)}?\n\n` +
           `Each facility's invoice goes to ITS OWN login; management marked "Invoices" is BCC'd. This sends real emails.`
       )
     )
@@ -471,7 +476,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         const res = await fetch("/api/invoice-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ facilityId: r.facilityId, month: allMonth, test: false }),
+          body: JSON.stringify({ facilityId: r.facilityId, month: allMonth, half: allHalf || undefined, test: false }),
         });
         const d = await res.json().catch(() => ({}));
         results.push({
@@ -747,25 +752,44 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
           <div>
             <h2 className="font-display text-lg font-bold">All invoices — send in one batch</h2>
             <p className="mt-1 text-sm text-surface-muted">
-              Every facility&apos;s invoice for the month. Verify each one, then send them all at once.
+              Every facility&apos;s invoice for the period. Verify each one, then send them all at once.
+              {allHalf
+                ? " Mid-month bills only that half's collections — the other half is billed separately."
+                : ""}
             </p>
           </div>
-          <label className="block">
-            <span className="label">Month</span>
-            <select
-              value={allMonth}
-              onChange={(e) => setAllMonth(e.target.value)}
-              className="input"
-              disabled={allLoading || allMonths.length === 0}
-            >
-              {allMonths.length === 0 && <option value="">No data</option>}
-              {allMonths.map((m) => (
-                <option key={m} value={m}>
-                  {monthLabel(m)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="label">Month</span>
+              <select
+                value={allMonth}
+                onChange={(e) => setAllMonth(e.target.value)}
+                className="input"
+                disabled={allLoading || allMonths.length === 0}
+              >
+                {allMonths.length === 0 && <option value="">No data</option>}
+                {allMonths.map((m) => (
+                  <option key={m} value={m}>
+                    {monthLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">Billing period</span>
+              <select
+                value={allHalf}
+                onChange={(e) => setAllHalf(Number(e.target.value) as 0 | 1 | 2)}
+                className="input"
+                disabled={allLoading}
+                title="Full month, or a mid-month split so you can bill twice a month"
+              >
+                <option value={0}>Full month</option>
+                <option value={1}>Mid-month · 1st–15th</option>
+                <option value={2}>Second half · 16th–end</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         {allLoading ? (
@@ -894,7 +918,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               rows={ledger.map(
                 (r): ExportRow => ({
                   Facility: ledgerFacName(r.facility_id),
-                  Month: monthLabel(r.period),
+                  Month: periodLabel(r.period),
                   Amount: r.amount ?? 0,
                   "Paid to date": r.paid_amount ?? 0,
                   Balance: balanceOf(r),
@@ -991,7 +1015,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                     <td className="px-2 py-1.5 font-medium text-surface-ink">
                       {ledgerFacName(r.facility_id)}
                     </td>
-                    <td className="px-2 py-1.5">{monthLabel(r.period)}</td>
+                    <td className="px-2 py-1.5">{periodLabel(r.period)}</td>
                     <td className="px-2 py-1.5 text-right font-semibold text-secured">
                       {money(r.amount)}
                     </td>
@@ -1021,7 +1045,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                         checked={r.paid}
                         onChange={(e) => setPaid(r.id, e.target.checked)}
                         className="h-4 w-4"
-                        aria-label={`Mark ${facName(r.facility_id)} ${monthLabel(r.period)} paid in full`}
+                        aria-label={`Mark ${facName(r.facility_id)} ${periodLabel(r.period)} paid in full`}
                       />
                     </td>
                     <td className="px-2 py-1.5 text-right">
@@ -1109,7 +1133,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                         {match ? (
                           <span className="flex items-center gap-2">
                             <span className="text-surface-ink">
-                              {facName(match.facility_id)} · {monthLabel(match.period)}
+                              {facName(match.facility_id)} · {periodLabel(match.period)}
                             </span>
                             <button
                               onClick={() => recordPayment(match, String(match.amount))}
