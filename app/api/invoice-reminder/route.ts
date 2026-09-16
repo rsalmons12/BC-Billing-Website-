@@ -5,18 +5,13 @@ import { sendResend } from "@/lib/report/eodSummary";
 import { resolveInvoiceRecipients } from "@/lib/report/invoiceRecipients";
 import { createSquarePaymentLink } from "@/lib/square";
 import { money } from "@/lib/format";
+import { periodLabel } from "@/lib/invoicePeriod";
 
 // Manually send a payment reminder for ONE invoice, right now — the owner's
 // "Send reminder" button. The 7/14/30-day cron still runs on its own; this just
 // lets the owner nudge a facility on demand. Owner-only. Records the send in
 // last_reminder_at but leaves the automatic milestone clock alone.
 export const dynamic = "force-dynamic";
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function monthLabel(ym: string): string {
-  const m = ym?.match(/^(\d{4})-(\d{2})$/);
-  return m ? `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : ym;
-}
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -71,7 +66,7 @@ export async function POST(request: Request) {
     .eq("id", inv.facility_id)
     .maybeSingle();
   const facilityName = fac?.short_name || fac?.name || "Facility";
-  const label = monthLabel(inv.period);
+  const label = periodLabel(inv.period);
   // Remind for the REMAINING balance when a partial payment is on file.
   const paidSoFar = Number(inv.paid_amount) || 0;
   const amount = Math.max(0, (Number(inv.amount) || 0) - paidSoFar);

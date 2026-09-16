@@ -7,6 +7,7 @@ import { sendResend } from "@/lib/report/eodSummary";
 import { buildMonthlyBundle } from "@/lib/report/monthlyBundle";
 import { createSquarePaymentLink } from "@/lib/square";
 import { money } from "@/lib/format";
+import { makePeriod, periodFull, periodLabel, dayOfMonth, inHalf, type Half } from "@/lib/invoicePeriod";
 import type { Payment, BilledClaim, Claim, Negotiation } from "@/lib/types";
 
 // Email a facility's monthly invoice (fee = collected × the facility's rate) to
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY)
     return NextResponse.json({ error: "Email is not configured (RESEND_API_KEY missing)." }, { status: 503 });
 
-  let body: { facilityId?: string; month?: string; test?: boolean; dryRun?: boolean } = {};
+  let body: { facilityId?: string; month?: string; half?: number; test?: boolean; dryRun?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
   }
   if (!body.facilityId || !body.month)
     return NextResponse.json({ error: "Missing facility or month." }, { status: 400 });
+  // Mid-month split: half 1 = collections the 1st–15th, half 2 = 16th–end. Null
+  // = the whole month (the normal invoice).
+  const half: Half = body.half === 1 || body.half === 2 ? (body.half as Half) : null;
+  const periodKey = makePeriod(body.month, half);
 
   const { data: fac } = await supabase
     .from("facilities")
@@ -166,20 +171,27 @@ export async function POST(request: Request) {
   ]);
 
   const payMonth = (p: Payment) => periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "");
+  const payDay = (p: Payment) => dayOfMonth(p.deposit_date ?? p.payment_entered ?? "");
   const bilMonth = (b: BilledClaim) => b.period || periodOf(b.entered_date ?? "");
-  const monthPayments = pays.filter((p) => payMonth(p) === body.month);
+  // For a mid-month split, only count collections whose deposit day falls in the
+  // chosen half — so the two halves never overlap.
+  const monthPayments = pays.filter((p) => payMonth(p) === body.month && inHalf(payDay(p), half));
   const monthBilled = billed.filter((b) => bilMonth(b) === body.month);
   const collected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
   const baseFee = Math.round(collected * (rate / 100) * 100) / 100;
   const facilityName = fac.short_name || fac.name;
-  const label = monthLabel(body.month);
+  const label = periodLabel(periodKey);
 
-  // Extra charges (late fees, adjustments) added for this facility + month.
-  const { data: chargeRows } = await supabase
-    .from("invoice_charges")
-    .select("label, amount")
-    .eq("facility_id", body.facilityId)
-    .eq("period", body.month);
+  // Extra charges (late fees, adjustments) for this facility + month. Charges
+  // are month-level, so they ride ONLY on a full-month invoice — never split
+  // across the two halves (which would double- or half-bill them).
+  const { data: chargeRows } = half
+    ? { data: [] as { label: string; amount: number }[] }
+    : await supabase
+        .from("invoice_charges")
+        .select("label, amount")
+        .eq("facility_id", body.facilityId)
+        .eq("period", body.month);
   const charges = (chargeRows ?? []) as { label: string; amount: number }[];
   const chargesTotal =
     Math.round(charges.reduce((s, c) => s + (Number(c.amount) || 0), 0) * 100) / 100;
@@ -293,7 +305,9 @@ export async function POST(request: Request) {
   try {
     await sendResend(
       to,
-      `${body.test ? "[TEST] " : ""}${monthFull(body.month)} Monthly Reporting and Invoice — ${facilityName}`,
+      half
+        ? `${body.test ? "[TEST] " : ""}Mid-Month Invoice (${periodFull(periodKey)}) — ${facilityName}`
+        : `${body.test ? "[TEST] " : ""}${monthFull(body.month)} Monthly Reporting and Invoice — ${facilityName}`,
       html,
       bcc,
       attachment ? [attachment] : undefined
@@ -311,7 +325,7 @@ export async function POST(request: Request) {
       await admin.from("invoices").upsert(
         {
           facility_id: body.facilityId,
-          period: body.month,
+          period: periodKey,
           amount: fee,
           collected,
           rate,

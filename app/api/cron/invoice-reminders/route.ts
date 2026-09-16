@@ -5,6 +5,7 @@ import { logCronRun } from "@/lib/report/cronLog";
 import { resolveInvoiceRecipients } from "@/lib/report/invoiceRecipients";
 import { createSquarePaymentLink } from "@/lib/square";
 import { money } from "@/lib/format";
+import { periodLabel } from "@/lib/invoicePeriod";
 
 // Daily: email a reminder for any UNPAID invoice at 7, 14, and 30 days after it
 // was sent, then stop. Idempotent — each milestone is sent at most once (tracked
@@ -12,11 +13,6 @@ import { money } from "@/lib/format";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function monthLabel(ym: string): string {
-  const m = ym?.match(/^(\d{4})-(\d{2})$/);
-  return m ? `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : ym;
-}
 const DAY = 86400000;
 // Which reminder milestone is due given days elapsed: 3 = 30d, 2 = 14d, 1 = 7d.
 function dueMilestone(days: number): number {
@@ -83,7 +79,7 @@ export async function GET(request: Request) {
 
     const fac = facById.get(inv.facility_id);
     const facilityName = fac?.short_name || fac?.name || "Facility";
-    const label = monthLabel(inv.period);
+    const label = periodLabel(inv.period);
     // Remind for the remaining balance when a partial payment is on file.
     const paidSoFar = Number(inv.paid_amount) || 0;
     const amount = Math.max(0, (Number(inv.amount) || 0) - paidSoFar);

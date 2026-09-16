@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
+import { dayOfMonth, inHalf, type Half } from "@/lib/invoicePeriod";
 import type { Payment, Facility } from "@/lib/types";
 
 // Owner-only. Returns EVERY facility's invoice for a month — collected, rate,
@@ -27,12 +28,13 @@ export async function POST(request: Request) {
   if (me?.role !== "management" || me?.is_owner !== true)
     return NextResponse.json({ error: "Owners only." }, { status: 403 });
 
-  let body: { month?: string } = {};
+  let body: { month?: string; half?: number } = {};
   try {
     body = await request.json();
   } catch {
     /* month optional */
   }
+  const half: Half = body.half === 1 || body.half === 2 ? (body.half as Half) : null;
 
   const { data: facRows } = await supabase
     .from("facilities")
@@ -68,8 +70,9 @@ export async function POST(request: Request) {
   const facInvoiceIds = new Set(facInvoiceProfiles.map((p) => p.id));
 
   // Extra charges (late fees, adjustments) for the selected month, per facility.
+  // Charges ride only on a FULL-month invoice, never on a mid-month half.
   const chargesByFac = new Map<string, number>();
-  if (body.month) {
+  if (body.month && !half) {
     const { data: chg } = await supabase
       .from("invoice_charges")
       .select("facility_id, amount")
@@ -80,6 +83,7 @@ export async function POST(request: Request) {
 
   const payMonth = (p: Payment) =>
     periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "");
+  const payDay = (p: Payment) => dayOfMonth(p.deposit_date ?? p.payment_entered ?? "");
 
   const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
   const monthSet = new Set<string>();
@@ -96,6 +100,9 @@ export async function POST(request: Request) {
         const m = payMonth(p);
         if (!m) continue;
         monthSet.add(m);
+        // For a mid-month split, only count payments whose deposit day is in the
+        // chosen half — the month dropdown still lists every month.
+        if (!inHalf(payDay(p), half)) continue;
         byMonth.set(m, (byMonth.get(m) ?? 0) + (p.paid_amount ?? 0));
       }
       const collected = body.month ? byMonth.get(body.month) ?? 0 : 0;
@@ -134,5 +141,5 @@ export async function POST(request: Request) {
   );
 
   const months = Array.from(monthSet).sort().reverse();
-  return NextResponse.json({ ok: true, month: body.month ?? null, months, invoices });
+  return NextResponse.json({ ok: true, month: body.month ?? null, half, months, invoices });
 }
