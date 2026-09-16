@@ -122,6 +122,7 @@ export default function QueueClient({
   const [collectorId, setCollectorId] = useState(self.id);
   const [rows, setRows] = useState<ClaimRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState("");
 
   // Filters
@@ -223,6 +224,8 @@ export default function QueueClient({
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
+    try {
 
     // All assignments we can see (RLS: management sees all; staff see their
     // own + co-collectors on their facilities once the asg_read policy allows).
@@ -253,18 +256,29 @@ export default function QueueClient({
       return;
     }
 
-    // Claims for those facilities.
+    // Claims for those facilities. Fetch each facility independently so one
+    // facility erroring (e.g. a statement timeout on a very large facility)
+    // can't wipe out the whole queue — the others still load.
     const claims: Claim[] = [];
+    const facErrors: string[] = [];
     for (const fid of myFacilities) {
-      const c = await selectAll<Claim>((f, t) =>
-        supabase
-          .from("claims")
-          .select("*")
-          .eq("facility_id", fid)
-          .eq("present", true)
-          .range(f, t)
-      );
-      claims.push(...c);
+      try {
+        const c = await selectAll<Claim>((f, t) =>
+          supabase
+            .from("claims")
+            .select("*")
+            .eq("facility_id", fid)
+            .eq("present", true)
+            .range(f, t)
+        );
+        claims.push(...c);
+      } catch (e) {
+        facErrors.push(e instanceof Error ? e.message : "facility load failed");
+      }
+    }
+    if (facErrors.length && claims.length === 0) {
+      // Every facility failed — surface it rather than showing a false "empty".
+      throw new Error(facErrors[0]);
     }
 
     // Claims already shifted to Marketplace / Exchange leave the queue.
@@ -478,16 +492,28 @@ export default function QueueClient({
       );
     });
 
-    // Yesterday's production, so today's target can absorb any shortfall.
-    const { count: yCount } = await supabase
-      .from("production_log")
-      .select("id", { count: "exact", head: true })
-      .eq("collector_id", collectorId)
-      .eq("worked_on", yesterday);
-    setWorkedYesterday(yCount ?? 0);
+    // Yesterday's production, so today's target can absorb any shortfall. This
+    // is a non-essential nicety — never let it block the claims from rendering.
+    try {
+      const { count: yCount } = await supabase
+        .from("production_log")
+        .select("id", { count: "exact", head: true })
+        .eq("collector_id", collectorId)
+        .eq("worked_on", yesterday);
+      setWorkedYesterday(yCount ?? 0);
+    } catch {
+      setWorkedYesterday(0);
+    }
 
     setRows(mine);
-    setLoading(false);
+    } catch (e) {
+      // Never leave the collector stuck on "Building your queue…". Surface the
+      // error and show an empty queue so the page is usable and diagnosable.
+      setRows([]);
+      setLoadError(e instanceof Error ? e.message : "Could not load your queue.");
+    } finally {
+      setLoading(false);
+    }
   }, [supabase, collectorId, collector.queue_tier, yesterday]);
 
   useEffect(() => {
@@ -1376,7 +1402,22 @@ export default function QueueClient({
                 </td>
               </tr>
             )}
-            {!loading && visible.length === 0 && (
+            {!loading && loadError && (
+              <tr>
+                <td colSpan={8} className="td py-10 text-center">
+                  <div className="mx-auto max-w-md rounded-lg bg-risk/10 px-4 py-3 text-sm text-risk">
+                    Couldn&apos;t load your queue: {loadError}
+                  </div>
+                  <button
+                    onClick={() => load()}
+                    className="btn-ghost mt-3 px-3 py-1.5 text-xs"
+                  >
+                    ↻ Try again
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!loading && !loadError && visible.length === 0 && (
               <tr>
                 <td colSpan={8} className="td py-10 text-center text-surface-muted">
                   {view === "today" ? (
