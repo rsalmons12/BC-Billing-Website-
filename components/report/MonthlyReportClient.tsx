@@ -196,6 +196,27 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   }, [loadLedger]);
   const balanceOf = (r: InvoiceLedger) =>
     Math.max(0, Math.round(((r.amount ?? 0) - (r.paid_amount ?? 0)) * 100) / 100);
+  // Headline totals for the invoice tracker.
+  const ledgerTotals = useMemo(() => {
+    let invoiced = 0;
+    let collected = 0;
+    let outstanding = 0;
+    let unpaid = 0;
+    let partial = 0;
+    for (const r of ledger) {
+      const amt = r.amount ?? 0;
+      const paid = Math.min(r.paid_amount ?? 0, amt);
+      const bal = Math.max(0, Math.round((amt - paid) * 100) / 100);
+      invoiced += amt;
+      collected += paid;
+      outstanding += bal;
+      if (!r.paid) {
+        unpaid += 1;
+        if ((r.paid_amount ?? 0) > 0) partial += 1;
+      }
+    }
+    return { invoiced, collected, outstanding, unpaid, partial, count: ledger.length };
+  }, [ledger]);
   const setPaid = async (id: string, paid: boolean) => {
     const row = ledger.find((r) => r.id === id);
     // Checking "paid" records the full amount; unchecking reopens the balance.
@@ -893,6 +914,53 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         </p>
         {(remindMsg || payMsg) && (
           <p className="mt-2 text-sm font-medium text-secured">{remindMsg || payMsg}</p>
+        )}
+        {ledger.length > 0 && (
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-xl border border-surface-border bg-surface p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                Outstanding
+              </div>
+              <div className="font-display text-2xl font-bold text-risk">
+                {money(ledgerTotals.outstanding)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-surface-muted">
+                {ledgerTotals.unpaid} unpaid
+                {ledgerTotals.partial > 0 ? ` · ${ledgerTotals.partial} partial` : ""}
+              </div>
+            </div>
+            <div className="rounded-xl border border-surface-border bg-surface p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                Collected
+              </div>
+              <div className="font-display text-2xl font-bold text-recovered">
+                {money(ledgerTotals.collected)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-surface-muted">paid to date</div>
+            </div>
+            <div className="rounded-xl border border-surface-border bg-surface p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                Total Invoiced
+              </div>
+              <div className="font-display text-2xl font-bold text-surface-ink">
+                {money(ledgerTotals.invoiced)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-surface-muted">
+                {ledgerTotals.count} invoice{ledgerTotals.count === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="rounded-xl border border-surface-border bg-surface p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                Collection Rate
+              </div>
+              <div className="font-display text-2xl font-bold text-brand-blue">
+                {ledgerTotals.invoiced > 0
+                  ? `${Math.round((ledgerTotals.collected / ledgerTotals.invoiced) * 100)}%`
+                  : "—"}
+              </div>
+              <div className="mt-0.5 text-[11px] text-surface-muted">of invoiced collected</div>
+            </div>
+          </div>
         )}
         {ledger.length === 0 ? (
           <div className="mt-4 text-sm text-surface-muted">
