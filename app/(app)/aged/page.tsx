@@ -10,6 +10,10 @@ import type { Claim, Facility } from "@/lib/types";
 // Claims sitting this many days or longer are the aged bucket we surface here.
 const AGED_MIN_DAYS = 120;
 
+// Aged claims are a small slice of the table — never load the whole thing.
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 export default async function AgedPage() {
   const { profile, email } = await requireProfile();
   if (
@@ -29,6 +33,9 @@ export default async function AgedPage() {
           .from("claims")
           .select("claim_id,facility_id,member_id,balance,age_days")
           .eq("present", true)
+          // Only fetch the aged slice — filtering in JS meant pulling the ENTIRE
+          // claims table (every facility), which timed out and never loaded.
+          .gte("age_days", AGED_MIN_DAYS)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .range(f, t) as any
     ),
