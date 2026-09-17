@@ -35,6 +35,33 @@ export default function AdminClient({
     setTimeout(() => setMsg(""), 2000);
   };
 
+  const [seeding, setSeeding] = useState(false);
+  const seedDemo = async () => {
+    if (
+      !confirm(
+        "Fill the demo facility with fake data across every tab (claims, payments, billed, census, auth, negotiations)? Re-running replaces the demo data. Real facilities are never touched."
+      )
+    )
+      return;
+    setSeeding(true);
+    setMsg("Seeding demo data…");
+    try {
+      const res = await fetch("/api/demo-seed", { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(`Error: ${d.error || "seed failed"}`);
+      } else {
+        const total = Object.values(d.seeded ?? {}).reduce((s: number, n) => s + Number(n), 0);
+        setMsg(`✓ Seeded ${total} demo rows for ${d.facility}.`);
+      }
+    } catch {
+      setMsg("Error: could not reach the server.");
+    } finally {
+      setSeeding(false);
+      setTimeout(() => setMsg(""), 8000);
+    }
+  };
+
   const reloadProfiles = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("*").order("created_at");
     setProfiles((data as Profile[]) ?? []);
@@ -247,6 +274,14 @@ export default function AdminClient({
             title="Download a spreadsheet of all collectors (role = Staff · Collector)"
           >
             ↓ Export collectors{collectorCount ? ` (${collectorCount})` : ""}
+          </button>
+          <button
+            onClick={seedDemo}
+            disabled={seeding}
+            className="btn-ghost"
+            title='Fill the demo facility (name ends with "(Demo)") with fake data for every tab'
+          >
+            {seeding ? "Seeding…" : "🎬 Seed demo data"}
           </button>
           <BackupButton />
         </div>
