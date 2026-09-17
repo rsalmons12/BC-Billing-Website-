@@ -1,4 +1,4 @@
-import { redirect, notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/page";
@@ -44,9 +44,11 @@ export default async function AgedFacilityPage({
           .range(f, t) as any
     ),
   ]);
-  if (!fac) notFound(); // no access / unknown facility → RLS returns nothing
-
-  const facilityName = fac.short_name || fac.name || "Facility";
+  // Don't 404 (which bounced restricted collectors out of the 120+ flow) when
+  // the facilities row can't be read — the claims below are already RLS-scoped,
+  // so we just fall back to a name. If the collector truly has no access, the
+  // claims come back empty and they see a clean "no aged claims" state.
+  const facilityName = fac?.short_name || fac?.name || "Facility";
 
   const agg = new Map<string, { balance: number; lines: number }>();
   for (const c of claims) {
