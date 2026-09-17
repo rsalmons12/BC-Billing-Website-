@@ -10,6 +10,9 @@ import type { Claim } from "@/lib/types";
 
 const AGED_MIN_DAYS = 120;
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 export default async function AgedFacilityPage({
   params,
 }: {
@@ -34,6 +37,9 @@ export default async function AgedFacilityPage({
           .select("claim_id,facility_id,member_id,balance,age_days,claim_status")
           .eq("facility_id", params.facilityId)
           .eq("present", true)
+          // Only the aged slice for this facility (Pathways alone is thousands of
+          // claims — pulling them all timed out the drill and it never loaded).
+          .gte("age_days", AGED_MIN_DAYS)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .range(f, t) as any
     ),
