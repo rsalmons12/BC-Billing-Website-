@@ -10,6 +10,7 @@ import { money } from "@/lib/format";
 import { periodOf } from "@/lib/import/parseTrackers";
 import { arBalance, isExcludedMember, isStaleClaim, isDemoFacility } from "@/lib/claims";
 import { statusPayerName } from "@/lib/payer";
+import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
 import type { Claim, Payment, BilledClaim, Authorization, AuthIssue, Facility } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -189,6 +190,17 @@ export default async function OverviewPage({
   const heroThird = collectionRate >= 0.9 ? "Ahead of the Curve." : "On the Right Track.";
 
   const pickerFacilities = facilities.map((f) => ({ id: f.id, label: f.short_name || f.name }));
+
+  // Census — expected revenue on the current census's outstanding claims
+  // (each patient's per-day reimbursement × their outstanding AR lines). Reuses
+  // the same calc as the daily recap. Scoped to the viewed facility(ies).
+  const recaps = await computeFacilityRecaps(supabase, {
+    facilityIds: Array.from(facIds),
+  }).catch(() => []);
+  const censusReceivables = recaps
+    .flatMap((r) => r.censusReceivables)
+    .sort((a, b) => b.expected - a.expected);
+  const censusExpectedTotal = censusReceivables.reduce((s, r) => s + r.expected, 0);
 
   // Export: the headline KPIs followed by the level-of-care table, one sheet.
   const scopeLabel = picked === "all" ? "All facilities" : scopedFacilities[0]?.short_name || scopedFacilities[0]?.name || "Facility";
@@ -427,6 +439,67 @@ export default async function OverviewPage({
               </div>
             )}
           </section>
+
+          {/* Census — expected revenue on outstanding claims */}
+          {censusReceivables.length > 0 && (
+            <section className="card p-5">
+              <div className="mb-1 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <div className="font-display text-lg font-bold">
+                    Census — Expected Revenue on Outstanding Claims
+                  </div>
+                  <div className="text-xs text-surface-muted">
+                    Each current-census patient&apos;s per-day reimbursement × their outstanding AR
+                    lines.
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                    Total expected on current census
+                  </div>
+                  <div className="font-display text-2xl font-bold text-recovered">
+                    {money(censusExpectedTotal)}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-surface-muted">
+                      <th className="th">Patient</th>
+                      <th className="th">Level</th>
+                      <th className="th text-right">Per day</th>
+                      <th className="th text-right">Outstanding</th>
+                      <th className="th text-right">Expected Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {censusReceivables.map((r, i) => (
+                      <tr key={`${r.patient}-${i}`} className="border-t border-surface-border">
+                        <td className="td font-medium text-surface-ink">{r.patient}</td>
+                        <td className="td text-surface-muted">{r.loc}</td>
+                        <td className="td text-right font-mono">{money(r.perDay)}/day</td>
+                        <td className="td text-right font-mono">
+                          {r.outstanding} {r.loc}
+                        </td>
+                        <td className="td text-right font-mono font-semibold text-recovered">
+                          {money(r.expected)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-surface-border font-semibold">
+                      <td className="td" colSpan={4}>
+                        Total expected on current census
+                      </td>
+                      <td className="td text-right font-mono text-recovered">
+                        {money(censusExpectedTotal)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {/* Brand footer */}
           <section className="relative overflow-hidden rounded-2xl bg-command p-5 text-command-text shadow-card">
