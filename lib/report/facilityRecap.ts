@@ -120,6 +120,10 @@ export interface FacilityRecap {
   // Current census patients joined to their outstanding AR: per-day reimbursement
   // (from their payments) × count of outstanding claim lines = expected revenue.
   censusReceivables: CensusReceivableRow[];
+  // Current census headcount by level of care, and the reimbursement mix (how
+  // many pay over $1k / over $2k / under $800 a day).
+  censusLocMix: CensusLocMix;
+  censusPayMix: CensusPayMix;
   // AR bucketed by payer + status (e.g. "Horizon · Claim At"): claim count,
   // total balance, and the last date any claim in the bucket was worked.
   statusBuckets: StatusBucket[];
@@ -382,6 +386,71 @@ function computeCensusReceivables(
   return out;
 }
 
+// Current census week's rows for one facility.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function currentCensusRows(facilityId: string, census: any[]): any[] {
+  const f = census.filter((c) => c.facility_id === facilityId && c.week_start);
+  if (f.length === 0) return [];
+  const latest = f.map((c) => c.week_start as string).sort().slice(-1)[0];
+  return f.filter((c) => c.week_start === latest);
+}
+
+// Level-of-care headcount for the current census week (mirrors the Census page).
+export type CensusLocMix = { PHP: number; IOP: number; OP: number; other: number };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function censusLocMixOf(facilityId: string, census: any[]): CensusLocMix {
+  const m: CensusLocMix = { PHP: 0, IOP: 0, OP: 0, other: 0 };
+  for (const c of currentCensusRows(facilityId, census)) {
+    const fam = locFamily2(c.level_of_care);
+    if (fam === "PHP") m.PHP += 1;
+    else if (fam === "IOP") m.IOP += 1;
+    else if (fam === "OP") m.OP += 1;
+    else m.other += 1;
+  }
+  return m;
+}
+
+// Each census client's "Paid $" — the manual override if set, else their most
+// recent single payment (same rule as the Census page's Paid $ column).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function censusEffectivePaid(c: any, fPays: PayRow[]): number {
+  if ((c.paid_amount ?? 0) > 0) return Number(c.paid_amount);
+  const cid = String(c.member_id ?? "").trim().toLowerCase();
+  const cnm = normName(c.patient_name);
+  const theirs = fPays.filter((p) => {
+    const pid = String(p.member_id ?? "").trim().toLowerCase();
+    if (cid && pid) return cid === pid;
+    return cnm !== "" && normName(p.patient_name) === cnm;
+  });
+  if (theirs.length === 0) return 0;
+  const ms = (v: unknown) => {
+    const t = Date.parse(String(v ?? ""));
+    return isNaN(t) ? 0 : t;
+  };
+  let latest = 0;
+  for (const p of theirs) latest = Math.max(latest, ms(p.dos_from));
+  return theirs.filter((p) => ms(p.dos_from) === latest).reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+}
+
+// Reimbursement mix of the current census: counts over $1k / over $2k / under
+// $800 per day (over-1k includes over-2k). % is computed at render time.
+export type CensusPayMix = { total: number; over1000: number; over2000: number; under800: number };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function censusPayMixOf(facilityId: string, census: any[], payments: PayRow[]): CensusPayMix {
+  const cur = currentCensusRows(facilityId, census);
+  const fPays = payments.filter((p) => p.facility_id === facilityId);
+  let over1000 = 0;
+  let over2000 = 0;
+  let under800 = 0;
+  for (const c of cur) {
+    const paid = censusEffectivePaid(c, fPays);
+    if (paid > 2000) over2000 += 1;
+    if (paid > 1000) over1000 += 1;
+    if (paid < 800) under800 += 1;
+  }
+  return { total: cur.length, over1000, over2000, under800 };
+}
+
 // Pull the payer out of a claim status like "Claim at BCBS" / "Denied at Aetna".
 function payerFromStatus(status: unknown): string {
   const t = String(status ?? "").trim();
@@ -482,7 +551,7 @@ export async function computeFacilityRecaps(
         scopeIn(
           a
             .from("census")
-            .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,member_id,admit_date")
+            .select("facility_id,level_of_care,week_start,gn_rate,patient_name,days,member_id,admit_date,paid_amount")
         )
       ).catch(() => []),
       pageAll<any>(client, (a) =>
@@ -715,6 +784,8 @@ export async function computeFacilityRecaps(
         histPerDay,
         billedClaimSets
       ),
+      censusLocMix: censusLocMixOf(f.id, census),
+      censusPayMix: censusPayMixOf(f.id, census, payments),
       statusBuckets: bucketByStatus(fc, workedByClaim),
       workCoverage: {
         total: fc.length,
@@ -992,6 +1063,29 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
         : ""
     }
 
+    ${(() => {
+      const loc = r.censusLocMix;
+      const mix = r.censusPayMix;
+      const locTotal = loc.PHP + loc.IOP + loc.OP + loc.other;
+      if (locTotal === 0) return "";
+      const pct = (n: number) => (mix.total > 0 ? Math.round((n / mix.total) * 100) : 0);
+      const chip = (label: string, n: number) =>
+        `<span style="display:inline-block;background:#f1f4f8;border-radius:8px;padding:4px 10px;margin:0 6px 6px 0;font-size:13px;color:${INK}"><b>${n}</b> ${label}</span>`;
+      const tile = (val: string, sub: string, color: string) =>
+        `<td style="width:33%;padding:4px"><div style="border:1px solid ${HAIR};border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:20px;font-weight:800;color:${color};${NUM}">${val}</div>
+          <div style="font-size:11px;color:${FAINT}">${sub}</div></div></td>`;
+      return `${sectionHead("Census — levels of care & reimbursement mix")}
+        <div style="margin-bottom:10px">${chip("PHP", loc.PHP)}${chip("IOP", loc.IOP)}${chip("OP", loc.OP)}${
+          loc.other ? chip("Other", loc.other) : ""
+        }</div>
+        <table style="border-collapse:collapse;width:100%"><tr>
+          ${tile(`${pct(mix.over1000)}%`, `over $1,000/day (${mix.over1000})`, POS)}
+          ${tile(`${pct(mix.over2000)}%`, `over $2,000/day (${mix.over2000})`, INK)}
+          ${tile(`${pct(mix.under800)}%`, `under $800/day (${mix.under800})`, NEG)}
+        </tr></table>`;
+    })()}
+
     ${
       r.censusReceivables.length
         ? `${sectionHead("Census — expected revenue on outstanding claims")}
@@ -1144,6 +1238,8 @@ export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
     missedGroups: [],
     belowFloor: [],
     censusReceivables: [],
+    censusLocMix: { PHP: 6, IOP: 10, OP: 2, other: 0 },
+    censusPayMix: { total: 18, over1000: 13, over2000: 3, under800: 4 },
     statusBuckets: [
       { key: "aetna|claim-at", payer: "Aetna", action: "Claim At", label: "Aetna · Claim At", count: 22, balance: 142300, lastWorked: null },
       { key: "bcbs|denied-at", payer: "BCBS", action: "Denied At", label: "BCBS · Denied At", count: 14, balance: 98600, lastWorked: null },
