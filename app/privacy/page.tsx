@@ -106,7 +106,40 @@ export default function PrivacyPage() {
         updating the effective date above.
       </Section>
 
-      <Section title="11. Contact us">
+      <Section title="11. SMS / text messaging">
+        <p>
+          With your consent, BC Billing sends operational SMS text messages to authorized
+          staff and facility partners — for example, a short weekly summary of a
+          facility&rsquo;s patient census with a link to the full report in the Service.
+        </p>
+        <ul className="ml-5 mt-2 list-disc space-y-1">
+          <li>
+            <strong>Consent.</strong> We only text mobile numbers that a facility partner or
+            staff member has given us directly and agreed may receive these updates.
+          </li>
+          <li>
+            <strong>No sharing of mobile numbers.</strong> We do <strong>not</strong> sell or
+            share mobile phone numbers or SMS opt-in information with third parties or
+            affiliates for their marketing purposes. Numbers are used only to deliver the
+            messages you signed up for.
+          </li>
+          <li>
+            <strong>Message frequency.</strong> Message frequency varies but is typically
+            about one message per week per facility.
+          </li>
+          <li>
+            <strong>Message and data rates may apply.</strong> Standard carrier message and
+            data rates may apply to messages you receive.
+          </li>
+          <li>
+            <strong>Opt-out / help.</strong> Reply <strong>STOP</strong> to any message to
+            stop receiving texts, or <strong>HELP</strong> for help. You can also contact us
+            at the email below to be removed.
+          </li>
+        </ul>
+      </Section>
+
+      <Section title="12. Contact us">
         Questions about this policy or your information? Contact us at{" "}
         <a className="text-sky-600 underline" href={`mailto:${CONTACT}`}>
           {CONTACT}
