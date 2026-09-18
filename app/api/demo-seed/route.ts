@@ -24,6 +24,24 @@ const PATIENTS = [
   ["Sydney Hayes", "Aetna", "W81990552"],
   ["Peyton Reed", "Molina", "MOL330218"],
   ["Reese Parker", "Horizon", "YHX3HZN5582"],
+  ["Avery Nguyen", "Aetna", "W83112900"],
+  ["Cameron Diaz", "Cigna", "C90337781"],
+  ["Harper Lane", "UnitedHealthcare", "U56720145"],
+  ["Logan Pierce", "BCBS TX", "XJK889012"],
+  ["Emerson Cole", "Optum", "OPT445120"],
+  ["Rowan Vance", "Aetna", "W84550031"],
+  ["Sawyer Kim", "Cigna", "C91220455"],
+  ["Skyler Boyd", "Humana", "HUM662019"],
+  ["Parker James", "UnitedHealthcare", "U57120988"],
+  ["Elliot Shaw", "Ambetter", "AMB781340"],
+  ["Finley Ross", "BCBS IL", "XIL339188"],
+  ["Dakota Wells", "Aetna", "W85012377"],
+  ["Hayden Cruz", "Cigna", "C92330912"],
+  ["Marlowe Fox", "Molina", "MOL441320"],
+  ["Remy Patel", "UnitedHealthcare", "U58221033"],
+  ["Sage Turner", "Horizon", "YHX3HZN7741"],
+  ["Aubrey Long", "Aetna", "W86223140"],
+  ["Tatum Berry", "Cigna", "C93440178"],
 ] as const;
 
 const CPTS = [
@@ -104,12 +122,12 @@ export async function POST(request: Request) {
     // ---- Claims (AR / Collections / 120+ / Overview) ----
     await wipe("claims");
     const claims = PATIENTS.flatMap(([name, payer, member], i) => {
-      // 1–2 claims per patient with a spread of ages so buckets + 120+ populate.
-      const n = 1 + (i % 2);
+      // 2–3 claims per patient with a spread of ages so buckets + 120+ populate.
+      const n = 2 + (i % 2);
       return Array.from({ length: n }, (_, k) => {
-        const age = [22, 48, 74, 96, 135, 210][(i + k) % 6];
-        const charge = rnd(2200, 9800);
-        const balance = Math.round(charge * (0.25 + 0.6 * Math.random()) * 100) / 100;
+        const age = [18, 34, 57, 82, 108, 141, 176, 233, 291][(i + k) % 9];
+        const charge = rnd(6200, 24800);
+        const balance = Math.round(charge * (0.35 + 0.5 * Math.random()) * 100) / 100;
         const dos = new Date(now);
         dos.setDate(now.getDate() - age);
         const status = ["Claim At Payer", "Denied - Appeal", "In Review", "No Auth on File", "Paid - Partial"][
@@ -135,16 +153,17 @@ export async function POST(request: Request) {
     // ---- Payments (Payments tab) ----
     await wipe("payments");
     const payments = PATIENTS.flatMap(([name, payer, member], i) => {
-      // A couple of paid lines each, split across this month and last.
-      return [0, 1, 2].map((k) => {
+      // Several paid lines each — 3 this month, 2 last month — with healthy
+      // reimbursement so Total Collected and the collection rate look strong.
+      return [0, 1, 2, 3, 4].map((k) => {
         const [cpt, loc] = pick(CPTS, i + k);
-        const inThisMonth = k < 2;
+        const inThisMonth = k < 3;
         const base = inThisMonth ? now : new Date(now.getFullYear(), now.getMonth() - 1, 15);
         const dep = new Date(base);
-        dep.setDate(inThisMonth ? 3 + ((i + k) % 24) : 10 + (i % 15));
+        dep.setDate(inThisMonth ? 2 + ((i + k) % 25) : 6 + (i % 20));
         const dos = new Date(dep);
         dos.setDate(dep.getDate() - 20);
-        const charge = rnd(1800, 5200);
+        const charge = rnd(6000, 26000);
         return {
           facility_id: fid,
           deposit_date: usdate(dep),
@@ -156,7 +175,7 @@ export async function POST(request: Request) {
           dos_from: usdate(dos),
           dos_to: usdate(dos),
           charge_amount: charge,
-          paid_amount: Math.round(charge * (0.45 + 0.4 * Math.random()) * 100) / 100,
+          paid_amount: Math.round(charge * (0.7 + 0.2 * Math.random()) * 100) / 100,
           payment_type: k % 2 ? "EFT" : "Check",
           check_number: `${100000 + i * 7 + k}`,
           period: inThisMonth ? thisMonth : lastMonth,
@@ -168,26 +187,31 @@ export async function POST(request: Request) {
 
     // ---- Billed claims (Billed tab) ----
     await wipe("billed_claims");
-    const billed = PATIENTS.map(([name, payer], i) => {
-      const [, loc] = pick(CPTS, i);
-      const total = rnd(3200, 11000);
-      const from = new Date(now.getFullYear(), now.getMonth(), 1 + (i % 20));
-      return {
-        facility_id: fid,
-        claim_id: `DEMOB-${2000 + i}`,
-        times_billed: 1,
-        from_date: usdate(from),
-        to_date: usdate(from),
-        entered_date: usdate(now),
-        total_amount: total,
-        balance: Math.round(total * (0.2 + 0.5 * Math.random()) * 100) / 100,
-        patient_name: name,
-        payer_name: payer,
-        payer_type: "Commercial",
-        period: thisMonth,
-        loc_units: { [loc]: 2 + (i % 4) },
-      };
-    });
+    // Two billed rows per patient this month so Total Billed sits a bit above
+    // Total Collected (a healthy ~85–90% collection rate) and the level-of-care
+    // table on the Overview has real volume.
+    const billed = PATIENTS.flatMap(([name, payer], i) =>
+      [0, 1].map((k) => {
+        const [, loc] = pick(CPTS, i + k);
+        const total = rnd(12000, 32000);
+        const from = new Date(now.getFullYear(), now.getMonth(), 1 + ((i + k * 3) % 24));
+        return {
+          facility_id: fid,
+          claim_id: `DEMOB-${2000 + i * 10 + k}`,
+          times_billed: 1,
+          from_date: usdate(from),
+          to_date: usdate(from),
+          entered_date: usdate(now),
+          total_amount: total,
+          balance: Math.round(total * (0.2 + 0.5 * Math.random()) * 100) / 100,
+          patient_name: name,
+          payer_name: payer,
+          payer_type: "Commercial",
+          period: thisMonth,
+          loc_units: { [loc]: 6 + (i % 8) },
+        };
+      })
+    );
     await insert("billed_claims", billed);
 
     // ---- Census (Census tab) — current week ----
@@ -220,7 +244,9 @@ export async function POST(request: Request) {
         member_id: member,
         auth: i % 3 === 0 ? "Approved" : "",
         days,
-        paid_amount: i % 4 === 0 ? 0 : rnd(400, 3200),
+        // Mostly strong per-day reimbursement so the census pay-mix box reads
+        // like a healthy facility (majority over $1,000/day, a few high, a few low).
+        paid_amount: i % 7 === 0 ? rnd(500, 780) : i % 5 === 0 ? rnd(2100, 3400) : rnd(1150, 1950),
         billing_status: "",
         notes: "",
       };
@@ -253,7 +279,7 @@ export async function POST(request: Request) {
 
     // ---- Auth issues (Overview "Open Auth Issues" + Auth Issues tab) ----
     await wipe("auth_issues");
-    const authIssues = PATIENTS.slice(0, 5).map(([name, payer], i) => {
+    const authIssues = PATIENTS.slice(0, 8).map(([name, payer], i) => {
       const dos = new Date(now);
       dos.setDate(now.getDate() - (30 + i * 6));
       return {
@@ -263,7 +289,7 @@ export async function POST(request: Request) {
         payer,
         dos_from: usdate(dos),
         dos_to: usdate(dos),
-        charge_amount: rnd(2400, 7800),
+        charge_amount: rnd(6400, 18800),
         status: i % 3 === 0 ? "Working" : "Not Worked",
         mgmt_needed: i === 0,
         notes: "",
@@ -274,8 +300,8 @@ export async function POST(request: Request) {
 
     // ---- Negotiations (Negotiations tab) ----
     await wipe("negotiations");
-    const negs = PATIENTS.slice(0, 8).map(([name, payer], i) => {
-      const charged = rnd(6000, 22000);
+    const negs = PATIENTS.slice(0, 14).map(([name, payer], i) => {
+      const charged = rnd(14000, 48000);
       const proposed = Math.round(charged * (0.3 + 0.2 * Math.random()) * 100) / 100;
       const negotiated = i % 3 === 0 ? Math.round(proposed * 1.15 * 100) / 100 : null;
       const dos = new Date(now);
