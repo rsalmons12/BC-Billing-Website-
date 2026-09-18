@@ -32,13 +32,15 @@ export default async function OverviewPage({
 
   const supabase = createClient();
   const facilitiesAll = await accessibleFacilities();
-  // Hide the demo facility from management/staff network rollups so it never
-  // pollutes real numbers — but a facility login whose OWN facility is the demo
-  // one must still see it, or its whole Overview would read $0.
-  const isNetworkView = profile.role === "management" || profile.role === "staff";
-  const facilities = isNetworkView
-    ? facilitiesAll.filter((f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name))
-    : facilitiesAll;
+  // Hide the demo facility from any view that ALSO has real facilities, so it
+  // never pollutes the real network numbers. But a login whose ONLY accessible
+  // facility is the demo one (the App Store review login, whatever its role)
+  // must still see it, or its whole Overview would read $0.
+  const nonDemo = facilitiesAll.filter(
+    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
+  );
+  const showDemo = nonDemo.length === 0;
+  const facilities = showDemo ? facilitiesAll : nonDemo;
 
   // Optional single-facility scope (management/staff can pick one).
   const picked =
@@ -200,7 +202,7 @@ export default async function OverviewPage({
   // the same calc as the daily recap. Scoped to the viewed facility(ies).
   const recaps = await computeFacilityRecaps(supabase, {
     facilityIds: Array.from(facIds),
-    includeDemo: !isNetworkView,
+    includeDemo: showDemo,
   }).catch(() => []);
   const censusReceivables = recaps
     .flatMap((r) => r.censusReceivables)
