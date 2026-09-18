@@ -460,6 +460,46 @@ export default function CensusClient({
     return { exp, paid, missed, missedRev };
   }, [weekRows, effectivePaid]);
 
+  // Level-of-care headcount (PHP / IOP / OP) for the current week. IOP is tested
+  // before OP so "IOP" never falls through to OP.
+  const locMix = useMemo(() => {
+    const m = { PHP: 0, IOP: 0, OP: 0, Other: 0 };
+    for (const r of weekRows) {
+      const u = String(r.level_of_care ?? "").toUpperCase();
+      if (/\bIOP\b/.test(u)) m.IOP += 1;
+      else if (/\bPHP\b/.test(u) || /PARTIAL/.test(u)) m.PHP += 1;
+      else if (/\bOP\b/.test(u) || /OUTPATIENT/.test(u)) m.OP += 1;
+      else m.Other += 1;
+    }
+    return m;
+  }, [weekRows]);
+
+  // Reimbursement mix — each client's Paid $ (their per-day rate) bucketed
+  // against $800 / $1,000 / $2,000. "Over 1k" includes "over 2k" (not exclusive),
+  // matching how the numbers are read out. % of the whole census.
+  const payMix = useMemo(() => {
+    const total = weekRows.length;
+    let over1000 = 0;
+    let over2000 = 0;
+    let under800 = 0;
+    for (const r of weekRows) {
+      const paid = effectivePaid(r);
+      if (paid > 2000) over2000 += 1;
+      if (paid > 1000) over1000 += 1;
+      if (paid < 800) under800 += 1;
+    }
+    const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+    return {
+      total,
+      over1000,
+      over2000,
+      under800,
+      pctOver1000: pct(over1000),
+      pctOver2000: pct(over2000),
+      pctUnder800: pct(under800),
+    };
+  }, [weekRows, effectivePaid]);
+
   // Dates this facility actually held groups this week (union of coded cells),
   // used to prorate each client's missed-group expectation to their admit date.
   const groupDates = useMemo(() => weekGroupDates(weekRows), [weekRows]);
@@ -824,6 +864,65 @@ export default function CensusClient({
           />
           <SumCard label="Expected $" value={money(amounts.exp)} accent="gold" />
           <SumCard label="Paid $" value={money(amounts.paid)} accent="recovered" />
+        </div>
+      )}
+
+      {/* Levels of care + reimbursement mix */}
+      {!loading && week && weekRows.length > 0 && (
+        <div className="grid gap-3 border-b border-surface-border bg-surface px-6 py-3 md:grid-cols-2">
+          <div className="rounded-xl border border-surface-border bg-surface-card p-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              Levels of Care
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge bg-secured/10 px-2.5 py-1 text-sm text-secured">
+                <b className="mr-1 text-base">{locMix.PHP}</b> PHP
+              </span>
+              <span className="badge bg-brand-blue/10 px-2.5 py-1 text-sm text-brand-blue">
+                <b className="mr-1 text-base">{locMix.IOP}</b> IOP
+              </span>
+              <span className="badge bg-brand-green/10 px-2.5 py-1 text-sm text-brand-green">
+                <b className="mr-1 text-base">{locMix.OP}</b> OP
+              </span>
+              {locMix.Other > 0 && (
+                <span className="badge bg-surface px-2.5 py-1 text-sm text-surface-muted">
+                  <b className="mr-1 text-base">{locMix.Other}</b> Other
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-surface-border bg-surface-card p-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              Reimbursement mix · per day ({payMix.total} clients)
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-recovered/10 p-2">
+                <div className="font-display text-xl font-bold text-recovered">
+                  {payMix.pctOver1000}%
+                </div>
+                <div className="text-[11px] text-surface-muted">
+                  over $1,000/day ({payMix.over1000})
+                </div>
+              </div>
+              <div className="rounded-lg bg-secured/10 p-2">
+                <div className="font-display text-xl font-bold text-secured">
+                  {payMix.pctOver2000}%
+                </div>
+                <div className="text-[11px] text-surface-muted">
+                  over $2,000/day ({payMix.over2000})
+                </div>
+              </div>
+              <div className="rounded-lg bg-risk/10 p-2">
+                <div className="font-display text-xl font-bold text-risk">
+                  {payMix.pctUnder800}%
+                </div>
+                <div className="text-[11px] text-surface-muted">
+                  under $800/day ({payMix.under800})
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
