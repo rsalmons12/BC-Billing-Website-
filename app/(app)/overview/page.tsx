@@ -32,9 +32,13 @@ export default async function OverviewPage({
 
   const supabase = createClient();
   const facilitiesAll = await accessibleFacilities();
-  const facilities = facilitiesAll.filter(
-    (f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name)
-  );
+  // Hide the demo facility from management/staff network rollups so it never
+  // pollutes real numbers — but a facility login whose OWN facility is the demo
+  // one must still see it, or its whole Overview would read $0.
+  const isNetworkView = profile.role === "management" || profile.role === "staff";
+  const facilities = isNetworkView
+    ? facilitiesAll.filter((f) => !isDemoFacility(f.name) && !isDemoFacility(f.short_name))
+    : facilitiesAll;
 
   // Optional single-facility scope (management/staff can pick one).
   const picked =
@@ -196,6 +200,7 @@ export default async function OverviewPage({
   // the same calc as the daily recap. Scoped to the viewed facility(ies).
   const recaps = await computeFacilityRecaps(supabase, {
     facilityIds: Array.from(facIds),
+    includeDemo: !isNetworkView,
   }).catch(() => []);
   const censusReceivables = recaps
     .flatMap((r) => r.censusReceivables)

@@ -471,7 +471,7 @@ function parseDate(v: unknown): Date | null {
 // to scope to specific facilities (e.g. a facility login's own).
 export async function computeFacilityRecaps(
   client: Admin,
-  opts?: { facilityIds?: string[]; now?: Date }
+  opts?: { facilityIds?: string[]; now?: Date; includeDemo?: boolean }
 ): Promise<FacilityRecap[]> {
   const now = opts?.now ?? new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -569,9 +569,10 @@ export async function computeFacilityRecaps(
       ).catch(() => []),
     ]);
 
+  const includeDemo = opts?.includeDemo === true;
   const facilities = (only ? facilitiesAll.filter((f) => only.has(f.id)) : facilitiesAll).filter(
     (f) =>
-      !isDemoFacility(f.name) && !isDemoFacility(f.short_name) &&
+      (includeDemo || (!isDemoFacility(f.name) && !isDemoFacility(f.short_name))) &&
       !isExcludedFacility(f.name) && !isExcludedFacility(f.short_name)
   );
   const claims = claimsRaw.filter(
