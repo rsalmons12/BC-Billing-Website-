@@ -7,9 +7,13 @@
 create table if not exists payer_playbooks (
   payer        text primary key,
   instructions text not null default '',
+  -- Example files (AOR form, spreadsheet template) stored in the private
+  -- "attachments" bucket: [{ "name", "path", "size", "type" }, ...].
+  attachments  jsonb not null default '[]'::jsonb,
   updated_by   uuid references profiles(id),
   updated_at   timestamptz not null default now()
 );
+alter table payer_playbooks add column if not exists attachments jsonb not null default '[]'::jsonb;
 
 alter table payer_playbooks enable row level security;
 
