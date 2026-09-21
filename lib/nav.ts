@@ -32,6 +32,7 @@ export const TABS: Tab[] = [
   { href: "/payments", label: "Payments", icon: "$", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/insurance-payments", label: "Insurance Payments", icon: "🏦", roles: ["management", "staff"] },
   { href: "/repricing", label: "Repricing", icon: "◷", roles: ["management", "staff", "repricer"], mobile: true },
+  { href: "/repricing-guide", label: "Repricing Guide", icon: "📘", roles: ["management", "staff", "repricer"], mobile: true },
   { href: "/historical", label: "Historical Data", icon: "≣", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/attachments", label: "Attachments", icon: "📎", roles: ["management", "staff"] },
   { href: "/notifications", label: "Email Notifications", icon: "✉", roles: ["management"] },
