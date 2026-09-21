@@ -23,6 +23,13 @@ const num = (v: unknown) => (typeof v === "number" ? v : 0);
 // whose facility_id is null or doesn't resolve to a known facility.
 const NO_FACILITY = "__nofac__";
 
+// Per-payer directions ("playbook") with optional example files.
+type PlaybookAttach = { name: string; path: string; size?: number; type?: string };
+type Playbook = { instructions: string; attachments: PlaybookAttach[] };
+const PLAYBOOK_BUCKET = "attachments";
+const slug = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "payer";
+
 export type ColumnKind =
   | "text"
   | "money"
@@ -183,7 +190,7 @@ export default function TrackerModule({
   const [drillAllPayers, setDrillAllPayers] = useState(false);
   // Per-payer directions ("playbook"): payer family → instructions, and the
   // payer whose pop-up is currently open.
-  const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
+  const [playbooks, setPlaybooks] = useState<Record<string, Playbook>>({});
   const [playbookFor, setPlaybookFor] = useState<string | null>(null);
   const [monthFilter, setMonthFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -232,11 +239,14 @@ export default function TrackerModule({
     if (!playbookTable) return;
     let alive = true;
     (async () => {
-      const { data } = await supabase.from(playbookTable).select("payer, instructions");
+      const { data } = await supabase.from(playbookTable).select("payer, instructions, attachments");
       if (!alive || !data) return;
-      const map: Record<string, string> = {};
-      for (const row of data as { payer: string; instructions: string }[]) {
-        map[row.payer] = row.instructions ?? "";
+      const map: Record<string, Playbook> = {};
+      for (const row of data as { payer: string; instructions: string; attachments: unknown }[]) {
+        map[row.payer] = {
+          instructions: row.instructions ?? "",
+          attachments: Array.isArray(row.attachments) ? (row.attachments as PlaybookAttach[]) : [],
+        };
       }
       setPlaybooks(map);
     })();
@@ -245,15 +255,14 @@ export default function TrackerModule({
     };
   }, [supabase, playbookTable]);
 
-  // Clicking a payer bubble: if it has directions (or the viewer is management),
-  // open the pop-up first; otherwise drill straight to the claims.
+  // Clicking a payer bubble: if it has directions/files (or the viewer is
+  // management), open the pop-up first; otherwise drill straight to the claims.
   const openPayer = useCallback(
     (payer: string) => {
-      if (playbookTable && (isManagement || (playbooks[payer]?.trim() ?? ""))) {
-        setPlaybookFor(payer);
-      } else {
-        setPayerFilter(payer);
-      }
+      const pb = playbooks[payer];
+      const has = Boolean(pb?.instructions.trim()) || Boolean(pb?.attachments.length);
+      if (playbookTable && (isManagement || has)) setPlaybookFor(payer);
+      else setPayerFilter(payer);
     },
     [playbookTable, isManagement, playbooks]
   );
@@ -261,13 +270,72 @@ export default function TrackerModule({
   const savePlaybook = useCallback(
     async (payer: string, instructions: string) => {
       if (!playbookTable) return;
-      setPlaybooks((prev) => ({ ...prev, [payer]: instructions }));
+      setPlaybooks((prev) => ({
+        ...prev,
+        [payer]: { instructions, attachments: prev[payer]?.attachments ?? [] },
+      }));
       await supabase.from(playbookTable).upsert(
         { payer, instructions, updated_by: userId, updated_at: new Date().toISOString() },
         { onConflict: "payer" }
       );
     },
     [supabase, playbookTable, userId]
+  );
+
+  // Upload an example file into the private attachments bucket and record it on
+  // the payer's playbook row.
+  const uploadPlaybookFile = useCallback(
+    async (payer: string, file: File) => {
+      if (!playbookTable) return;
+      setSaveState("Uploading…");
+      const path = `payer-playbooks/${slug(payer)}/${Date.now()}-${file.name}`;
+      const { error } = await supabase.storage.from(PLAYBOOK_BUCKET).upload(path, file, {
+        upsert: false,
+        contentType: file.type || undefined,
+      });
+      if (error) {
+        setSaveState(`Error: ${error.message}`);
+        return;
+      }
+      const att: PlaybookAttach = { name: file.name, path, size: file.size, type: file.type };
+      const next = [...(playbooks[payer]?.attachments ?? []), att];
+      setPlaybooks((prev) => ({
+        ...prev,
+        [payer]: { instructions: prev[payer]?.instructions ?? "", attachments: next },
+      }));
+      await supabase.from(playbookTable).upsert(
+        { payer, attachments: next, updated_by: userId, updated_at: new Date().toISOString() },
+        { onConflict: "payer" }
+      );
+      setSaveState("Uploaded");
+      setTimeout(() => setSaveState(""), 1200);
+    },
+    [supabase, playbookTable, userId, playbooks]
+  );
+
+  const removePlaybookFile = useCallback(
+    async (payer: string, path: string) => {
+      if (!playbookTable) return;
+      const next = (playbooks[payer]?.attachments ?? []).filter((a) => a.path !== path);
+      setPlaybooks((prev) => ({
+        ...prev,
+        [payer]: { instructions: prev[payer]?.instructions ?? "", attachments: next },
+      }));
+      await supabase.storage.from(PLAYBOOK_BUCKET).remove([path]);
+      await supabase.from(playbookTable).upsert(
+        { payer, attachments: next, updated_by: userId, updated_at: new Date().toISOString() },
+        { onConflict: "payer" }
+      );
+    },
+    [supabase, playbookTable, userId, playbooks]
+  );
+
+  const downloadPlaybookFile = useCallback(
+    async (path: string) => {
+      const { data } = await supabase.storage.from(PLAYBOOK_BUCKET).createSignedUrl(path, 120);
+      if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+    },
+    [supabase]
   );
 
   const saveCell = useCallback(
@@ -948,11 +1016,13 @@ export default function TrackerModule({
                         Collected <b className="text-gold">{rate}%</b> of charged
                       </div>
                     )}
-                    {drillLevel === "payer" && playbooks[b.label]?.trim() && (
-                      <div className="mt-1 text-[11px] font-semibold text-brand-blue">
-                        ℹ Directions
-                      </div>
-                    )}
+                    {drillLevel === "payer" &&
+                      (playbooks[b.label]?.instructions.trim() ||
+                        playbooks[b.label]?.attachments.length) && (
+                        <div className="mt-1 text-[11px] font-semibold text-brand-blue">
+                          ℹ Directions
+                        </div>
+                      )}
                   </button>
                 );
               })}
@@ -1142,9 +1212,13 @@ export default function TrackerModule({
       {playbookFor != null && (
         <PlaybookModal
           payer={playbookFor}
-          instructions={playbooks[playbookFor] ?? ""}
+          instructions={playbooks[playbookFor]?.instructions ?? ""}
+          attachments={playbooks[playbookFor]?.attachments ?? []}
           canEdit={isManagement}
           onSave={(text) => savePlaybook(playbookFor, text)}
+          onUpload={(file) => uploadPlaybookFile(playbookFor, file)}
+          onRemove={(path) => removePlaybookFile(playbookFor, path)}
+          onDownload={downloadPlaybookFile}
           onViewClaims={() => {
             setPayerFilter(playbookFor);
             setPlaybookFor(null);
@@ -1161,20 +1235,29 @@ export default function TrackerModule({
 function PlaybookModal({
   payer,
   instructions,
+  attachments,
   canEdit,
   onSave,
+  onUpload,
+  onRemove,
+  onDownload,
   onViewClaims,
   onClose,
 }: {
   payer: string;
   instructions: string;
+  attachments: PlaybookAttach[];
   canEdit: boolean;
   onSave: (text: string) => void;
+  onUpload: (file: File) => void;
+  onRemove: (path: string) => void;
+  onDownload: (path: string) => void;
   onViewClaims: () => void;
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(!instructions.trim() && canEdit);
   const [draft, setDraft] = useState(instructions);
+  const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => setDraft(instructions), [instructions]);
 
   return (
@@ -1218,6 +1301,62 @@ function PlaybookModal({
         ) : (
           <div className="rounded-lg border border-dashed border-surface-border p-4 text-center text-sm text-surface-muted">
             No directions for {payer} yet.
+          </div>
+        )}
+
+        {/* Example files (AOR form, spreadsheet template, etc.) */}
+        {(attachments.length > 0 || canEdit) && (
+          <div className="mt-4">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              Example files
+            </div>
+            {attachments.length === 0 && (
+              <div className="text-xs text-surface-muted">None yet.</div>
+            )}
+            <ul className="space-y-1">
+              {attachments.map((a) => (
+                <li
+                  key={a.path}
+                  className="flex items-center justify-between gap-2 rounded-md border border-surface-border bg-surface px-2.5 py-1.5 text-sm"
+                >
+                  <button
+                    onClick={() => onDownload(a.path)}
+                    className="min-w-0 flex-1 truncate text-left text-brand-blue hover:underline"
+                    title={a.name}
+                  >
+                    📎 {a.name}
+                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => onRemove(a.path)}
+                      className="shrink-0 text-xs font-semibold text-risk hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {canEdit && (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onUpload(f);
+                    if (fileRef.current) fileRef.current.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="btn-ghost mt-2 text-sm"
+                >
+                  ＋ Add example file
+                </button>
+              </>
+            )}
           </div>
         )}
 
