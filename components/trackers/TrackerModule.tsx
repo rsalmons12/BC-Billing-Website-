@@ -17,6 +17,8 @@ function monthLabel(ym: string): string {
   return `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
 }
 
+const num = (v: unknown) => (typeof v === "number" ? v : 0);
+
 export type ColumnKind =
   | "text"
   | "money"
@@ -115,6 +117,14 @@ export interface TrackerConfig {
     textKeys?: { key: string; label: string }[];
     countLabel: string;
   };
+  // When set, the page opens as a facility → payer → claims drill-down: facility
+  // "bubbles" (each totaling its claims) → click one → payer bubbles for that
+  // facility → click one → the claims table. Reuses the facility + payer filters
+  // under the hood, so search/status still narrow every level.
+  drilldown?: {
+    chargeKey: string; // money column summed as the group's "charged" total
+    collectedKeys: string[]; // money columns summed as the group's "collected" total
+  };
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -153,6 +163,9 @@ export default function TrackerModule({
   const [facilityFilter, setFacilityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [payerFilter, setPayerFilter] = useState("all");
+  // Drill-down: "View all payers" jumps to the claims table for a facility
+  // without picking one payer (payerFilter stays "all", matching every payer).
+  const [drillAllPayers, setDrillAllPayers] = useState(false);
   const [monthFilter, setMonthFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
@@ -380,6 +393,59 @@ export default function TrackerModule({
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   }, [filtered, config.collapseBy]);
 
+  // ----- Facility → payer → claims drill-down -----
+  // Which level we're on. facilityFilter "all" → pick a facility; a facility
+  // chosen but payer "all" → pick a payer; both chosen → the claims table.
+  const drill = config.drilldown;
+  const drillLevel: "facility" | "payer" | "table" = !drill
+    ? "table"
+    : facilityFilter === "all"
+      ? "facility"
+      : config.payerKey && payerFilter === "all" && !drillAllPayers
+        ? "payer"
+        : "table";
+
+  // Bubble cards for the current level, grouped from the already-filtered rows
+  // (so search/status narrow the bubbles too). Sorted by charged, biggest first.
+  const bubbles = useMemo(() => {
+    if (!drill || drillLevel === "table") return [];
+    const map = new Map<
+      string,
+      { id: string; label: string; count: number; charge: number; collected: number }
+    >();
+    for (const r of filtered) {
+      const id =
+        drillLevel === "facility"
+          ? r.facility_id ?? ""
+          : payerBucket(r[config.payerKey!]) || "—";
+      const label =
+        drillLevel === "facility"
+          ? facName(r.facility_id) || "— No facility —"
+          : payerBucket(r[config.payerKey!]) || "— No payer —";
+      let g = map.get(id);
+      if (!g) {
+        g = { id, label, count: 0, charge: 0, collected: 0 };
+        map.set(id, g);
+      }
+      g.count += 1;
+      g.charge += num(r[drill.chargeKey]);
+      for (const k of drill.collectedKeys) g.collected += num(r[k]);
+    }
+    return Array.from(map.values()).sort((a, b) => b.charge - a.charge);
+  }, [drill, drillLevel, filtered, config.payerKey, facName]);
+
+  // Totals across the shown bubbles (for the header line at each level).
+  const bubbleTotals = useMemo(() => {
+    return bubbles.reduce(
+      (s, b) => ({
+        count: s.count + b.count,
+        charge: s.charge + b.charge,
+        collected: s.collected + b.collected,
+      }),
+      { count: 0, charge: 0, collected: 0 }
+    );
+  }, [bubbles]);
+
   // Payer families present in the data, for the payer dropdown.
   const payerOptions = useMemo(() => {
     if (!config.payerKey) return [] as string[];
@@ -454,18 +520,63 @@ export default function TrackerModule({
     <div className="flex h-full flex-col">
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-3 border-b border-surface-border bg-surface-card px-6 py-3">
-        <select
-          value={facilityFilter}
-          onChange={(e) => setFacilityFilter(e.target.value)}
-          className="input max-w-[14rem]"
-        >
-          <option value="all">All facilities</option>
-          {facilities.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.short_name || f.name}
-            </option>
-          ))}
-        </select>
+        {drill ? (
+          <div className="flex items-center gap-1 text-sm">
+            <button
+              onClick={() => {
+                setFacilityFilter("all");
+                setPayerFilter("all");
+                setDrillAllPayers(false);
+              }}
+              className={`rounded-md px-2 py-1 font-semibold ${
+                drillLevel === "facility"
+                  ? "text-surface-ink"
+                  : "text-brand-blue hover:bg-surface"
+              }`}
+            >
+              All facilities
+            </button>
+            {facilityFilter !== "all" && (
+              <>
+                <span className="text-surface-muted">›</span>
+                <button
+                  onClick={() => {
+                    setPayerFilter("all");
+                    setDrillAllPayers(false);
+                  }}
+                  className={`rounded-md px-2 py-1 font-semibold ${
+                    drillLevel === "payer"
+                      ? "text-surface-ink"
+                      : "text-brand-blue hover:bg-surface"
+                  }`}
+                >
+                  {facName(facilityFilter) || "Facility"}
+                </button>
+              </>
+            )}
+            {drillLevel === "table" && (
+              <>
+                <span className="text-surface-muted">›</span>
+                <span className="rounded-md px-2 py-1 font-semibold text-surface-ink">
+                  {config.payerKey && payerFilter !== "all" ? payerFilter : "All payers"}
+                </span>
+              </>
+            )}
+          </div>
+        ) : (
+          <select
+            value={facilityFilter}
+            onChange={(e) => setFacilityFilter(e.target.value)}
+            className="input max-w-[14rem]"
+          >
+            <option value="all">All facilities</option>
+            {facilities.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.short_name || f.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {config.archiveKey && config.archiveLabels && (
           <div className="flex items-center gap-1 rounded-lg border border-surface-border p-0.5">
@@ -542,7 +653,7 @@ export default function TrackerModule({
           </select>
         )}
 
-        {config.payerKey && payerOptions.length > 0 && (
+        {config.payerKey && payerOptions.length > 0 && !drill && (
           <select
             value={payerFilter}
             onChange={(e) => setPayerFilter(e.target.value)}
@@ -671,8 +782,97 @@ export default function TrackerModule({
         </div>
       )}
 
+      {/* drill-down bubbles: facilities, then payers, then the claims table */}
+      {drill && drillLevel !== "table" && (
+        <div className="min-h-0 flex-1 overflow-auto p-6">
+          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+            <div className="font-display text-lg font-bold">
+              {drillLevel === "facility"
+                ? "Choose a facility"
+                : `${facName(facilityFilter) || "Facility"} — choose a payer`}
+            </div>
+            <div className="text-xs text-surface-muted">
+              <b className="text-surface-ink">{bubbleTotals.count}</b> claims ·{" "}
+              <b className="text-surface-ink">{money(bubbleTotals.charge)}</b> charged ·{" "}
+              <b className="text-recovered">{money(bubbleTotals.collected)}</b> collected
+            </div>
+          </div>
+          {loading ? (
+            <div className="py-10 text-center text-surface-muted">Loading…</div>
+          ) : bubbles.length === 0 ? (
+            <div className="py-10 text-center text-surface-muted">
+              No claims yet. Use “Import Excel” to load repricing data.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {drillLevel === "payer" && (
+                <button
+                  onClick={() => setDrillAllPayers(true)}
+                  className="card card-hover flex flex-col justify-center border-dashed p-4 text-left"
+                >
+                  <div className="font-display text-base font-bold text-brand-blue">
+                    View all payers →
+                  </div>
+                  <div className="mt-1 text-xs text-surface-muted">
+                    Skip straight to every claim for this facility
+                  </div>
+                </button>
+              )}
+              {bubbles.map((b) => {
+                const rate = b.charge > 0 ? Math.round((b.collected / b.charge) * 100) : null;
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => {
+                      if (drillLevel === "facility") {
+                        setFacilityFilter(b.id);
+                        setPayerFilter("all");
+                        setDrillAllPayers(false);
+                      } else {
+                        setPayerFilter(b.label);
+                      }
+                    }}
+                    className="card card-hover flex flex-col p-4 text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-display text-base font-bold text-surface-ink">
+                        {b.label}
+                      </div>
+                      <span className="badge bg-brand-blue/12 text-brand-blue">
+                        {b.count} {b.count === 1 ? "claim" : "claims"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                          Charged
+                        </div>
+                        <div className="font-mono font-semibold">{money(b.charge)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                          Collected
+                        </div>
+                        <div className="font-mono font-semibold text-recovered">
+                          {money(b.collected)}
+                        </div>
+                      </div>
+                    </div>
+                    {rate != null && (
+                      <div className="mt-2 text-[11px] text-surface-muted">
+                        Collected <b className="text-gold">{rate}%</b> of charged
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* collapsed rollup table (one line per key, e.g. per patient) */}
-      {config.collapseBy && (
+      {config.collapseBy && (!drill || drillLevel === "table") && (
         <div className="scroll-x min-h-0 flex-1 overflow-auto">
           <table className="w-full border-separate border-spacing-0 text-sm">
             <thead className="sticky top-0 z-10 bg-surface">
@@ -741,7 +941,7 @@ export default function TrackerModule({
       )}
 
       {/* table */}
-      {!config.collapseBy && (
+      {!config.collapseBy && (!drill || drillLevel === "table") && (
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-surface">

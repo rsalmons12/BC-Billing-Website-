@@ -61,6 +61,12 @@ const config: TrackerConfig = {
   statusKey: "payment_status",
   statusOptions: ["Pending", "Approved", "Denied", "Not Worked"],
   payerKey: "payer",
+  // Open as a facility → payer → claims drill-down. Facility bubbles total their
+  // claims; clicking one shows payer bubbles; clicking a payer opens the claims.
+  drilldown: {
+    chargeKey: "charge_amount",
+    collectedKeys: ["amt_allowed", "additional_payment"],
+  },
   searchKeys: ["claim_id", "patient_name", "member_id", "payer", "remark_codes", "claim_status"],
   parse: (buf) => parseRepricing(buf),
   renderSummary,
