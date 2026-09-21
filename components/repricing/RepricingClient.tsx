@@ -195,33 +195,22 @@ const config: TrackerConfig = {
   columns,
 };
 
-// Queue variant: opens on the OPEN (needs follow-up) bucket, oldest-touched
-// first so the most overdue claims are at the top.
-const queueConfig: TrackerConfig = {
-  ...config,
-  drilldown: undefined, // queue is a flat worklist, not the facility bubbles
-  defaultExtraFilter: "open",
-  defaultSortKey: "updated_at",
-};
-
 export default function RepricingClient({
   facilities,
   userId,
   isManagement,
   readOnly = false,
-  queue = false,
 }: {
   facilities: Facility[];
   userId: string;
   isManagement: boolean;
   readOnly?: boolean;
-  queue?: boolean;
 }) {
   return (
     <TrackerModule
       facilities={facilities}
       userId={userId}
-      config={queue ? queueConfig : config}
+      config={config}
       isManagement={isManagement}
       readOnly={readOnly}
     />
