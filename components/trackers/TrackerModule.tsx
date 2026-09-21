@@ -147,6 +147,10 @@ export interface TrackerConfig {
   // Pre-selects an extraFilters option on first load (e.g. a queue page that
   // opens on "open / needs follow-up"). Must match an extraFilters value.
   defaultExtraFilter?: string;
+  // Custom row ordering (e.g. payer work-priority queue). Takes precedence over
+  // defaultSortKey when set.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sortCompare?: (a: Record<string, any>, b: Record<string, any>) => number;
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -454,8 +458,10 @@ export default function TrackerModule({
       }
       return true;
     });
-    const sk = config.defaultSortKey;
-    if (sk) {
+    if (config.sortCompare) {
+      kept.sort(config.sortCompare);
+    } else if (config.defaultSortKey) {
+      const sk = config.defaultSortKey;
       kept.sort((a, b) =>
         String(a[sk] ?? "").localeCompare(String(b[sk] ?? ""), undefined, {
           sensitivity: "base",
