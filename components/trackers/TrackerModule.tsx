@@ -19,6 +19,10 @@ function monthLabel(ym: string): string {
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
+// Sentinel facility filter for the drill-down "— No facility —" bubble: claims
+// whose facility_id is null or doesn't resolve to a known facility.
+const NO_FACILITY = "__nofac__";
+
 export type ColumnKind =
   | "text"
   | "money"
@@ -192,7 +196,10 @@ export default function TrackerModule({
         .from(config.table)
         .select("*")
         .order("created_at", { ascending: false });
-      if (facilityFilter !== "all") q = q.eq("facility_id", facilityFilter);
+      // NO_FACILITY loads everything (it's an unresolved-id bucket filtered
+      // client-side in `filtered`); a real id filters at the DB for speed.
+      if (facilityFilter !== "all" && facilityFilter !== NO_FACILITY)
+        q = q.eq("facility_id", facilityFilter);
       if (monthBounded && !allMonths) q = q.gte("period", cutoffYM);
       return q.range(f, t);
     });
@@ -240,7 +247,9 @@ export default function TrackerModule({
 
   const addRow = useCallback(async () => {
     const fid =
-      facilityFilter !== "all" ? facilityFilter : facilities[0]?.id ?? "";
+      facilityFilter !== "all" && facilityFilter !== NO_FACILITY
+        ? facilityFilter
+        : facilities[0]?.id ?? "";
     if (!fid) {
       setSaveState("Add a facility first");
       return;
@@ -286,6 +295,9 @@ export default function TrackerModule({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const kept = rows.filter((r) => {
+      // Drill-down "— No facility —" bucket: keep only rows whose facility_id
+      // doesn't resolve to a known facility name.
+      if (facilityFilter === NO_FACILITY && facName(r.facility_id)) return false;
       if (config.archiveKey) {
         const archived = Boolean(r[config.archiveKey]);
         if (archiveView === "active" && archived) return false;
@@ -325,7 +337,7 @@ export default function TrackerModule({
       );
     }
     return kept;
-  }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView]);
+  }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView, facilityFilter, facName]);
 
   // Collapsed rollup: one line per distinct key value (per facility). Sums the
   // money columns and gathers a few text columns (distinct values). Built from
@@ -414,13 +426,20 @@ export default function TrackerModule({
       { id: string; label: string; count: number; charge: number; collected: number }
     >();
     for (const r of filtered) {
+      // At facility level, every claim whose facility_id doesn't resolve to a
+      // known facility (null OR an id not in this user's list) collapses into
+      // ONE "no facility" bucket, so there's a single "— No facility —" bubble
+      // instead of one per stray id.
+      const fname = drillLevel === "facility" ? facName(r.facility_id) : "";
       const id =
         drillLevel === "facility"
-          ? r.facility_id ?? ""
+          ? fname
+            ? r.facility_id ?? ""
+            : NO_FACILITY
           : payerBucket(r[config.payerKey!]) || "—";
       const label =
         drillLevel === "facility"
-          ? facName(r.facility_id) || "— No facility —"
+          ? fname || "— No facility —"
           : payerBucket(r[config.payerKey!]) || "— No payer —";
       let g = map.get(id);
       if (!g) {
@@ -550,7 +569,9 @@ export default function TrackerModule({
                       : "text-brand-blue hover:bg-surface"
                   }`}
                 >
-                  {facName(facilityFilter) || "Facility"}
+                  {facilityFilter === NO_FACILITY
+                    ? "No facility"
+                    : facName(facilityFilter) || "Facility"}
                 </button>
               </>
             )}
@@ -789,7 +810,11 @@ export default function TrackerModule({
             <div className="font-display text-lg font-bold">
               {drillLevel === "facility"
                 ? "Choose a facility"
-                : `${facName(facilityFilter) || "Facility"} — choose a payer`}
+                : `${
+                    facilityFilter === NO_FACILITY
+                      ? "No facility"
+                      : facName(facilityFilter) || "Facility"
+                  } — choose a payer`}
             </div>
             <div className="text-xs text-surface-muted">
               <b className="text-surface-ink">{bubbleTotals.count}</b> claims ·{" "}
