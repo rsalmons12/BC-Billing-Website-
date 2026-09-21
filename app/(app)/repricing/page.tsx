@@ -3,6 +3,8 @@ import { requireProfile, accessibleFacilities } from "@/lib/auth";
 import Header from "@/components/Header";
 import RepricingClient from "@/components/repricing/RepricingClient";
 
+// Repricing opens as a facility → payer → claims drill-down (see RepricingClient
+// / TrackerModule `drilldown`). This line exists to force a fresh deploy.
 export default async function RepricingPage() {
   const { profile, email } = await requireProfile();
   if (profile.role === "pending") redirect("/");
