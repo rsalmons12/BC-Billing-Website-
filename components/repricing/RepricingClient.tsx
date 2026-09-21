@@ -2,10 +2,28 @@
 
 import TrackerModule, { SumCard, type TrackerConfig } from "@/components/trackers/TrackerModule";
 import { parseRepricing } from "@/lib/import/parseTrackers";
+import { payerBucket } from "@/lib/payer";
 import { money } from "@/lib/format";
 import type { Facility } from "@/lib/types";
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
+
+// Queue work-order by payer family — what to work first. BCBS is ALWAYS last.
+// Commercial payers that reprice well come first; government payers next;
+// anything unrecognized sits just before BCBS.
+const PAYER_PRIORITY = ["Aetna", "Cigna", "United", "Humana", "Tricare", "Medicare", "Medicaid"];
+const payerRank = (r: Record<string, unknown>): number => {
+  const b = payerBucket(r.payer);
+  if (b === "BCBS") return 999; // always last
+  const i = PAYER_PRIORITY.indexOf(b);
+  return i === -1 ? 500 : i; // unknown/Other just before BCBS
+};
+const queueLevelLabel = (r: Record<string, unknown>): string => {
+  const rnk = payerRank(r);
+  if (rnk >= 999) return "Last · BCBS";
+  if (rnk >= 500) return "Lv 8 · Other";
+  return `Lv ${rnk + 1} · ${payerBucket(r.payer)}`;
+};
 
 // ---- Repricing SLA helpers ----
 // A claim is "done" when Approved (paid) or Denied. Everything else — Pending,
@@ -76,6 +94,13 @@ function renderSummary(rows: Array<Record<string, unknown>>) {
 }
 
 const columns: TrackerConfig["columns"] = [
+  {
+    key: "queue_level",
+    label: "Queue Level",
+    kind: "text",
+    min: "min-w-[8rem]",
+    compute: (r) => queueLevelLabel(r),
+  },
   { key: "claim_id", label: "Claim ID", kind: "text", min: "min-w-[9rem]" },
   { key: "patient_name", label: "Patient", kind: "text", editable: true, min: "min-w-[11rem]" },
   { key: "member_id", label: "Member ID", kind: "text", editable: true },
@@ -161,6 +186,13 @@ const extraFilters: TrackerConfig["extraFilters"] = {
 
 const config: TrackerConfig = {
   table: "repricing",
+  // Work order: payer priority (BCBS always last), then most-overdue first.
+  sortCompare: (a, b) => {
+    const ra = payerRank(a);
+    const rb = payerRank(b);
+    if (ra !== rb) return ra - rb;
+    return daysUntouched(b) - daysUntouched(a);
+  },
   defaultSortKey: "patient_name",
   statusKey: "payment_status",
   statusOptions: ["Pending", "Approved", "Denied", "Not Worked"],
