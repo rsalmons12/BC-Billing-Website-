@@ -1,4 +1,4 @@
-export type Role = "management" | "staff" | "facility" | "pending" | "suspended";
+export type Role = "management" | "staff" | "facility" | "repricer" | "pending" | "suspended";
 
 export interface Facility {
   id: string;

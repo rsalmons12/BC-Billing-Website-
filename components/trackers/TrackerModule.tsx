@@ -128,7 +128,13 @@ export interface TrackerConfig {
   drilldown?: {
     chargeKey: string; // money column summed as the group's "charged" total
     collectedKeys: string[]; // money columns summed as the group's "collected" total
+    // When set, a row's collectedKeys only count toward "collected" if this
+    // returns true (e.g. only Approved/paid claims count as collected).
+    collectedWhen?: (row: Record<string, unknown>) => boolean;
   };
+  // Pre-selects an extraFilters option on first load (e.g. a queue page that
+  // opens on "open / needs follow-up"). Must match an extraFilters value.
+  defaultExtraFilter?: string;
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -174,7 +180,7 @@ export default function TrackerModule({
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
-  const [extraFilter, setExtraFilter] = useState("all");
+  const [extraFilter, setExtraFilter] = useState(config.defaultExtraFilter ?? "all");
   const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
   // Month-based trackers (payments, billed) can hold years of rows. By default
   // load only the last few months so the page is fast; "Show all months" lifts
@@ -448,7 +454,8 @@ export default function TrackerModule({
       }
       g.count += 1;
       g.charge += num(r[drill.chargeKey]);
-      for (const k of drill.collectedKeys) g.collected += num(r[k]);
+      if (!drill.collectedWhen || drill.collectedWhen(r))
+        for (const k of drill.collectedKeys) g.collected += num(r[k]);
     }
     return Array.from(map.values()).sort((a, b) => b.charge - a.charge);
   }, [drill, drillLevel, filtered, config.payerKey, facName]);
