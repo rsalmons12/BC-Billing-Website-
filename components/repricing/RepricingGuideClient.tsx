@@ -9,7 +9,21 @@ const BUCKET = "attachments";
 
 type Attach = { name: string; path: string; size?: number; type?: string };
 
-const DEFAULT_GUIDE = `DATA ISIGHT — REPRICING PROCESS
+const DEFAULT_GUIDE = `REPRICING — GENERAL APPROACH
+
+Policies are priced through many different third parties (Data iSight, Zelis,
+GCS, and others). The key to being the best at repricing is understanding your
+policies and carriers:
+   • Know what goes where — which carrier / policy routes to which pricer.
+   • Know how and when to reject their offers.
+   • Know when sending a claim back will pay higher.
+
+Example: Cigna MRC-2 policies pay well, but MRC-1 does not. This kind of detail
+is on the patient's VOB. If it isn't there, request a new VOB specifying exactly
+what you're looking for: vob@bcbillingsolution.com
+
+
+DATA ISIGHT — REPRICING PROCESS
 
 Data iSight prices claims for several payers (Cigna, UnitedHealthcare, BCBS,
 and others). Send them everything — they determine which claims belong to them
