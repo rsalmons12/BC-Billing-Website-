@@ -131,6 +131,11 @@ export interface TrackerConfig {
     // When set, a row's collectedKeys only count toward "collected" if this
     // returns true (e.g. only Approved/paid claims count as collected).
     collectedWhen?: (row: Record<string, unknown>) => boolean;
+    // When set, clicking a PAYER bubble first opens a "how to handle this payer"
+    // directions pop-up (loaded from this table, keyed by payer family). Read by
+    // anyone; edited by management. Empty directions drill straight to claims
+    // (management still gets the editor).
+    playbookTable?: string;
   };
   // Pre-selects an extraFilters option on first load (e.g. a queue page that
   // opens on "open / needs follow-up"). Must match an extraFilters value.
@@ -176,6 +181,10 @@ export default function TrackerModule({
   // Drill-down: "View all payers" jumps to the claims table for a facility
   // without picking one payer (payerFilter stays "all", matching every payer).
   const [drillAllPayers, setDrillAllPayers] = useState(false);
+  // Per-payer directions ("playbook"): payer family → instructions, and the
+  // payer whose pop-up is currently open.
+  const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
+  const [playbookFor, setPlaybookFor] = useState<string | null>(null);
   const [monthFilter, setMonthFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState("");
@@ -216,6 +225,50 @@ export default function TrackerModule({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load per-payer directions once (small table) when the drill-down enables it.
+  const playbookTable = config.drilldown?.playbookTable;
+  useEffect(() => {
+    if (!playbookTable) return;
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from(playbookTable).select("payer, instructions");
+      if (!alive || !data) return;
+      const map: Record<string, string> = {};
+      for (const row of data as { payer: string; instructions: string }[]) {
+        map[row.payer] = row.instructions ?? "";
+      }
+      setPlaybooks(map);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [supabase, playbookTable]);
+
+  // Clicking a payer bubble: if it has directions (or the viewer is management),
+  // open the pop-up first; otherwise drill straight to the claims.
+  const openPayer = useCallback(
+    (payer: string) => {
+      if (playbookTable && (isManagement || (playbooks[payer]?.trim() ?? ""))) {
+        setPlaybookFor(payer);
+      } else {
+        setPayerFilter(payer);
+      }
+    },
+    [playbookTable, isManagement, playbooks]
+  );
+
+  const savePlaybook = useCallback(
+    async (payer: string, instructions: string) => {
+      if (!playbookTable) return;
+      setPlaybooks((prev) => ({ ...prev, [payer]: instructions }));
+      await supabase.from(playbookTable).upsert(
+        { payer, instructions, updated_by: userId, updated_at: new Date().toISOString() },
+        { onConflict: "payer" }
+      );
+    },
+    [supabase, playbookTable, userId]
+  );
 
   const saveCell = useCallback(
     async (id: string, key: string, value: unknown) => {
@@ -861,7 +914,7 @@ export default function TrackerModule({
                         setPayerFilter("all");
                         setDrillAllPayers(false);
                       } else {
-                        setPayerFilter(b.label);
+                        openPayer(b.label);
                       }
                     }}
                     className="card card-hover flex flex-col p-4 text-left"
@@ -893,6 +946,11 @@ export default function TrackerModule({
                     {rate != null && (
                       <div className="mt-2 text-[11px] text-surface-muted">
                         Collected <b className="text-gold">{rate}%</b> of charged
+                      </div>
+                    )}
+                    {drillLevel === "payer" && playbooks[b.label]?.trim() && (
+                      <div className="mt-1 text-[11px] font-semibold text-brand-blue">
+                        ℹ Directions
                       </div>
                     )}
                   </button>
@@ -1080,6 +1138,127 @@ export default function TrackerModule({
         </table>
       </div>
       )}
+
+      {playbookFor != null && (
+        <PlaybookModal
+          payer={playbookFor}
+          instructions={playbooks[playbookFor] ?? ""}
+          canEdit={isManagement}
+          onSave={(text) => savePlaybook(playbookFor, text)}
+          onViewClaims={() => {
+            setPayerFilter(playbookFor);
+            setPlaybookFor(null);
+          }}
+          onClose={() => setPlaybookFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Per-payer "how to handle these claims" pop-up. Read for everyone; management
+// gets an inline editor. "View claims" continues the drill-down.
+function PlaybookModal({
+  payer,
+  instructions,
+  canEdit,
+  onSave,
+  onViewClaims,
+  onClose,
+}: {
+  payer: string;
+  instructions: string;
+  canEdit: boolean;
+  onSave: (text: string) => void;
+  onViewClaims: () => void;
+  onClose: () => void;
+}) {
+  const [editing, setEditing] = useState(!instructions.trim() && canEdit);
+  const [draft, setDraft] = useState(instructions);
+  useEffect(() => setDraft(instructions), [instructions]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="card w-full max-w-lg p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+              How to handle
+            </div>
+            <div className="font-display text-xl font-bold text-surface-ink">{payer}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-surface-muted hover:text-surface-ink"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        {editing ? (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={8}
+            autoFocus
+            placeholder={`Directions for handling ${payer} claims — appeals contacts, portal steps, common remark codes, timely-filing limits, etc.`}
+            className="cell-input min-h-[10rem] w-full resize-y whitespace-pre-wrap leading-snug"
+          />
+        ) : instructions.trim() ? (
+          <div className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-lg border border-surface-border bg-surface p-3 text-sm leading-relaxed text-surface-ink">
+            {instructions}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-surface-border p-4 text-center text-sm text-surface-muted">
+            No directions for {payer} yet.
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex gap-2">
+            {canEdit && !editing && (
+              <button
+                onClick={() => setEditing(true)}
+                className="btn-ghost"
+              >
+                ✎ Edit
+              </button>
+            )}
+            {canEdit && editing && (
+              <>
+                <button
+                  onClick={() => {
+                    onSave(draft);
+                    setEditing(false);
+                  }}
+                  className="btn-primary"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setDraft(instructions);
+                    setEditing(false);
+                  }}
+                  className="btn-ghost"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+          <button onClick={onViewClaims} className="btn-gold">
+            View {payer} claims →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

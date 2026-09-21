@@ -172,6 +172,8 @@ const config: TrackerConfig = {
     chargeKey: "charge_amount",
     collectedKeys: ["amt_allowed", "additional_payment"],
     collectedWhen: isApproved,
+    // Clicking a payer opens its "how to handle these claims" directions.
+    playbookTable: "payer_playbooks",
   },
   extraFilters,
   searchKeys: ["claim_id", "patient_name", "member_id", "payer", "remark_codes", "claim_status"],
