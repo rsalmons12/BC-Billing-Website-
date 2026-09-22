@@ -19,6 +19,17 @@ export function toE164(raw: unknown): string {
   return "";
 }
 
+// Parse a free-text field that may hold several numbers (comma / newline /
+// semicolon separated) into a deduped list of E.164 numbers.
+export function parseNumbers(raw: unknown): string[] {
+  const seen = new Set<string>();
+  for (const part of String(raw ?? "").split(/[,\n;/]+/)) {
+    const e = toE164(part);
+    if (e) seen.add(e);
+  }
+  return Array.from(seen);
+}
+
 export async function sendSms(
   to: string,
   body: string

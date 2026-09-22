@@ -4,7 +4,7 @@ import { easternToday, easternHour } from "@/lib/report/eodSummary";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
-import { sendSms } from "@/lib/sms";
+import { sendSms, parseNumbers } from "@/lib/sms";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Weekly: text each facility (that has an SMS number on file) a short summary of
@@ -51,16 +51,21 @@ export async function GET(request: Request) {
     .select("id, name, short_name, sms_phone");
   const facilities = ((facData as Fac[]) ?? []).filter(
     (f) =>
-      f.sms_phone &&
-      String(f.sms_phone).trim() &&
       !isDemoFacility(f.name) &&
       !isDemoFacility(f.short_name) &&
       !isExcludedFacility(f.name) &&
       !isExcludedFacility(f.short_name)
   );
 
-  if (facilities.length === 0)
-    return NextResponse.json({ ok: true, sent: 0, reason: "no facilities have an SMS number" });
+  // Management numbers get EVERY facility's census text (like an email BCC).
+  const { data: mgmt } = await admin.from("profiles").select("sms_phone").eq("role", "management");
+  const mgmtNumbers = Array.from(
+    new Set(((mgmt as { sms_phone: string | null }[]) ?? []).flatMap((m) => parseNumbers(m.sms_phone)))
+  );
+  const anyFacilityNumber = facilities.some((f) => parseNumbers(f.sms_phone).length > 0);
+
+  if (!anyFacilityNumber && mgmtNumbers.length === 0)
+    return NextResponse.json({ ok: true, sent: 0, reason: "no SMS numbers set" });
 
   const recaps = await computeFacilityRecaps(admin, {
     facilityIds: facilities.map((f) => f.id),
@@ -73,13 +78,14 @@ export async function GET(request: Request) {
     const label = f.short_name || f.name;
     const recap = recapById.get(f.id);
     const body = recap ? censusSmsBody(recap) : "";
-    if (!body) {
-      skipped.push(`${label} (no census)`);
-      continue;
+    if (!body) continue; // no census this week
+    const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
+    if (recipients.length === 0) continue;
+    for (const to of recipients) {
+      const res = await sendSms(to, body);
+      if (res.ok) sent++;
+      else skipped.push(`${label}→${to} (${res.error})`);
     }
-    const res = await sendSms(f.sms_phone!, body);
-    if (res.ok) sent++;
-    else skipped.push(`${label} (${res.error})`);
   }
 
   await logCronRun(admin, "census-text", `SENT ${date} — texted ${sent}, skipped ${skipped.length}`);

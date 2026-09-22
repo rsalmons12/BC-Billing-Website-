@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
-import { sendSms } from "@/lib/sms";
+import { sendSms, parseNumbers } from "@/lib/sms";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Management-only manual trigger for the weekly census text, so it can be tested
@@ -83,24 +83,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No facility has census data to preview yet." }, { status: 400 });
   }
 
-  // SEND NOW to every facility with an SMS number.
-  const targets = visible.filter((f) => f.sms_phone && String(f.sms_phone).trim());
-  if (targets.length === 0)
-    return NextResponse.json({ error: "No facilities have an SMS number set (Admin → Facilities)." }, { status: 400 });
+  // Management numbers get EVERY facility's census text (like an email BCC).
+  const { data: mgmt } = await admin.from("profiles").select("sms_phone").eq("role", "management");
+  const mgmtNumbers = Array.from(
+    new Set(((mgmt as { sms_phone: string | null }[]) ?? []).flatMap((m) => parseNumbers(m.sms_phone)))
+  );
+  const anyFacilityNumber = visible.some((f) => parseNumbers(f.sms_phone).length > 0);
+  if (!anyFacilityNumber && mgmtNumbers.length === 0)
+    return NextResponse.json(
+      { error: "No SMS numbers set — add facility numbers (Admin → Facilities) or a management number (Admin → users)." },
+      { status: 400 }
+    );
 
+  // SEND NOW: each facility's own number(s) + all management numbers.
   let sent = 0;
   const skipped: string[] = [];
-  for (const f of targets) {
+  for (const f of visible) {
     const label = f.short_name || f.name;
     const recap = recapById.get(f.id);
     const text = recap ? censusSmsBody(recap) : "";
-    if (!text) {
-      skipped.push(`${label} (no census)`);
-      continue;
+    if (!text) continue; // no census this week — skip silently
+    const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
+    if (recipients.length === 0) continue;
+    for (const to of recipients) {
+      const res = await sendSms(to, text);
+      if (res.ok) sent++;
+      else skipped.push(`${label}→${to} (${res.error})`);
     }
-    const res = await sendSms(f.sms_phone!, text);
-    if (res.ok) sent++;
-    else skipped.push(`${label} (${res.error})`);
   }
   return NextResponse.json({ ok: true, sent, skipped });
 }
