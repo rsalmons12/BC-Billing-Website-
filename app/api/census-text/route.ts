@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { selectAll } from "@/lib/supabase/page";
-import { facilityCensusCompare } from "@/lib/report/census";
+import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
 import { sendSms } from "@/lib/sms";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
@@ -60,24 +59,22 @@ export async function POST(request: Request) {
       !isExcludedFacility(f.name) &&
       !isExcludedFacility(f.short_name)
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = await selectAll<any>((f, t) => admin.from("census").select("*").range(f, t)).catch(
-    () => []
-  );
+
+  // Build recaps once so every text matches the Census page exactly (levels of
+  // care, reimbursement mix, expected revenue on outstanding claims).
+  const recaps = await computeFacilityRecaps(admin, {
+    facilityIds: visible.map((f) => f.id),
+  }).catch(() => []);
+  const recapById = new Map(recaps.map((r) => [r.facilityId, r]));
 
   // PREVIEW to one number: use the first facility that has a current census week.
   const requested = String(body.to ?? "").trim();
   if (requested) {
     for (const f of visible) {
-      const { current } = facilityCensusCompare(f.id, rows);
-      if (current) {
-        const curRows = rows.filter(
-          (r) => r.facility_id === f.id && r.week_start === current.week
-        );
-        const res = await sendSms(
-          requested,
-          censusSmsBody(f.short_name || f.name, current, curRows)
-        );
+      const recap = recapById.get(f.id);
+      const text = recap ? censusSmsBody(recap) : "";
+      if (text) {
+        const res = await sendSms(requested, text);
         return res.ok
           ? NextResponse.json({ ok: true, preview: true, sentTo: requested })
           : NextResponse.json({ error: res.error }, { status: 502 });
@@ -94,16 +91,14 @@ export async function POST(request: Request) {
   let sent = 0;
   const skipped: string[] = [];
   for (const f of targets) {
-    const { current } = facilityCensusCompare(f.id, rows);
     const label = f.short_name || f.name;
-    if (!current) {
+    const recap = recapById.get(f.id);
+    const text = recap ? censusSmsBody(recap) : "";
+    if (!text) {
       skipped.push(`${label} (no census)`);
       continue;
     }
-    const curRows = rows.filter(
-      (r) => r.facility_id === f.id && r.week_start === current.week
-    );
-    const res = await sendSms(f.sms_phone!, censusSmsBody(label, current, curRows));
+    const res = await sendSms(f.sms_phone!, text);
     if (res.ok) sent++;
     else skipped.push(`${label} (${res.error})`);
   }
