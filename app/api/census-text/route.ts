@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       { status: 503 }
     );
 
-  let body: { to?: string; all?: boolean } = {};
+  let body: { to?: string; all?: boolean; dryRun?: boolean } = {};
   try {
     body = await request.json();
   } catch {
@@ -95,9 +95,11 @@ export async function POST(request: Request) {
       { status: 400 }
     );
 
-  // SEND NOW: each facility's own number(s) + all management numbers.
-  let sent = 0;
-  const skipped: string[] = [];
+  // Build the send plan: each facility gets ONLY its own census text, to its own
+  // number(s) plus the management numbers. A facility number therefore only ever
+  // appears under its own facility.
+  const mask = (n: string) => `…${n.slice(-4)}`;
+  const plan: { facility: string; text: string; recipients: string[] }[] = [];
   for (const f of visible) {
     const label = f.short_name || f.name;
     const recap = recapById.get(f.id);
@@ -105,10 +107,31 @@ export async function POST(request: Request) {
     if (!text) continue; // no census this week — skip silently
     const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
     if (recipients.length === 0) continue;
-    for (const to of recipients) {
-      const res = await sendSms(to, text);
+    plan.push({ facility: label, text, recipients });
+  }
+
+  // Dry run: show who would get what, without sending.
+  if (body.dryRun) {
+    return NextResponse.json({
+      ok: true,
+      dryRun: true,
+      managementNumbers: mgmtNumbers.map(mask),
+      plan: plan.map((p) => ({
+        facility: p.facility,
+        recipients: p.recipients.map(mask),
+        recipientCount: p.recipients.length,
+      })),
+    });
+  }
+
+  // SEND NOW.
+  let sent = 0;
+  const skipped: string[] = [];
+  for (const p of plan) {
+    for (const to of p.recipients) {
+      const res = await sendSms(to, p.text);
       if (res.ok) sent++;
-      else skipped.push(`${label}→${to} (${res.error})`);
+      else skipped.push(`${p.facility}→${mask(to)} (${res.error})`);
     }
   }
   return NextResponse.json({ ok: true, sent, skipped });
