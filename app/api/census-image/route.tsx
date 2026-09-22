@@ -15,29 +15,6 @@ export const runtime = "nodejs";
 const money0 = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-// Fonts (cached across requests). Best-effort: if the fetch fails, ImageResponse
-// falls back to its built-in font.
-let fontCache: { name: string; data: ArrayBuffer; weight: 400 | 700; style: "normal" }[] | null = null;
-async function loadFonts() {
-  if (fontCache) return fontCache;
-  const urls: { w: 400 | 700; url: string }[] = [
-    { w: 400, url: "https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-400-normal.woff" },
-    { w: 700, url: "https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-700-normal.woff" },
-  ];
-  try {
-    const out = [];
-    for (const f of urls) {
-      const res = await fetch(f.url);
-      if (!res.ok) throw new Error("font fetch");
-      out.push({ name: "Inter", data: await res.arrayBuffer(), weight: f.w, style: "normal" as const });
-    }
-    fontCache = out;
-  } catch {
-    fontCache = [];
-  }
-  return fontCache;
-}
-
 // BC Billing logo (the app icon), inlined as a data URI. Cached across requests.
 let logoData: string | null = null;
 function logoDataUri(): string {
@@ -88,8 +65,6 @@ export async function GET(request: Request) {
   ]
     .filter(Boolean)
     .join(", ");
-
-  const fonts = await loadFonts();
 
   const Card = (children: React.ReactNode, extra: React.CSSProperties = {}) => (
     <div
@@ -242,7 +217,6 @@ export async function GET(request: Request) {
     {
       width: 620,
       height: 1000,
-      ...(fonts.length ? { fonts } : {}),
     }
   );
 }
