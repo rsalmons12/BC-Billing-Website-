@@ -280,8 +280,8 @@ export function computeBelowFloor(
   if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
-  const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
-  const current = fCensus.filter((c) => c.week_start === latestWeek);
+  const reportedWeek = reportedWeekStart(fCensus.map((c) => c.week_start!));
+  const current = fCensus.filter((c) => c.week_start === reportedWeek);
   const fPays = payments.filter((p) => p.facility_id === facilityId);
 
   const out: BelowFloorRow[] = [];
@@ -328,8 +328,8 @@ function computeCensusReceivables(
 ): CensusReceivableRow[] {
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
-  const latestWeek = fCensus.map((c) => c.week_start!).sort().slice(-1)[0];
-  const current = fCensus.filter((c) => c.week_start === latestWeek);
+  const reportedWeek = reportedWeekStart(fCensus.map((c) => c.week_start!));
+  const current = fCensus.filter((c) => c.week_start === reportedWeek);
   const fPays = payments.filter((p) => p.facility_id === facilityId);
   // Outstanding = still owed (a positive balance). Stale/excluded claims are
   // already filtered out of `claims` upstream, so they don't inflate the count.
@@ -386,13 +386,22 @@ function computeCensusReceivables(
   return out;
 }
 
-// Current census week's rows for one facility.
+// The "reported" census week: the LAST COMPLETED week (the one before the most
+// recent, since the newest week is usually still in progress — attendance and
+// payments not in yet). Falls back to the only week when there's just one. Same
+// convention as facilityCensusWeek, so the recap, Census page, and texts agree.
+function reportedWeekStart(weekStarts: string[]): string | undefined {
+  const uniq = Array.from(new Set(weekStarts)).sort();
+  return uniq[uniq.length - 2] ?? uniq[uniq.length - 1];
+}
+
+// Reported census week's rows for one facility.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function currentCensusRows(facilityId: string, census: any[]): any[] {
   const f = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (f.length === 0) return [];
-  const latest = f.map((c) => c.week_start as string).sort().slice(-1)[0];
-  return f.filter((c) => c.week_start === latest);
+  const week = reportedWeekStart(f.map((c) => c.week_start as string));
+  return f.filter((c) => c.week_start === week);
 }
 
 // Level-of-care headcount for the current census week (mirrors the Census page).
