@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       { status: 503 }
     );
 
-  let body: { to?: string; all?: boolean; dryRun?: boolean } = {};
+  let body: { to?: string; all?: boolean; dryRun?: boolean; facilityId?: string } = {};
   try {
     body = await request.json();
   } catch {
@@ -89,7 +89,10 @@ export async function POST(request: Request) {
   // PREVIEW to one number: use the first facility that has a current census week.
   const requested = String(body.to ?? "").trim();
   if (requested) {
-    for (const f of visible) {
+    // Preview the chosen facility if given, otherwise the first with census.
+    const chosen = body.facilityId ? visible.find((f) => f.id === body.facilityId) : null;
+    const candidates = chosen ? [chosen] : visible;
+    for (const f of candidates) {
       const recap = recapById.get(f.id);
       if (recap && recap.census?.current) {
         const label = f.short_name || f.name;
