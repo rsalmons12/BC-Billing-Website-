@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { computeFacilityRecaps, type FacilityRecap } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
 import { censusImageToken } from "@/lib/report/censusImageToken";
-import { sendSms, parseNumbers } from "@/lib/sms";
+import { sendSms, parseNumbers, fetchSmsStatus } from "@/lib/sms";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
 const imageUrl = (facilityId: string) =>
@@ -18,10 +18,10 @@ const MMS_ENABLED = process.env.CENSUS_MMS === "1";
 async function sendCensus(to: string, label: string, facilityId: string, recap: FacilityRecap) {
   if (MMS_ENABLED) {
     const mms = await sendSms(to, caption(label), imageUrl(facilityId));
-    if (mms.ok) return { ok: true, error: null, via: "mms" as const };
+    if (mms.ok) return { ok: true, error: null, via: "mms" as const, sid: mms.sid };
   }
   const sms = await sendSms(to, censusSmsBody(recap));
-  return { ok: sms.ok, error: sms.error, via: "sms" as const };
+  return { ok: sms.ok, error: sms.error, via: "sms" as const, sid: sms.sid };
 }
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
@@ -97,9 +97,15 @@ export async function POST(request: Request) {
       if (recap && recap.census?.current) {
         const label = f.short_name || f.name;
         const res = await sendCensus(requested, label, f.id, recap);
-        return res.ok
-          ? NextResponse.json({ ok: true, preview: true, sentTo: requested, via: res.via })
-          : NextResponse.json({ error: res.error }, { status: 502 });
+        if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
+        // Give Twilio a moment, then report the real delivery status + error code
+        // so a "sent but not received" is diagnosable right in the UI.
+        let diag: { status?: string; errorCode?: number | null; errorMessage?: string | null } = {};
+        if (res.sid) {
+          await new Promise((r) => setTimeout(r, 5000));
+          diag = await fetchSmsStatus(res.sid);
+        }
+        return NextResponse.json({ ok: true, preview: true, sentTo: requested, via: res.via, ...diag });
       }
     }
     return NextResponse.json({ error: "No facility has census data to preview yet." }, { status: 400 });
