@@ -18,6 +18,7 @@ export default function CensusTextActions({
   const [msg, setMsg] = useState("");
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   const [mgmt, setMgmt] = useState<string[]>([]);
+  const [sentMedia, setSentMedia] = useState<string | null>(null);
 
   const preview = async () => {
     setBusy(true);
@@ -54,6 +55,7 @@ export default function CensusTextActions({
         body: JSON.stringify(body),
       });
       const d = await res.json().catch(() => ({}));
+      setSentMedia(typeof d.media === "string" ? d.media : null);
       setMsg(res.ok ? ok(d) : `Error: ${d.error || "failed"}`);
     } catch {
       setMsg("Error: could not reach the server.");
@@ -141,6 +143,17 @@ export default function CensusTextActions({
         Auto-sends weekly (Mon ~9 AM ET). Numbers set in Admin → Facilities.
       </span>
       {msg && <span className="text-xs font-medium text-secured">{msg}</span>}
+      {sentMedia && (
+        <a
+          href={sentMedia}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-medium text-brand-blue underline"
+          title="The exact image URL Twilio was given — open it to confirm it loads"
+        >
+          open image Twilio fetched
+        </a>
+      )}
 
       {plan && (
         <div className="mt-1 w-full">
