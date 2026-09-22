@@ -36,7 +36,8 @@ export function censusSmsBody(recap: FacilityRecap): string {
     )}% under $800/day`
   );
   if ((cur.missedGroups ?? 0) > 0) {
-    lines.push(`Missed groups: ${cur.missedGroups} (−${money0(cur.missedRev)})`);
+    const rev = cur.missedRev > 0 ? ` (−${money0(cur.missedRev)})` : "";
+    lines.push(`Missed groups: ${cur.missedGroups}${rev}`);
   }
   if (cur.expected > 0) lines.push(`Expected revenue this week: ${money0(cur.expected)}`);
 

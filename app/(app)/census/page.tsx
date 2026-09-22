@@ -11,7 +11,11 @@ export default async function CensusPage() {
   return (
     <>
       <Header profile={profile} email={email} subtitle="Weekly Census" />
-      {profile.role === "management" && <CensusTextActions />}
+      {profile.role === "management" && (
+        <CensusTextActions
+          facilities={facilities.map((f) => ({ id: f.id, label: f.short_name || f.name }))}
+        />
+      )}
       <main className="min-h-0 flex-1 overflow-auto md:overflow-hidden">
         <CensusClient
           facilities={facilities}

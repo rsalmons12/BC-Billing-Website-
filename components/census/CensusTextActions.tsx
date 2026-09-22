@@ -7,8 +7,13 @@ import { useState } from "react";
 // SMS number on file its own census summary.
 type PlanRow = { facility: string; recipients: string[]; recipientCount: number };
 
-export default function CensusTextActions() {
+export default function CensusTextActions({
+  facilities = [],
+}: {
+  facilities?: { id: string; label: string }[];
+}) {
   const [to, setTo] = useState("");
+  const [facilityId, setFacilityId] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
@@ -63,6 +68,21 @@ export default function CensusTextActions() {
       <span className="text-xs font-semibold uppercase tracking-wide text-surface-muted">
         Census text
       </span>
+      {facilities.length > 0 && (
+        <select
+          value={facilityId}
+          onChange={(e) => setFacilityId(e.target.value)}
+          className="rounded-lg border border-surface-border bg-surface-card px-2 py-1.5 text-sm outline-none focus:border-brand-blue"
+          title="Which facility's census to preview"
+        >
+          <option value="">First with census</option>
+          {facilities.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
+          ))}
+        </select>
+      )}
       <input
         type="tel"
         value={to}
@@ -71,7 +91,13 @@ export default function CensusTextActions() {
         className="w-40 rounded-lg border border-surface-border bg-surface-card px-2.5 py-1.5 text-sm outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
       />
       <button
-        onClick={() => call({ to: to.trim() }, "Sending preview…", (d) => `✓ Preview texted to ${d.sentTo}.`)}
+        onClick={() =>
+          call(
+            { to: to.trim(), facilityId: facilityId || undefined },
+            "Sending preview…",
+            (d) => `✓ Preview texted to ${d.sentTo}.`
+          )
+        }
         disabled={busy || !to.trim()}
         className="btn-ghost px-3 py-1.5 text-xs"
       >
