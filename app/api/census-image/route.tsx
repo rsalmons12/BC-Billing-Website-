@@ -1,4 +1,6 @@
 import * as React from "react";
+import fs from "fs";
+import path from "path";
 import { ImageResponse } from "next/og";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
@@ -34,6 +36,19 @@ async function loadFonts() {
     fontCache = [];
   }
   return fontCache;
+}
+
+// BC Billing logo (the app icon), inlined as a data URI. Cached across requests.
+let logoData: string | null = null;
+function logoDataUri(): string {
+  if (logoData !== null) return logoData;
+  try {
+    const buf = fs.readFileSync(path.join(process.cwd(), "public", "icon-192.png"));
+    logoData = `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    logoData = "";
+  }
+  return logoData;
 }
 
 const BLUE = "#19a8e0";
@@ -116,17 +131,29 @@ export async function GET(request: Request) {
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
+            alignItems: "center",
             background: `linear-gradient(90deg, ${BLUE}, ${NAVY})`,
             borderRadius: 16,
             padding: "16px 20px",
             color: "#ffffff",
           }}
         >
-          <div style={{ fontSize: 15, letterSpacing: 2, color: "#cfe8fb" }}>BC BILLING SOLUTIONS</div>
-          <div style={{ fontSize: 30, fontWeight: 700, marginTop: 2 }}>Billing Portal Update</div>
-          <div style={{ fontSize: 14, letterSpacing: 1, color: "#cfe8fb", marginTop: 2 }}>
-            REAL-TIME INSIGHTS. A STRONGER TOMORROW.
+          {logoDataUri() ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoDataUri()}
+              width={68}
+              height={68}
+              alt="BC Billing"
+              style={{ borderRadius: 16, marginRight: 16 }}
+            />
+          ) : null}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ fontSize: 15, letterSpacing: 2, color: "#cfe8fb" }}>BC BILLING SOLUTIONS</div>
+            <div style={{ fontSize: 30, fontWeight: 700, marginTop: 2 }}>Billing Portal Update</div>
+            <div style={{ fontSize: 14, letterSpacing: 1, color: "#cfe8fb", marginTop: 2 }}>
+              REAL-TIME INSIGHTS. A STRONGER TOMORROW.
+            </div>
           </div>
         </div>
 
