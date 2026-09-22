@@ -101,6 +101,13 @@ export default function AdminClient({
     flash(error ? `Error: ${error.message}` : receives_invoices ? "Gets invoices" : "No invoices");
   };
 
+  // Management SMS number(s) — receives every facility's weekly census text.
+  const setSmsPhone = async (p: Profile, sms_phone: string | null) => {
+    setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, sms_phone } : x)));
+    const { error } = await supabase.from("profiles").update({ sms_phone }).eq("id", p.id);
+    flash(error ? `Error: ${error.message}` : sms_phone ? "Census text # saved" : "Census text off");
+  };
+
   const setOwner = async (p: Profile, is_owner: boolean) => {
     setProfiles((prev) =>
       prev.map((x) => (x.id === p.id ? { ...x, is_owner } : x))
@@ -297,6 +304,7 @@ export default function AdminClient({
           setRole={setRole}
           setDailyEmails={setDailyEmails}
           setInvoices={setInvoices}
+          setSmsPhone={setSmsPhone}
           setOwner={setOwner}
           setAdmin={setAdmin}
           setJobTitle={setJobTitle}
@@ -332,6 +340,7 @@ function UsersTab({
   setRole,
   setDailyEmails,
   setInvoices,
+  setSmsPhone,
   setOwner,
   setAdmin,
   setJobTitle,
@@ -346,6 +355,7 @@ function UsersTab({
   selfId: string;
   selfIsOwner: boolean;
   setRole: (p: Profile, r: Role) => void;
+  setSmsPhone: (p: Profile, v: string | null) => void;
   setDailyEmails: (p: Profile, on: boolean) => void;
   setInvoices: (p: Profile, on: boolean) => void;
   setOwner: (p: Profile, on: boolean) => void;
@@ -407,6 +417,25 @@ function UsersTab({
                   </span>
                 </label>
               </div>
+
+              {/* Management SMS: number(s) that receive EVERY facility's weekly
+                  census text (like an email BCC). Comma-separate several. */}
+              {p.role === "management" && (
+                <div>
+                  <span className="label">Census text SMS #</span>
+                  <input
+                    type="tel"
+                    defaultValue={p.sms_phone ?? ""}
+                    onBlur={(e) =>
+                      e.target.value !== (p.sms_phone ?? "") &&
+                      setSmsPhone(p, e.target.value.trim() || null)
+                    }
+                    className="cell-input mt-1 min-w-[12rem]"
+                    placeholder="(555) 123-4567, …"
+                    title="Number(s) that receive EVERY facility's weekly census text. Comma-separate several. Blank = none."
+                  />
+                </div>
+              )}
 
               {/* Mark who receives invoices. A facility user gets ITS OWN
                   facility's invoice; a management/staff user is BCC'd on all. */}
@@ -839,9 +868,9 @@ function FacilitiesTab({
                       e.target.value !== (f.sms_phone ?? "") &&
                       save(f, { sms_phone: e.target.value.trim() || null })
                     }
-                    className="cell-input min-w-[10rem]"
-                    placeholder="(555) 123-4567"
-                    title="Mobile number that receives this facility's weekly census text. Blank = no text."
+                    className="cell-input min-w-[12rem]"
+                    placeholder="(555) 123-4567, (555) 987-6543"
+                    title="Mobile number(s) that receive this facility's weekly census text. Separate multiple numbers with commas. Blank = no text."
                   />
                 </td>
                 <td className="td text-right">

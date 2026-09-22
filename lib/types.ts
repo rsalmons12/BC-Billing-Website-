@@ -86,6 +86,7 @@ export interface Profile {
   receives_invoices: boolean | null; // true = receives facility invoice emails
   is_owner: boolean | null; // true = may see the Monthly Report / invoicing screen
   is_admin: boolean | null; // true = may run the Admin panel (users/facilities), no invoices
+  sms_phone: string | null; // management: number(s) that receive every facility's census text
   created_at: string;
 }
 
