@@ -3,8 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { easternToday, easternHour } from "@/lib/report/eodSummary";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
-import { censusSmsBody } from "@/lib/report/censusText";
+import { censusImageToken } from "@/lib/report/censusImageToken";
 import { sendSms, parseNumbers } from "@/lib/sms";
+
+const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Weekly: text each facility (that has an SMS number on file) a short summary of
@@ -77,12 +79,13 @@ export async function GET(request: Request) {
   for (const f of facilities) {
     const label = f.short_name || f.name;
     const recap = recapById.get(f.id);
-    const body = recap ? censusSmsBody(recap) : "";
-    if (!body) continue; // no census this week
+    if (!recap || !recap.census?.current) continue; // no census this week
     const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
     if (recipients.length === 0) continue;
+    const media = `${BASE_URL}/api/census-image?f=${encodeURIComponent(f.id)}&t=${censusImageToken(f.id)}`;
+    const cap = `${label}: weekly census update. Full recap in the app.`;
     for (const to of recipients) {
-      const res = await sendSms(to, body);
+      const res = await sendSms(to, cap, media);
       if (res.ok) sent++;
       else skipped.push(`${label}→${to} (${res.error})`);
     }

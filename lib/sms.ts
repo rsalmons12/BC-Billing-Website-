@@ -32,7 +32,8 @@ export function parseNumbers(raw: unknown): string[] {
 
 export async function sendSms(
   to: string,
-  body: string
+  body: string,
+  mediaUrl?: string
 ): Promise<{ ok: boolean; error: string | null }> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
@@ -44,13 +45,15 @@ export async function sendSms(
   if (!dest) return { ok: false, error: `Invalid phone number: ${to}` };
 
   try {
+    const params: Record<string, string> = { To: dest, From: from, Body: body.slice(0, 1500) };
+    if (mediaUrl) params.MediaUrl = mediaUrl; // MMS: attach the branded image
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ To: dest, From: from, Body: body.slice(0, 1500) }).toString(),
+      body: new URLSearchParams(params).toString(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

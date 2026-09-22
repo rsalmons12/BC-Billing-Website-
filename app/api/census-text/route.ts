@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
-import { censusSmsBody } from "@/lib/report/censusText";
+import { censusImageToken } from "@/lib/report/censusImageToken";
 import { sendSms, parseNumbers } from "@/lib/sms";
+
+const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
+const imageUrl = (facilityId: string) =>
+  `${BASE_URL}/api/census-image?f=${encodeURIComponent(facilityId)}&t=${censusImageToken(facilityId)}`;
+const caption = (label: string) => `${label}: weekly census update. Full recap in the app.`;
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Management-only manual trigger for the weekly census text, so it can be tested
@@ -72,9 +77,9 @@ export async function POST(request: Request) {
   if (requested) {
     for (const f of visible) {
       const recap = recapById.get(f.id);
-      const text = recap ? censusSmsBody(recap) : "";
-      if (text) {
-        const res = await sendSms(requested, text);
+      if (recap && recap.census?.current) {
+        const label = f.short_name || f.name;
+        const res = await sendSms(requested, caption(label), imageUrl(f.id));
         return res.ok
           ? NextResponse.json({ ok: true, preview: true, sentTo: requested })
           : NextResponse.json({ error: res.error }, { status: 502 });
@@ -99,15 +104,14 @@ export async function POST(request: Request) {
   // number(s) plus the management numbers. A facility number therefore only ever
   // appears under its own facility.
   const mask = (n: string) => `…${n.slice(-4)}`;
-  const plan: { facility: string; text: string; recipients: string[] }[] = [];
+  const plan: { facility: string; facilityId: string; recipients: string[] }[] = [];
   for (const f of visible) {
     const label = f.short_name || f.name;
     const recap = recapById.get(f.id);
-    const text = recap ? censusSmsBody(recap) : "";
-    if (!text) continue; // no census this week — skip silently
+    if (!recap || !recap.census?.current) continue; // no census this week — skip
     const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
     if (recipients.length === 0) continue;
-    plan.push({ facility: label, text, recipients });
+    plan.push({ facility: label, facilityId: f.id, recipients });
   }
 
   // Dry run: show who would get what, without sending.
@@ -124,12 +128,14 @@ export async function POST(request: Request) {
     });
   }
 
-  // SEND NOW.
+  // SEND NOW — each facility's branded census image (MMS) to its recipients.
   let sent = 0;
   const skipped: string[] = [];
   for (const p of plan) {
+    const media = imageUrl(p.facilityId);
+    const cap = caption(p.facility);
     for (const to of p.recipients) {
-      const res = await sendSms(to, p.text);
+      const res = await sendSms(to, cap, media);
       if (res.ok) sent++;
       else skipped.push(`${p.facility}→${mask(to)} (${res.error})`);
     }
