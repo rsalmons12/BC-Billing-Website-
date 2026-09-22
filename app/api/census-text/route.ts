@@ -38,11 +38,11 @@ async function sendCensus(admin: any, to: string, label: string, facilityId: str
     const media = await hostCensusImage(admin, facilityId, recap);
     if (media) {
       const mms = await sendSms(to, caption(label), media);
-      if (mms.ok) return { ok: true, error: null, via: "mms" as const, sid: mms.sid };
+      if (mms.ok) return { ok: true, error: null, via: "mms" as const, sid: mms.sid, media };
     }
   }
   const sms = await sendSms(to, censusSmsBody(recap));
-  return { ok: sms.ok, error: sms.error, via: "sms" as const, sid: sms.sid };
+  return { ok: sms.ok, error: sms.error, via: "sms" as const, sid: sms.sid, media: undefined as string | undefined };
 }
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
@@ -126,7 +126,14 @@ export async function POST(request: Request) {
           await new Promise((r) => setTimeout(r, 5000));
           diag = await fetchSmsStatus(res.sid);
         }
-        return NextResponse.json({ ok: true, preview: true, sentTo: requested, via: res.via, ...diag });
+        return NextResponse.json({
+          ok: true,
+          preview: true,
+          sentTo: requested,
+          via: res.via,
+          media: res.media ?? null,
+          ...diag,
+        });
       }
     }
     return NextResponse.json({ error: "No facility has census data to preview yet." }, { status: 400 });
