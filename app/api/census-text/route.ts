@@ -3,22 +3,43 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeFacilityRecaps, type FacilityRecap } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
-import { censusImageToken } from "@/lib/report/censusImageToken";
+import { renderCensusPng } from "@/lib/report/censusImage";
 import { sendSms, parseNumbers, fetchSmsStatus } from "@/lib/sms";
 
-const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
-const imageUrl = (facilityId: string) =>
-  `${BASE_URL}/api/census-image?f=${encodeURIComponent(facilityId)}&t=${censusImageToken(facilityId)}`;
 const caption = (label: string) => `${label}: weekly census update. Full recap in the app.`;
 
 // Plain text is the reliable default. The branded MMS image is opt-in via
-// CENSUS_MMS=1 (enable only after MMS is verified on the number/campaign); if
-// the image fails it still falls back to text so a message always arrives.
+// CENSUS_MMS=1; if the image can't be built/hosted it falls back to text so a
+// message always arrives.
 const MMS_ENABLED = process.env.CENSUS_MMS === "1";
-async function sendCensus(to: string, label: string, facilityId: string, recap: FacilityRecap) {
+
+// Pre-render the census image and host it as a static file so Twilio fetches a
+// ready-made PNG (fast) instead of triggering the heavy recap computation on
+// demand — which timed out (MMS error 11200). Returns a short-lived signed URL.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function hostCensusImage(admin: any, facilityId: string, recap: FacilityRecap): Promise<string | null> {
+  try {
+    const png = await renderCensusPng(recap);
+    const objectPath = `census-mms/${facilityId}-${Date.now()}.png`;
+    const up = await admin.storage
+      .from("attachments")
+      .upload(objectPath, png, { contentType: "image/png", upsert: true });
+    if (up.error) return null;
+    const signed = await admin.storage.from("attachments").createSignedUrl(objectPath, 900);
+    return signed.data?.signedUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function sendCensus(admin: any, to: string, label: string, facilityId: string, recap: FacilityRecap) {
   if (MMS_ENABLED) {
-    const mms = await sendSms(to, caption(label), imageUrl(facilityId));
-    if (mms.ok) return { ok: true, error: null, via: "mms" as const, sid: mms.sid };
+    const media = await hostCensusImage(admin, facilityId, recap);
+    if (media) {
+      const mms = await sendSms(to, caption(label), media);
+      if (mms.ok) return { ok: true, error: null, via: "mms" as const, sid: mms.sid };
+    }
   }
   const sms = await sendSms(to, censusSmsBody(recap));
   return { ok: sms.ok, error: sms.error, via: "sms" as const, sid: sms.sid };
@@ -96,7 +117,7 @@ export async function POST(request: Request) {
       const recap = recapById.get(f.id);
       if (recap && recap.census?.current) {
         const label = f.short_name || f.name;
-        const res = await sendCensus(requested, label, f.id, recap);
+        const res = await sendCensus(admin, requested, label, f.id, recap);
         if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
         // Give Twilio a moment, then report the real delivery status + error code
         // so a "sent but not received" is diagnosable right in the UI.
@@ -157,7 +178,7 @@ export async function POST(request: Request) {
   const skipped: string[] = [];
   for (const p of plan) {
     for (const to of p.recipients) {
-      const res = await sendCensus(to, p.facility, p.facilityId, p.recap);
+      const res = await sendCensus(admin, to, p.facility, p.facilityId, p.recap);
       if (res.ok) sent++;
       else skipped.push(`${p.facility}→${mask(to)} (${res.error})`);
     }
