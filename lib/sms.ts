@@ -30,11 +30,31 @@ export function parseNumbers(raw: unknown): string[] {
   return Array.from(seen);
 }
 
+// Look up a message's current delivery status + error code (Twilio's delivery
+// receipt), so the UI can show WHY a "sent" message didn't arrive.
+export async function fetchSmsStatus(
+  sid: string
+): Promise<{ status?: string; errorCode?: number | null; errorMessage?: string | null }> {
+  const accSid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!accSid || !token || !sid) return {};
+  try {
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accSid}/Messages/${sid}.json`,
+      { headers: { Authorization: `Basic ${Buffer.from(`${accSid}:${token}`).toString("base64")}` } }
+    );
+    const d = await res.json().catch(() => ({}));
+    return { status: d.status, errorCode: d.error_code ?? null, errorMessage: d.error_message ?? null };
+  } catch {
+    return {};
+  }
+}
+
 export async function sendSms(
   to: string,
   body: string,
   mediaUrl?: string
-): Promise<{ ok: boolean; error: string | null }> {
+): Promise<{ ok: boolean; error: string | null; sid?: string; status?: string }> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM;
@@ -60,7 +80,7 @@ export async function sendSms(
       const detail = data?.message || `Twilio returned HTTP ${res.status}`;
       return { ok: false, error: String(detail) };
     }
-    return { ok: true, error: null };
+    return { ok: true, error: null, sid: data?.sid, status: data?.status };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Twilio request failed" };
   }

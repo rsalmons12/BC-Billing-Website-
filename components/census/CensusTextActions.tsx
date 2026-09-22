@@ -95,7 +95,9 @@ export default function CensusTextActions({
           call(
             { to: to.trim(), facilityId: facilityId || undefined },
             "Sending preview…",
-            (d) => `✓ Preview texted to ${d.sentTo}.`
+            (d) =>
+              `Sent to ${d.sentTo} via ${d.via ?? "sms"} — Twilio status: ${d.status ?? "queued"}` +
+              (d.errorCode ? ` · ERROR ${d.errorCode}: ${d.errorMessage || ""}` : "")
           )
         }
         disabled={busy || !to.trim()}
