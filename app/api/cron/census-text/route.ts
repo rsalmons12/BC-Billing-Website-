@@ -8,6 +8,8 @@ import { censusImageToken } from "@/lib/report/censusImageToken";
 import { sendSms, parseNumbers } from "@/lib/sms";
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
+// Plain text by default (reliable). Set CENSUS_MMS=1 to send the branded image.
+const MMS_ENABLED = process.env.CENSUS_MMS === "1";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Weekly: text each facility (that has an SMS number on file) a short summary of
@@ -86,8 +88,10 @@ export async function GET(request: Request) {
     const media = `${BASE_URL}/api/census-image?f=${encodeURIComponent(f.id)}&t=${censusImageToken(f.id)}`;
     const cap = `${label}: weekly census update. Full recap in the app.`;
     for (const to of recipients) {
-      // Try MMS image; fall back to the plain-text summary if MMS fails.
-      let res = await sendSms(to, cap, media);
+      // MMS image only when enabled; always fall back to the plain-text summary.
+      let res = MMS_ENABLED
+        ? await sendSms(to, cap, media)
+        : { ok: false, error: null as string | null };
       if (!res.ok) res = await sendSms(to, censusSmsBody(recap));
       if (res.ok) sent++;
       else skipped.push(`${label}→${to} (${res.error})`);

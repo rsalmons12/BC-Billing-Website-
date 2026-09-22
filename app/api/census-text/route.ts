@@ -11,11 +11,15 @@ const imageUrl = (facilityId: string) =>
   `${BASE_URL}/api/census-image?f=${encodeURIComponent(facilityId)}&t=${censusImageToken(facilityId)}`;
 const caption = (label: string) => `${label}: weekly census update. Full recap in the app.`;
 
-// Try the branded MMS image; if it fails (MMS not enabled, image error), fall
-// back to the plain-text summary so the recipient always gets the numbers.
+// Plain text is the reliable default. The branded MMS image is opt-in via
+// CENSUS_MMS=1 (enable only after MMS is verified on the number/campaign); if
+// the image fails it still falls back to text so a message always arrives.
+const MMS_ENABLED = process.env.CENSUS_MMS === "1";
 async function sendCensus(to: string, label: string, facilityId: string, recap: FacilityRecap) {
-  const mms = await sendSms(to, caption(label), imageUrl(facilityId));
-  if (mms.ok) return { ok: true, error: null, via: "mms" as const };
+  if (MMS_ENABLED) {
+    const mms = await sendSms(to, caption(label), imageUrl(facilityId));
+    if (mms.ok) return { ok: true, error: null, via: "mms" as const };
+  }
   const sms = await sendSms(to, censusSmsBody(recap));
   return { ok: sms.ok, error: sms.error, via: "sms" as const };
 }
