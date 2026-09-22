@@ -10,7 +10,7 @@ type PlanRow = { facility: string; recipients: string[]; recipientCount: number 
 export default function CensusTextActions({
   facilities = [],
 }: {
-  facilities?: { id: string; label: string }[];
+  facilities?: { id: string; label: string; img?: string }[];
 }) {
   const [to, setTo] = useState("");
   const [facilityId, setFacilityId] = useState("");
@@ -111,6 +111,20 @@ export default function CensusTextActions({
       >
         Preview recipients
       </button>
+      {(() => {
+        const img = facilities.find((f) => f.id === facilityId)?.img || facilities[0]?.img;
+        return img ? (
+          <a
+            href={img}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost px-3 py-1.5 text-xs"
+            title="Open the branded MMS image in your browser to check it renders"
+          >
+            View image
+          </a>
+        ) : null;
+      })()}
       <button
         onClick={() => {
           if (!confirm("Text every facility its OWN census summary now (its numbers + management)?")) return;
