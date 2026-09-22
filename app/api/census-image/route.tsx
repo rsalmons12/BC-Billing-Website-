@@ -1,13 +1,13 @@
-import * as React from "react";
 import fs from "fs";
 import path from "path";
-import { ImageResponse } from "next/og";
+import sharp from "sharp";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
+import { computeFacilityRecaps, type FacilityRecap } from "@/lib/report/facilityRecap";
 import { censusImageToken } from "@/lib/report/censusImageToken";
 
 // Public (login-free) endpoint that renders a facility's weekly census as a
-// branded PNG for MMS. Guarded by a per-facility signature. Patients are
+// branded PNG for MMS, using sharp to rasterize a hand-built SVG (reliable on
+// Render, unlike next/og). Guarded by a per-facility signature. Patients are
 // anonymized (Patient A/B/C) because the image is fetched over the internet.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +15,12 @@ export const runtime = "nodejs";
 const money0 = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-// BC Billing logo (the app icon), inlined as a data URI. Cached across requests.
+const esc = (s: unknown) =>
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
 let logoData: string | null = null;
 function logoDataUri(): string {
   if (logoData !== null) return logoData;
@@ -33,6 +38,141 @@ const GREEN = "#37a635";
 const NAVY = "#0e1c3a";
 const INK = "#1f2a44";
 const MUTED = "#6b7a90";
+const W = 620;
+const PAD = 20;
+const CARD_X = PAD;
+const CARD_W = W - PAD * 2;
+const TX = PAD + 20; // text left inside a card
+
+type T = { size: number; color: string; weight?: number; ls?: number; anchor?: "start" | "end" };
+const text = (x: number, y: number, s: string, o: T) =>
+  `<text x="${x}" y="${y}" font-family="sans-serif" font-size="${o.size}" fill="${o.color}"` +
+  `${o.weight ? ` font-weight="${o.weight}"` : ""}${o.ls ? ` letter-spacing="${o.ls}"` : ""}` +
+  `${o.anchor === "end" ? ` text-anchor="end"` : ""}>${esc(s)}</text>`;
+
+function buildSvg(recap: FacilityRecap): { svg: string; height: number } {
+  const cur = recap.census!.current!;
+  const loc = recap.censusLocMix;
+  const pm = recap.censusPayMix;
+  const pct = (n: number) => (pm.total > 0 ? Math.round((n / pm.total) * 100) : 0);
+  const mid = Math.max(0, pm.over1000 - pm.over2000);
+  const censusExpected = recap.censusReceivables.reduce((s, r) => s + r.expected, 0);
+  const top = recap.censusReceivables.slice(0, 5);
+  const locBits = [
+    loc.PHP ? `${loc.PHP} PHP` : "",
+    loc.IOP ? `${loc.IOP} IOP` : "",
+    loc.OP ? `${loc.OP} OP` : "",
+    loc.other ? `${loc.other} other` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const parts: string[] = [];
+  let y = PAD;
+
+  // ---- Header ----
+  const hH = 96;
+  parts.push(`<rect x="${CARD_X}" y="${y}" width="${CARD_W}" height="${hH}" rx="16" fill="url(#hg)"/>`);
+  const logo = logoDataUri();
+  if (logo) {
+    parts.push(
+      `<clipPath id="lc"><rect x="${PAD + 16}" y="${y + 14}" width="68" height="68" rx="15"/></clipPath>`,
+      `<image href="${logo}" x="${PAD + 16}" y="${y + 14}" width="68" height="68" clip-path="url(#lc)"/>`
+    );
+  }
+  const htx = logo ? PAD + 16 + 68 + 16 : TX;
+  parts.push(text(htx, y + 30, "BC BILLING SOLUTIONS", { size: 13, color: "#cfe8fb", ls: 2 }));
+  parts.push(text(htx, y + 60, "Billing Portal Update", { size: 28, color: "#ffffff", weight: 700 }));
+  parts.push(text(htx, y + 82, "REAL-TIME INSIGHTS. A STRONGER TOMORROW.", { size: 12, color: "#cfe8fb", ls: 1 }));
+  y += hH + 14;
+
+  // ---- Card 1: facility census ----
+  const c1 = y;
+  const lines1: string[] = [];
+  let iy = c1 + 36;
+  lines1.push(text(TX, iy, recap.name, { size: 24, color: BLUE, weight: 700 }));
+  iy += 26;
+  lines1.push(text(TX, iy, `Census (${cur.weekLabel})`, { size: 16, color: MUTED }));
+  iy += 30;
+  lines1.push(text(TX, iy, `${cur.patients} clients${locBits ? ` — ${locBits}` : ""}`, { size: 19, color: INK }));
+  iy += 32;
+  lines1.push(text(TX, iy, "Reimbursement mix", { size: 15, color: MUTED }));
+  iy += 28;
+  const bullet = (color: string, label: string) => {
+    const b =
+      `<circle cx="${TX + 7}" cy="${iy - 6}" r="7" fill="${color}"/>` +
+      text(TX + 22, iy, label, { size: 18, color: INK });
+    iy += 28;
+    return b;
+  };
+  lines1.push(bullet(GREEN, `${pct(pm.over2000)}% over $2,000/day`));
+  lines1.push(bullet(BLUE, `${pct(mid)}% $1,000–$2,000/day`));
+  lines1.push(bullet("#8fd0f2", `${pct(pm.under800)}% under $800/day`));
+  iy += 4;
+  if (cur.missedGroups > 0) {
+    const rev = cur.missedRev > 0 ? ` (−${money0(cur.missedRev)})` : "";
+    lines1.push(text(TX, iy, `Missed groups: ${cur.missedGroups}${rev}`, { size: 18, color: INK }));
+    iy += 28;
+  }
+  if (cur.expected > 0) {
+    lines1.push(text(TX, iy, "Expected revenue this week: ", { size: 18, color: INK }));
+    lines1.push(text(TX + 268, iy, money0(cur.expected), { size: 18, color: GREEN, weight: 700 }));
+    iy += 28;
+  }
+  lines1.push(text(TX, iy, "Collected this month: ", { size: 18, color: INK }));
+  lines1.push(text(TX + 208, iy, money0(recap.collectedThisMonth), { size: 18, color: GREEN, weight: 700 }));
+  iy += 12;
+  const c1H = iy - c1;
+  parts.push(`<rect x="${CARD_X}" y="${c1}" width="${CARD_W}" height="${c1H}" rx="18" fill="#ffffff"/>`);
+  parts.push(...lines1);
+  y = c1 + c1H + 14;
+
+  // ---- Card 2: outstanding claims ----
+  const c2 = y;
+  const lines2: string[] = [];
+  let jy = c2 + 34;
+  lines2.push(text(TX, jy, "Top Outstanding Claims by Patient", { size: 20, color: BLUE, weight: 700 }));
+  jy += 30;
+  top.forEach((r, i) => {
+    lines2.push(
+      text(TX, jy, `Patient ${String.fromCharCode(65 + i)} — ${r.loc}, ${money0(r.perDay)}/day x ${r.outstanding}`, {
+        size: 17,
+        color: INK,
+      })
+    );
+    lines2.push(text(W - PAD - 20, jy, money0(r.expected), { size: 17, color: INK, weight: 700, anchor: "end" }));
+    jy += 28;
+  });
+  jy += 6;
+  lines2.push(`<line x1="${TX}" y1="${jy}" x2="${W - PAD - 20}" y2="${jy}" stroke="#e3e9f2" stroke-width="1"/>`);
+  jy += 24;
+  lines2.push(text(TX, jy, "Total expected on outstanding claims", { size: 16, color: MUTED }));
+  jy += 34;
+  lines2.push(text(TX, jy, money0(censusExpected), { size: 30, color: GREEN, weight: 700 }));
+  jy += 24;
+  lines2.push(text(TX, jy, "Full recap in the app.", { size: 15, color: MUTED }));
+  jy += 14;
+  const c2H = jy - c2;
+  parts.push(`<rect x="${CARD_X}" y="${c2}" width="${CARD_W}" height="${c2H}" rx="18" fill="#ffffff"/>`);
+  parts.push(...lines2);
+  y = c2 + c2H + 14;
+
+  // ---- Footer ----
+  const fH = 64;
+  parts.push(`<rect x="${CARD_X}" y="${y}" width="${CARD_W}" height="${fH}" rx="14" fill="#e6f4fd"/>`);
+  parts.push(text(TX, y + 28, "Data this week. A stronger tomorrow.", { size: 18, color: NAVY, weight: 700 }));
+  parts.push(text(TX, y + 50, "POWERED BY BC BILLING", { size: 12, color: BLUE, ls: 2 }));
+  y += fH + PAD;
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}">` +
+    `<defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="0">` +
+    `<stop offset="0" stop-color="${BLUE}"/><stop offset="1" stop-color="${NAVY}"/></linearGradient></defs>` +
+    `<rect width="${W}" height="${y}" fill="#eef2f7"/>` +
+    parts.join("") +
+    `</svg>`;
+  return { svg, height: y };
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -48,175 +188,15 @@ export async function GET(request: Request) {
   }
   const recaps = await computeFacilityRecaps(admin, { facilityIds: [f] }).catch(() => []);
   const recap = recaps[0];
-  const cur = recap?.census?.current;
-  if (!recap || !cur) return new Response("No census", { status: 404 });
+  if (!recap || !recap.census?.current) return new Response("No census", { status: 404 });
 
-  const loc = recap.censusLocMix;
-  const pm = recap.censusPayMix;
-  const pct = (n: number) => (pm.total > 0 ? Math.round((n / pm.total) * 100) : 0);
-  const mid = Math.max(0, pm.over1000 - pm.over2000); // $1,000–$2,000 band
-  const censusExpected = recap.censusReceivables.reduce((s, r) => s + r.expected, 0);
-  const top = recap.censusReceivables.slice(0, 5);
-  const locBits = [
-    loc.PHP ? `${loc.PHP} PHP` : "",
-    loc.IOP ? `${loc.IOP} IOP` : "",
-    loc.OP ? `${loc.OP} OP` : "",
-    loc.other ? `${loc.other} other` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-
-  const Card = (children: React.ReactNode, extra: React.CSSProperties = {}) => (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        background: "#ffffff",
-        borderRadius: 18,
-        padding: 20,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-        ...extra,
-      }}
-    >
-      {children}
-    </div>
-  );
-
-  const bullet = (color: string, label: string) => (
-    <div style={{ display: "flex", alignItems: "center", marginTop: 4 }}>
-      <div style={{ width: 12, height: 12, borderRadius: 6, background: color, marginRight: 8 }} />
-      <div style={{ fontSize: 18, color: INK }}>{label}</div>
-    </div>
-  );
-
-  return new ImageResponse(
-    (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          background: "#eef2f7",
-          fontFamily: "Inter",
-          padding: 20,
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            background: `linear-gradient(90deg, ${BLUE}, ${NAVY})`,
-            borderRadius: 16,
-            padding: "16px 20px",
-            color: "#ffffff",
-          }}
-        >
-          {logoDataUri() ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={logoDataUri()}
-              width={68}
-              height={68}
-              alt="BC Billing"
-              style={{ borderRadius: 16, marginRight: 16 }}
-            />
-          ) : null}
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 15, letterSpacing: 2, color: "#cfe8fb" }}>BC BILLING SOLUTIONS</div>
-            <div style={{ fontSize: 30, fontWeight: 700, marginTop: 2 }}>Billing Portal Update</div>
-            <div style={{ fontSize: 14, letterSpacing: 1, color: "#cfe8fb", marginTop: 2 }}>
-              REAL-TIME INSIGHTS. A STRONGER TOMORROW.
-            </div>
-          </div>
-        </div>
-
-        {/* Facility census */}
-        <div style={{ display: "flex", flexDirection: "column", marginTop: 14 }}>
-          {Card(
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: BLUE }}>{recap.name}</div>
-              <div style={{ fontSize: 16, color: MUTED, marginTop: 2 }}>Census ({cur.weekLabel})</div>
-              <div style={{ fontSize: 19, color: INK, marginTop: 6 }}>
-                {cur.patients} clients{locBits ? ` — ${locBits}` : ""}
-              </div>
-
-              <div style={{ fontSize: 16, color: MUTED, marginTop: 10 }}>Reimbursement mix</div>
-              {bullet(GREEN, `${pct(pm.over2000)}% over $2,000/day`)}
-              {bullet(BLUE, `${pct(mid)}% $1,000–$2,000/day`)}
-              {bullet("#8fd0f2", `${pct(pm.under800)}% under $800/day`)}
-
-              {cur.missedGroups > 0 && (
-                <div style={{ fontSize: 18, color: INK, marginTop: 10 }}>
-                  Missed groups: {cur.missedGroups} (−{money0(cur.missedRev)})
-                </div>
-              )}
-              <div style={{ fontSize: 18, color: INK, marginTop: 6, display: "flex" }}>
-                <span>Expected revenue this week: </span>
-                <span style={{ color: GREEN, fontWeight: 700, marginLeft: 6 }}>{money0(cur.expected)}</span>
-              </div>
-              <div style={{ fontSize: 18, color: INK, marginTop: 6, display: "flex" }}>
-                <span>Collected this month: </span>
-                <span style={{ color: GREEN, fontWeight: 700, marginLeft: 6 }}>
-                  {money0(recap.collectedThisMonth)}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Outstanding claims */}
-        <div style={{ display: "flex", flexDirection: "column", marginTop: 14 }}>
-          {Card(
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: BLUE }}>
-                Top Outstanding Claims by Patient
-              </div>
-              {top.map((r, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 17, color: INK }}
-                >
-                  <div style={{ display: "flex" }}>
-                    Patient {String.fromCharCode(65 + i)} — {r.loc}, {money0(r.perDay)}/day x {r.outstanding}
-                  </div>
-                  <div style={{ fontWeight: 700 }}>{money0(r.expected)}</div>
-                </div>
-              ))}
-              <div style={{ borderTop: "1px solid #e3e9f2", marginTop: 12, paddingTop: 10, display: "flex", flexDirection: "column" }}>
-                <div style={{ fontSize: 16, color: MUTED }}>Total expected on outstanding claims</div>
-                <div style={{ fontSize: 30, fontWeight: 700, color: GREEN }}>{money0(censusExpected)}</div>
-                <div style={{ fontSize: 15, color: MUTED, marginTop: 2 }}>Full recap in the app.</div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{ display: "flex", flexDirection: "column", marginTop: "auto", paddingTop: 14 }}>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              background: "#e6f4fd",
-              borderRadius: 14,
-              padding: "12px 16px",
-            }}
-          >
-            <div style={{ fontSize: 18, fontWeight: 700, color: NAVY }}>
-              Data this week. A stronger tomorrow.
-            </div>
-            <div style={{ fontSize: 12, letterSpacing: 2, color: BLUE, marginTop: 2 }}>
-              POWERED BY BC BILLING
-            </div>
-          </div>
-        </div>
-      </div>
-    ),
-    {
-      width: 620,
-      height: 1000,
-    }
-  );
+  try {
+    const { svg } = buildSvg(recap);
+    const png = await sharp(Buffer.from(svg)).png().toBuffer();
+    return new Response(new Uint8Array(png), {
+      headers: { "content-type": "image/png", "cache-control": "no-store" },
+    });
+  } catch (e) {
+    return new Response(`image error: ${e instanceof Error ? e.message : "unknown"}`, { status: 500 });
+  }
 }
