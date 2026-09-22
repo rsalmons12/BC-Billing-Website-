@@ -39,7 +39,22 @@ export function censusSmsBody(recap: FacilityRecap): string {
     lines.push(`Missed groups: ${cur.missedGroups} (−${money0(cur.missedRev)})`);
   }
   if (cur.expected > 0) lines.push(`Expected revenue this week: ${money0(cur.expected)}`);
-  if (censusExpected > 0) lines.push(`Expected on outstanding claims: ${money0(censusExpected)}`);
+
+  // Per-patient outstanding claims, like the daily recap's "Expected Revenue on
+  // Outstanding Claims" table: patient — level, per-day rate × outstanding lines.
+  if (recap.censusReceivables.length) {
+    lines.push("");
+    lines.push("Outstanding claims by patient:");
+    for (const r of recap.censusReceivables) {
+      lines.push(
+        `${r.patient} — ${r.loc}, ${money0(r.perDay)}/day x ${r.outstanding} ${r.loc} = ${money0(
+          r.expected
+        )}`
+      );
+    }
+    lines.push(`Total expected on outstanding claims: ${money0(censusExpected)}`);
+  }
+
   lines.push("Full recap in the app.");
 
   return lines.join("\n");
