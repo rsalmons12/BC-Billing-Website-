@@ -51,3 +51,5 @@ export async function sendSms(
     return { ok: false, error: e instanceof Error ? e.message : "Twilio request failed" };
   }
 }
+
+// redeploy nudge 2026-09-22T13:29:13Z — load Twilio env vars into the running instance
