@@ -27,19 +27,26 @@ export async function GET() {
     return typeof v === "string" && v.trim().length > 0;
   };
 
-  // Every env var name the runtime sees that mentions Square — catches typos or
-  // stray whitespace in the KEY itself (e.g. "SQUARE_ACCESS_TOKEN " with a space).
-  const squareKeys = Object.keys(process.env)
-    .filter((k) => k.toUpperCase().includes("SQUARE"))
-    .sort();
+  // Every env var name the runtime sees that mentions Square / Twilio — catches
+  // typos or stray whitespace in the KEY itself (e.g. "TWILIO_ACCOUNT_SID " with
+  // a trailing space, which would make process.env.TWILIO_ACCOUNT_SID undefined).
+  const namesLike = (needle: string) =>
+    Object.keys(process.env)
+      .filter((k) => k.toUpperCase().includes(needle))
+      .sort();
 
   return NextResponse.json({
     SQUARE_ACCESS_TOKEN: present("SQUARE_ACCESS_TOKEN"),
     SQUARE_LOCATION_ID: present("SQUARE_LOCATION_ID"),
     SQUARE_ENV: process.env.SQUARE_ENV ?? null,
+    // Twilio (SMS). FROM is just a phone number, not a secret — shown to verify.
+    TWILIO_ACCOUNT_SID: present("TWILIO_ACCOUNT_SID"),
+    TWILIO_AUTH_TOKEN: present("TWILIO_AUTH_TOKEN"),
+    TWILIO_FROM: process.env.TWILIO_FROM ?? null,
+    twilioKeyNamesSeen: namesLike("TWILIO"),
     // Sanity check that OTHER server secrets are reaching this same runtime.
     RESEND_API_KEY: present("RESEND_API_KEY"),
     SUPABASE_SERVICE_ROLE_KEY: present("SUPABASE_SERVICE_ROLE_KEY"),
-    squareKeyNamesSeen: squareKeys,
+    squareKeyNamesSeen: namesLike("SQUARE"),
   });
 }
