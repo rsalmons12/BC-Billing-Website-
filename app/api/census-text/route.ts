@@ -71,7 +71,13 @@ export async function POST(request: Request) {
     for (const f of visible) {
       const { current } = facilityCensusCompare(f.id, rows);
       if (current) {
-        const res = await sendSms(requested, censusSmsBody(f.short_name || f.name, current));
+        const curRows = rows.filter(
+          (r) => r.facility_id === f.id && r.week_start === current.week
+        );
+        const res = await sendSms(
+          requested,
+          censusSmsBody(f.short_name || f.name, current, curRows)
+        );
         return res.ok
           ? NextResponse.json({ ok: true, preview: true, sentTo: requested })
           : NextResponse.json({ error: res.error }, { status: 502 });
@@ -94,7 +100,10 @@ export async function POST(request: Request) {
       skipped.push(`${label} (no census)`);
       continue;
     }
-    const res = await sendSms(f.sms_phone!, censusSmsBody(label, current));
+    const curRows = rows.filter(
+      (r) => r.facility_id === f.id && r.week_start === current.week
+    );
+    const res = await sendSms(f.sms_phone!, censusSmsBody(label, current, curRows));
     if (res.ok) sent++;
     else skipped.push(`${label} (${res.error})`);
   }
