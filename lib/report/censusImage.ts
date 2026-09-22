@@ -108,14 +108,16 @@ export function buildCensusSvg(recap: FacilityRecap): string {
     lines1.push(text(TX, iy, `Missed groups: ${cur.missedGroups}${rev}`, { size: 18, color: INK }));
     iy += 28;
   }
-  if (cur.expected > 0) {
-    lines1.push(text(TX, iy, "Expected revenue this week: ", { size: 18, color: INK }));
-    lines1.push(text(TX + 268, iy, money0(cur.expected), { size: 18, color: GREEN, weight: 700 }));
+  const kv = (label: string, value: string, color = INK) => {
+    lines1.push(text(TX, iy, label, { size: 18, color: INK }));
+    lines1.push(text(W - PAD - 20, iy, value, { size: 18, color, weight: 700, anchor: "end" }));
     iy += 28;
-  }
-  lines1.push(text(TX, iy, "Collected this month: ", { size: 18, color: INK }));
-  lines1.push(text(TX + 208, iy, money0(recap.collectedThisMonth), { size: 18, color: GREEN, weight: 700 }));
-  iy += 12;
+  };
+  kv("Total Billed (this month)", money0(recap.billedMonth));
+  kv("Total Collected (this month)", money0(recap.collectedMonth), GREEN);
+  kv("Collection Rate", `${Math.round(recap.collectionRate * 100)}%`);
+  kv("Total Outstanding (AR)", money0(recap.totalAR));
+  iy -= 16;
   const c1H = iy - c1;
   parts.push(`<rect x="${CARD_X}" y="${c1}" width="${CARD_W}" height="${c1H}" rx="18" fill="#ffffff"/>`);
   parts.push(...lines1);
