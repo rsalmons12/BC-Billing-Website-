@@ -77,7 +77,10 @@ export async function GET(request: Request) {
       skipped.push(`${label} (no census)`);
       continue;
     }
-    const body = censusSmsBody(label, current);
+    const curRows = rows.filter(
+      (r) => r.facility_id === f.id && r.week_start === current.week
+    );
+    const body = censusSmsBody(label, current, curRows);
     const res = await sendSms(f.sms_phone!, body);
     if (res.ok) sent++;
     else skipped.push(`${label} (${res.error})`);
