@@ -2,14 +2,29 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { easternToday, easternHour } from "@/lib/report/eodSummary";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
-import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
+import { computeFacilityRecaps, type FacilityRecap } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
-import { censusImageToken } from "@/lib/report/censusImageToken";
+import { renderCensusPng } from "@/lib/report/censusImage";
 import { sendSms, parseNumbers } from "@/lib/sms";
 
-const BASE_URL = process.env.PUBLIC_BASE_URL || "https://bcbilling.cloud";
 // Plain text by default (reliable). Set CENSUS_MMS=1 to send the branded image.
 const MMS_ENABLED = process.env.CENSUS_MMS === "1";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function hostCensusImage(admin: any, facilityId: string, recap: FacilityRecap): Promise<string | null> {
+  try {
+    const png = await renderCensusPng(recap);
+    const objectPath = `census-mms/${facilityId}-${Date.now()}.png`;
+    const up = await admin.storage
+      .from("attachments")
+      .upload(objectPath, png, { contentType: "image/png", upsert: true });
+    if (up.error) return null;
+    const signed = await admin.storage.from("attachments").createSignedUrl(objectPath, 900);
+    return signed.data?.signedUrl ?? null;
+  } catch {
+    return null;
+  }
+}
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
 
 // Weekly: text each facility (that has an SMS number on file) a short summary of
@@ -85,13 +100,11 @@ export async function GET(request: Request) {
     if (!recap || !recap.census?.current) continue; // no census this week
     const recipients = Array.from(new Set([...parseNumbers(f.sms_phone), ...mgmtNumbers]));
     if (recipients.length === 0) continue;
-    const media = `${BASE_URL}/api/census-image?f=${encodeURIComponent(f.id)}&t=${censusImageToken(f.id)}`;
     const cap = `${label}: weekly census update. Full recap in the app.`;
+    const media = MMS_ENABLED ? await hostCensusImage(admin, f.id, recap) : null;
     for (const to of recipients) {
-      // MMS image only when enabled; always fall back to the plain-text summary.
-      let res = MMS_ENABLED
-        ? await sendSms(to, cap, media)
-        : { ok: false, error: null as string | null };
+      // MMS image only when enabled + hosted; always fall back to plain text.
+      let res = media ? await sendSms(to, cap, media) : { ok: false, error: null as string | null };
       if (!res.ok) res = await sendSms(to, censusSmsBody(recap));
       if (res.ok) sent++;
       else skipped.push(`${label}→${to} (${res.error})`);
