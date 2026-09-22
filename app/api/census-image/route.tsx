@@ -154,6 +154,12 @@ export async function GET(request: Request) {
                 <span>Expected revenue this week: </span>
                 <span style={{ color: GREEN, fontWeight: 700, marginLeft: 6 }}>{money0(cur.expected)}</span>
               </div>
+              <div style={{ fontSize: 18, color: INK, marginTop: 6, display: "flex" }}>
+                <span>Collected this month: </span>
+                <span style={{ color: GREEN, fontWeight: 700, marginLeft: 6 }}>
+                  {money0(recap.collectedThisMonth)}
+                </span>
+              </div>
             </div>
           )}
         </div>
