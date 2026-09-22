@@ -6,9 +6,7 @@ services:
   - type: web
     name: bc-billing
     runtime: node
-    # Standard (2 GB RAM) — needed for server-side image rendering (next/og) used
-    # by the branded census MMS image. Starter (512 MB) OOMs and returns 502.
-    plan: standard
+    plan: starter
     branch: main
     autoDeploy: true
     buildCommand: npm install && npm run build
