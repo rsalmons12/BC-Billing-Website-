@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { selectAll } from "@/lib/supabase/page";
 import { easternToday, easternHour } from "@/lib/report/eodSummary";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
-import { facilityCensusCompare } from "@/lib/report/census";
+import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
 import { censusSmsBody } from "@/lib/report/censusText";
 import { sendSms } from "@/lib/sms";
 import { isDemoFacility, isExcludedFacility } from "@/lib/claims";
@@ -63,24 +62,21 @@ export async function GET(request: Request) {
   if (facilities.length === 0)
     return NextResponse.json({ ok: true, sent: 0, reason: "no facilities have an SMS number" });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = await selectAll<any>((f, t) =>
-    admin.from("census").select("*").range(f, t)
-  ).catch(() => []);
+  const recaps = await computeFacilityRecaps(admin, {
+    facilityIds: facilities.map((f) => f.id),
+  }).catch(() => []);
+  const recapById = new Map(recaps.map((r) => [r.facilityId, r]));
 
   let sent = 0;
   const skipped: string[] = [];
   for (const f of facilities) {
-    const { current } = facilityCensusCompare(f.id, rows);
     const label = f.short_name || f.name;
-    if (!current) {
+    const recap = recapById.get(f.id);
+    const body = recap ? censusSmsBody(recap) : "";
+    if (!body) {
       skipped.push(`${label} (no census)`);
       continue;
     }
-    const curRows = rows.filter(
-      (r) => r.facility_id === f.id && r.week_start === current.week
-    );
-    const body = censusSmsBody(label, current, curRows);
     const res = await sendSms(f.sms_phone!, body);
     if (res.ok) sent++;
     else skipped.push(`${label} (${res.error})`);
