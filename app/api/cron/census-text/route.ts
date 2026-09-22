@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { easternToday, easternHour } from "@/lib/report/eodSummary";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 import { computeFacilityRecaps } from "@/lib/report/facilityRecap";
+import { censusSmsBody } from "@/lib/report/censusText";
 import { censusImageToken } from "@/lib/report/censusImageToken";
 import { sendSms, parseNumbers } from "@/lib/sms";
 
@@ -85,7 +86,9 @@ export async function GET(request: Request) {
     const media = `${BASE_URL}/api/census-image?f=${encodeURIComponent(f.id)}&t=${censusImageToken(f.id)}`;
     const cap = `${label}: weekly census update. Full recap in the app.`;
     for (const to of recipients) {
-      const res = await sendSms(to, cap, media);
+      // Try MMS image; fall back to the plain-text summary if MMS fails.
+      let res = await sendSms(to, cap, media);
+      if (!res.ok) res = await sendSms(to, censusSmsBody(recap));
       if (res.ok) sent++;
       else skipped.push(`${label}→${to} (${res.error})`);
     }
