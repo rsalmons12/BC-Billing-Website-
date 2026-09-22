@@ -40,7 +40,11 @@ export function censusSmsBody(recap: FacilityRecap): string {
     const rev = cur.missedRev > 0 ? ` (−${money0(cur.missedRev)})` : "";
     lines.push(`Missed groups: ${cur.missedGroups}${rev}`);
   }
-  if (cur.expected > 0) lines.push(`Expected revenue this week: ${money0(cur.expected)}`);
+  // Overview dollars (full month-to-date), matching the dashboard.
+  lines.push(`Total Billed (this month): ${money0(recap.billedMonth)}`);
+  lines.push(`Total Collected (this month): ${money0(recap.collectedMonth)}`);
+  lines.push(`Collection Rate: ${Math.round(recap.collectionRate * 100)}%`);
+  lines.push(`Total Outstanding (AR): ${money0(recap.totalAR)}`);
 
   // Per-patient outstanding claims, like the daily recap's "Expected Revenue on
   // Outstanding Claims" table: patient — level, per-day rate × outstanding lines.

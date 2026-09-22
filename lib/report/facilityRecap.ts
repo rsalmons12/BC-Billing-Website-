@@ -9,6 +9,7 @@ import {
   type MissedGroupRow,
 } from "./census";
 import { bucketByStatus, type StatusBucket } from "./statusBuckets";
+import { periodOf } from "@/lib/import/parseTrackers";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -94,6 +95,11 @@ export interface FacilityRecap {
   expectedRevenue: number;
   collectedThisMonth: number;
   billedThisMonth: number;
+  // FULL month-to-date (by payment/billed period, no day cutoff) — matches the
+  // Overview dashboard's Total Collected / Total Billed / Collection Rate.
+  collectedMonth: number;
+  billedMonth: number;
+  collectionRate: number;
   billedLastMonth: number;
   billedDelta: number;
   billedPct: number | null;
@@ -685,6 +691,21 @@ export async function computeFacilityRecaps(
     const billedThisMonth = billedInMonth(monthKey, now).reduce((s, b) => s + (b.total_amount ?? 0), 0);
     const billedLastMonth = billedInMonth(priorKey, prior).reduce((s, b) => s + (b.total_amount ?? 0), 0);
 
+    // FULL month-to-date (Overview method): by period, no day cutoff.
+    const collectedMonth = payments
+      .filter(
+        (p) =>
+          p.facility_id === f.id &&
+          periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "") === monthKey
+      )
+      .reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+    const billedMonth = billed
+      .filter(
+        (b) => b.facility_id === f.id && (b.period || periodOf(b.entered_date ?? "")) === monthKey
+      )
+      .reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
+    const collectionRate = billedMonth > 0 ? collectedMonth / billedMonth : 0;
+
     // Level-of-care sessions billed each month (through the cutoff day), from the
     // billed CPT units — the accurate "why" behind a billing swing.
     const locSessions = (key: string, target: Date) => {
@@ -760,6 +781,9 @@ export async function computeFacilityRecaps(
       expectedRevenue: totalAR * EXPECTED_RATE,
       collectedThisMonth,
       billedThisMonth,
+      collectedMonth,
+      billedMonth,
+      collectionRate,
       billedLastMonth,
       billedDelta,
       billedPct,
@@ -1214,6 +1238,9 @@ export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
     expectedRevenue: 96400,
     collectedThisMonth: 312800,
     billedThisMonth,
+    collectedMonth: 312800,
+    billedMonth: billedThisMonth,
+    collectionRate: billedThisMonth > 0 ? 312800 / billedThisMonth : 0,
     billedLastMonth,
     billedDelta,
     billedPct,
