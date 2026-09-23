@@ -29,8 +29,8 @@ function initials(name: unknown): string {
 // missed groups, expected revenue, and expected revenue on outstanding claims).
 // Returns "" when the facility has no current census week (caller skips it).
 export function censusSmsBody(recap: FacilityRecap): string {
-  // Reported = last completed week (prior), matching the recap's census fields.
-  const cur = recap.census?.prior ?? recap.census?.current;
+  // Reported = current week, matching the recap's census fields and the Census page.
+  const cur = recap.census?.current;
   if (!cur) return "";
 
   const loc = recap.censusLocMix;

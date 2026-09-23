@@ -46,8 +46,8 @@ const text = (x: number, y: number, s: string, o: T) =>
   `${o.anchor === "end" ? ` text-anchor="end"` : ""}>${esc(s)}</text>`;
 
 export function buildCensusSvg(recap: FacilityRecap): string {
-  // Reported = last completed week (prior), matching the recap's census fields.
-  const cur = (recap.census!.prior ?? recap.census!.current)!;
+  // Reported = current week, matching the recap's census fields and the Census page.
+  const cur = recap.census!.current!;
   const loc = recap.censusLocMix;
   const pm = recap.censusPayMix;
   const pct = (n: number) => (pm.total > 0 ? Math.round((n / pm.total) * 100) : 0);

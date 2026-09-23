@@ -10,6 +10,7 @@ import {
 } from "./census";
 import { bucketByStatus, type StatusBucket } from "./statusBuckets";
 import { periodOf } from "@/lib/import/parseTrackers";
+import { normFacility } from "@/lib/import/parse";
 
 // ---------------------------------------------------------------------------
 // Facility daily recap — a faithful copy of what a facility sees on ITS OWN
@@ -281,14 +282,17 @@ export function computeBelowFloor(
     patient_name: string | null;
     member_id: string | null;
   }[],
-  floors: ReimbursementFloors
+  floors: ReimbursementFloors,
+  linkedIds?: Set<string>
 ): BelowFloorRow[] {
   if (floors.PHP == null && floors.IOP == null && floors.OP == null) return [];
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
   const reportedWeek = reportedWeekStart(fCensus.map((c) => c.week_start!));
   const current = fCensus.filter((c) => c.week_start === reportedWeek);
-  const fPays = payments.filter((p) => p.facility_id === facilityId);
+  const inScope = (fid: string | null) =>
+    linkedIds ? linkedIds.has(fid ?? "") : fid === facilityId;
+  const fPays = payments.filter((p) => inScope(p.facility_id));
 
   const out: BelowFloorRow[] = [];
   const seen = new Set<string>();
@@ -330,13 +334,16 @@ function computeCensusReceivables(
   }[],
   claims: ClaimRow[],
   histPerDay: Map<string, number>,
-  billedClaims: { loc: Set<string>; any: Set<string> }
+  billedClaims: { loc: Set<string>; any: Set<string> },
+  linkedIds?: Set<string>
 ): CensusReceivableRow[] {
   const fCensus = census.filter((c) => c.facility_id === facilityId && c.week_start);
   if (fCensus.length === 0) return [];
   const reportedWeek = reportedWeekStart(fCensus.map((c) => c.week_start!));
   const current = fCensus.filter((c) => c.week_start === reportedWeek);
-  const fPays = payments.filter((p) => p.facility_id === facilityId);
+  const inScope = (fid: string | null) =>
+    linkedIds ? linkedIds.has(fid ?? "") : fid === facilityId;
+  const fPays = payments.filter((p) => inScope(p.facility_id));
   // Outstanding = still owed (a positive balance). Stale/excluded claims are
   // already filtered out of `claims` upstream, so they don't inflate the count.
   const fClaims = claims.filter((c) => c.facility_id === facilityId && (c.balance ?? 0) > 0);
@@ -392,13 +399,11 @@ function computeCensusReceivables(
   return out;
 }
 
-// The "reported" census week: the LAST COMPLETED week (the one before the most
-// recent, since the newest week is usually still in progress — attendance and
-// payments not in yet). Falls back to the only week when there's just one. Same
-// convention as facilityCensusWeek, so the recap, Census page, and texts agree.
+// The "reported" census week: the CURRENT (most recent) week, matching what the
+// Census page shows by default, so the recap, Census page, and texts all agree.
 function reportedWeekStart(weekStarts: string[]): string | undefined {
   const uniq = Array.from(new Set(weekStarts)).sort();
-  return uniq[uniq.length - 2] ?? uniq[uniq.length - 1];
+  return uniq[uniq.length - 1];
 }
 
 // Reported census week's rows for one facility.
@@ -457,9 +462,16 @@ function censusEffectivePaid(c: any, fPays: PayRow[]): number {
 // $800 per day (over-1k includes over-2k). % is computed at render time.
 export type CensusPayMix = { total: number; over1000: number; over2000: number; under800: number };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function censusPayMixOf(facilityId: string, census: any[], payments: PayRow[]): CensusPayMix {
+function censusPayMixOf(
+  facilityId: string,
+  census: any[],
+  payments: PayRow[],
+  linkedIds?: Set<string>
+): CensusPayMix {
   const cur = currentCensusRows(facilityId, census);
-  const fPays = payments.filter((p) => p.facility_id === facilityId);
+  const fPays = payments.filter((p) =>
+    linkedIds ? linkedIds.has(p.facility_id ?? "") : p.facility_id === facilityId
+  );
   let over1000 = 0;
   let over2000 = 0;
   let under800 = 0;
@@ -519,8 +531,33 @@ export async function computeFacilityRecaps(
   const only = opts?.facilityIds && opts.facilityIds.length ? new Set(opts.facilityIds) : null;
   const scopeIn = (q: any) => (only ? q.in("facility_id", Array.from(only)) : q);
 
+  // Facility list first, so we can widen the PAYMENTS scope to include split /
+  // sibling records (e.g. census "NJ Recovery" vs payments "NJ Recovery Solutions
+  // LLC"). A patient's payments filed under a linked record still count toward
+  // their census rate — exactly how the Census page pulls them.
+  const facilitiesAll = await pageAll<{ id: string; name: string; short_name: string | null }>(
+    client,
+    (a) => a.from("facilities").select("id,name,short_name").order("name")
+  );
+  const linkedIdsOf = (fid: string): Set<string> => {
+    const set = new Set<string>([fid]);
+    const self = facilitiesAll.find((x) => x.id === fid);
+    const base = normFacility(self?.name || self?.short_name || "");
+    if (base) {
+      for (const x of facilitiesAll) {
+        const n = normFacility(x.name || x.short_name || "");
+        if (n && (n === base || n.includes(base) || base.includes(n))) set.add(x.id);
+      }
+    }
+    return set;
+  };
+  const paymentScope = only
+    ? new Set<string>(Array.from(only).flatMap((fid) => Array.from(linkedIdsOf(fid))))
+    : null;
+  const scopeInPay = (q: any) =>
+    paymentScope ? q.in("facility_id", Array.from(paymentScope)) : q;
+
   const [
-    facilitiesAll,
     claimsRaw,
     payments,
     billed,
@@ -531,9 +568,6 @@ export async function computeFacilityRecaps(
     historical,
     claimWork,
   ] = await Promise.all([
-      pageAll<{ id: string; name: string; short_name: string | null }>(client, (a) =>
-        a.from("facilities").select("id,name,short_name").order("name")
-      ),
       pageAll<ClaimRow>(client, (a) =>
         scopeIn(
           a
@@ -543,7 +577,7 @@ export async function computeFacilityRecaps(
         )
       ),
       pageAll<PayRow>(client, (a) =>
-        scopeIn(
+        scopeInPay(
           a
             .from("payments")
             .select(
@@ -655,6 +689,7 @@ export async function computeFacilityRecaps(
 
   return facilities.map((f) => {
     const fc = claims.filter((c) => c.facility_id === f.id);
+    const linked = linkedIdsOf(f.id);
     const totalAR = fc.reduce((s, c) => s + arBalance(c.balance), 0);
 
     const arByPayer = new Map<string, number>();
@@ -817,7 +852,8 @@ export async function computeFacilityRecaps(
         f.id,
         payments,
         census,
-        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null }
+        floorsByFac.get(f.id) ?? { PHP: null, IOP: null, OP: null },
+        linked
       ),
       censusReceivables: computeCensusReceivables(
         f.id,
@@ -825,10 +861,11 @@ export async function computeFacilityRecaps(
         census,
         fc,
         histPerDay,
-        billedClaimSets
+        billedClaimSets,
+        linked
       ),
       censusLocMix: censusLocMixOf(f.id, census),
-      censusPayMix: censusPayMixOf(f.id, census, payments),
+      censusPayMix: censusPayMixOf(f.id, census, payments, linked),
       statusBuckets: bucketByStatus(fc, workedByClaim),
       workCoverage: {
         total: fc.length,
