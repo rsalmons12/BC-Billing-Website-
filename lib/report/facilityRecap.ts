@@ -704,7 +704,10 @@ export async function computeFacilityRecaps(
         (b) => b.facility_id === f.id && (b.period || periodOf(b.entered_date ?? "")) === monthKey
       )
       .reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
-    const collectionRate = billedMonth > 0 ? collectedMonth / billedMonth : 0;
+    // Match the Overview page exactly, including its edge case: when nothing was
+    // billed this month but money still came in, the rate reads 100% (not 0%).
+    const collectionRate =
+      billedMonth > 0 ? collectedMonth / billedMonth : collectedMonth > 0 ? 1 : 0;
 
     // Level-of-care sessions billed each month (through the cutoff day), from the
     // billed CPT units — the accurate "why" behind a billing swing.
