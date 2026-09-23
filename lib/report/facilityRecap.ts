@@ -432,9 +432,15 @@ function censusEffectivePaid(c: any, fPays: PayRow[]): number {
   if ((c.paid_amount ?? 0) > 0) return Number(c.paid_amount);
   const cid = String(c.member_id ?? "").trim().toLowerCase();
   const cnm = normName(c.patient_name);
+  // Mirror the Census page's Paid-$ pull exactly: match a client's payments by
+  // member id OR name (not member-id-exclusive), and only consider lines that
+  // actually paid. The old member-id gate dropped clients whose payment carried a
+  // different/blank member id, sinking them into the "under $800" bucket and
+  // making the card's reimbursement mix disagree with the Census page.
   const theirs = fPays.filter((p) => {
+    if ((p.paid_amount ?? 0) <= 0) return false;
     const pid = String(p.member_id ?? "").trim().toLowerCase();
-    if (cid && pid) return cid === pid;
+    if (cid && pid && cid === pid) return true;
     return cnm !== "" && normName(p.patient_name) === cnm;
   });
   if (theirs.length === 0) return 0;
