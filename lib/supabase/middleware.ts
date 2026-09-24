@@ -14,6 +14,7 @@ export async function updateSession(request: NextRequest) {
     path.startsWith("/auth") ||
     path.startsWith("/api/cron") || // scheduled-email endpoints; secured by CRON_SECRET, NOT a login session — must not redirect to /login or the timer can never fire
     path === "/api/census-image" || // public MMS image; secured by a per-facility signature, fetched by Twilio (no login)
+    path === "/api/version" || // public deploy check (git commit only, no secrets)
     path === "/privacy" ||
     path === "/terms" ||
     path === "/sms-consent" ||

@@ -12,6 +12,7 @@ import { censusByFacility, missedGroupDetail } from "@/lib/report/census";
 import { computeBelowFloor, type BelowFloorRow } from "@/lib/report/facilityRecap";
 import { money } from "@/lib/format";
 import { arBalance, isExcludedMember, isRiskPayer, isStaleClaim } from "@/lib/claims";
+import { periodOf } from "@/lib/import/parseTrackers";
 import { computeOutlooks } from "@/lib/report/moneyOutlook";
 import type {
   Claim,
@@ -279,10 +280,12 @@ export default async function FacilityDashboard({
   );
 
   // ---- Payments collected in the viewed month + per payer ------------------
-  // Day-matched to the cutoff (so a current-month view is 1–today, not the whole
-  // calendar month) for a fair comparison with prior months.
+  // Match the Overview (source of truth): a payment counts toward a month by its
+  // period — deposit date, else entry date, else its month tag. Many payments
+  // carry only a "period" (no dated deposit), so the old date-only window read
+  // them as $0 collected even when the Overview showed the real total.
   const monthPayments = payments.filter(
-    (p) => inMonthWindow(p.deposit_date, viewMonth) || inMonthWindow(p.payment_entered, viewMonth)
+    (p) => periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "") === viewMonthKey
   );
   const collectedThisMonth = monthPayments.reduce(
     (s, p) => s + (p.paid_amount ?? 0),

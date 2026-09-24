@@ -91,7 +91,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
 
   return (
     <div className="h-full overflow-auto p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-none space-y-6">
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <span className="text-surface-muted">
             <b className="text-surface-ink">{collections.length + authEsc.length}</b>{" "}
@@ -137,6 +137,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
               Nothing flagged. Collectors check “Mgmt” on a claim to send it here.
             </p>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface">
                 <tr>
@@ -172,6 +173,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </section>
 
@@ -201,6 +203,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
           {!loading && authEsc.length === 0 ? (
             <p className="px-5 py-6 text-sm text-surface-muted">Nothing flagged.</p>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface">
                 <tr>
@@ -246,6 +249,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </section>
       </div>
