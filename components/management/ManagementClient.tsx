@@ -91,7 +91,7 @@ export default function ManagementClient({ facilities }: { facilities: Facility[
 
   return (
     <div className="h-full overflow-auto p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-none space-y-6">
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <span className="text-surface-muted">
             <b className="text-surface-ink">{collections.length + authEsc.length}</b>{" "}
