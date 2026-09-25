@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { easternToday, easternHour, sendResend, managementEmails } from "@/lib/report/eodSummary";
+import { easternToday, easternHour, isEasternWeekend, sendResend, managementEmails } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
   facilityRecipients,
@@ -24,8 +24,12 @@ export async function GET(request: Request) {
   // Fires at 21:00 AND 22:00 UTC; only the one at 5 PM Eastern actually sends,
   // so it stays at 5 PM ET through daylight-saving changes. ?force=1 bypasses.
   const url = new URL(request.url);
-  if (easternHour() !== 17 && url.searchParams.get("force") !== "1")
+  const force = url.searchParams.get("force") === "1";
+  if (easternHour() !== 17 && !force)
     return NextResponse.json({ ok: true, sent: false, reason: "not 5 PM Eastern" });
+  // No daily recaps on weekends (Sat/Sun Eastern). ?force=1 still sends.
+  if (isEasternWeekend() && !force)
+    return NextResponse.json({ ok: true, sent: false, reason: "weekend — daily recap paused" });
 
   let admin;
   try {

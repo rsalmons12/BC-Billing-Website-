@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { managementEmails, sendResend, easternToday, easternHour } from "@/lib/report/eodSummary";
+import { managementEmails, sendResend, easternToday, easternHour, isEasternWeekend } from "@/lib/report/eodSummary";
 import { computeChiefBrief, renderChiefBrief } from "@/lib/report/chiefOfStaff";
 import { logCronRun, alreadySentToday } from "@/lib/report/cronLog";
 
@@ -36,6 +36,11 @@ export async function GET(request: Request) {
   if (!(h >= 6 && h <= 10) && !force) {
     await logCronRun(admin, "chief-of-staff", `skipped: outside morning window (ET hour ${h})`);
     return NextResponse.json({ ok: true, sent: false, reason: `outside morning window (ET hour ${h})` });
+  }
+  // No morning brief on weekends (Sat/Sun Eastern). ?force=1 still sends.
+  if (isEasternWeekend() && !force) {
+    await logCronRun(admin, "chief-of-staff", "skipped: weekend — morning brief paused");
+    return NextResponse.json({ ok: true, sent: false, reason: "weekend — morning brief paused" });
   }
 
   // Send at most once per Eastern day, even though the scheduler fires several

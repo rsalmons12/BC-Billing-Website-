@@ -41,6 +41,16 @@ export function easternHour(): number {
   return isNaN(h) ? -1 : h % 24; // "24" → 0 (midnight)
 }
 
+// True on Saturday/Sunday in US Eastern. Used to skip the daily recap/brief/
+// digest emails on weekends (no more weekend daily updates).
+export function isEasternWeekend(): boolean {
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  }).format(new Date());
+  return wd === "Sat" || wd === "Sun";
+}
+
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 

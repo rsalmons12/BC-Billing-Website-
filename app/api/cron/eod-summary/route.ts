@@ -7,6 +7,7 @@ import {
   sendResend,
   easternToday,
   easternHour,
+  isEasternWeekend,
 } from "@/lib/report/eodSummary";
 
 // Runs on a schedule (see vercel.json) — around 5 PM Eastern — and emails a
@@ -29,8 +30,12 @@ export async function GET(request: Request) {
   // so it stays at 5 PM ET through daylight-saving changes. ?force=1 bypasses
   // (for a manual cron test).
   const url = new URL(request.url);
-  if (easternHour() !== 17 && url.searchParams.get("force") !== "1")
+  const force = url.searchParams.get("force") === "1";
+  if (easternHour() !== 17 && !force)
     return NextResponse.json({ ok: true, sent: false, reason: "not 5 PM Eastern" });
+  // No daily digest on weekends (Sat/Sun Eastern). ?force=1 still sends.
+  if (isEasternWeekend() && !force)
+    return NextResponse.json({ ok: true, sent: false, reason: "weekend — daily digest paused" });
 
   let admin;
   try {

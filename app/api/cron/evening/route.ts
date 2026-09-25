@@ -7,6 +7,7 @@ import {
   sendResend,
   easternToday,
   easternHour,
+  isEasternWeekend,
 } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
@@ -47,6 +48,11 @@ export async function GET(request: Request) {
   if (!(h >= 16 && h <= 20) && !force) {
     await logCronRun(admin, "evening", `skipped: outside evening window (ET hour ${h})`);
     return NextResponse.json({ ok: true, sent: false, reason: `outside evening window (ET hour ${h})` });
+  }
+  // No daily updates on weekends (Sat/Sun Eastern). ?force=1 still sends.
+  if (isEasternWeekend() && !force) {
+    await logCronRun(admin, "evening", "skipped: weekend — daily updates paused");
+    return NextResponse.json({ ok: true, sent: false, reason: "weekend — daily updates paused" });
   }
 
   const date = easternToday();
