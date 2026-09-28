@@ -31,11 +31,11 @@ export default function NotificationsClient({
         ]}
       />
       <Section
-        title="Facility daily recaps"
-        subtitle="Each facility's own recap to its login — management BCC'd. Runs automatically at 5:00 PM ET."
+        title="Facility weekly recaps"
+        subtitle="Each facility's own recap to its login — management BCC'd. Runs automatically Friday at 5:30 PM ET."
         actions={[
           { label: "👁 Preview to me (no facility emailed)", url: "/api/facility-recap", body: { test: true } },
-          { label: "✉ Send facilities their recap now", url: "/api/facility-recap", body: {}, primary: true, confirm: "Email every facility that has a login their daily recap now?" },
+          { label: "✉ Send facilities their recap now", url: "/api/facility-recap", body: {}, primary: true, confirm: "Email every facility that has a login their weekly recap now?" },
         ]}
       />
     </div>

@@ -55,6 +55,15 @@ export async function GET(request: Request) {
   const force = url.searchParams.get("force") === "1";
   await logCronRun(admin, "census-text", `invoked (force ${force})`);
 
+  // Scheduled census texts are DISABLED — nothing texts automatically. A manual
+  // run with ?force=1, and the in-app "Text all facilities now" button (the POST
+  // endpoint), still work on demand. This guarantees no texts go out on a
+  // schedule.
+  if (!force) {
+    await logCronRun(admin, "census-text", "skipped: scheduled texts disabled");
+    return NextResponse.json({ ok: true, sent: false, reason: "scheduled census texts disabled" });
+  }
+
   // Send ~9 AM Eastern; fires at 13:00 & 14:00 UTC and only the 9 AM ET one runs.
   if (!force && easternHour() !== 9)
     return NextResponse.json({ ok: true, sent: false, reason: "not 9 AM Eastern" });

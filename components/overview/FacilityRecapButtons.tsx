@@ -94,7 +94,7 @@ export default function FacilityRecapButtons() {
         onClick={() => run(false)}
         disabled={busy}
         className="badge bg-secured/12 px-3 py-1.5 text-xs font-semibold text-secured hover:bg-secured/20 disabled:opacity-50"
-        title="Email every facility its own daily recap now"
+        title="Email every facility its own weekly recap now"
       >
         {busy ? "Working…" : "✉ Send facilities their recap now"}
       </button>
