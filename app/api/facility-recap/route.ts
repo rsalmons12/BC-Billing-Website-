@@ -60,13 +60,13 @@ export async function POST(request: Request) {
     const recap = demoFacilityRecap();
     const html =
       `<div style="font-family:Arial,sans-serif;font-size:13px;color:#555;padding:10px 0">` +
-      `<b>DEMO</b> — sample daily recap with example numbers. Not real facility data.</div>` +
+      `<b>DEMO</b> — sample weekly recap with example numbers. Not real facility data.</div>` +
       `<div style="border:1px solid #ddd;border-radius:10px;padding:14px">${renderFacilityRecap(
         recap,
         date
       )}</div>`;
     try {
-      await sendResend(to, `[DEMO] Daily Recap — ${recap.name} (${date})`, html);
+      await sendResend(to, `[DEMO] Weekly Recap — ${recap.name} (${date})`, html);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
     }
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
       .map((r) => renderFacilityRecap(r, date))
       .join('<hr style="border:none;border-top:2px solid #ddd;margin:26px 0" />');
     try {
-      await sendResend(to, `Your Daily Recap — ${mine.map((r) => r.name).join(", ")} (${date})`, html);
+      await sendResend(to, `Your Weekly Recap — ${mine.map((r) => r.name).join(", ")} (${date})`, html);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
     }
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
         )
         .join("");
     try {
-      await sendResend(to, `[PREVIEW] Facility daily recaps — ${recaps.length} facilities (${date})`, html);
+      await sendResend(to, `[PREVIEW] Facility weekly recaps — ${recaps.length} facilities (${date})`, html);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "send failed" }, { status: 502 });
     }
@@ -192,7 +192,7 @@ export async function POST(request: Request) {
     // Management BCC + this facility's own extra BCC(s), if any.
     const bcc = Array.from(new Set([...mgmt, ...(extraBcc.get(r.facilityId) ?? [])]));
     try {
-      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), bcc);
+      await sendResend(to, `${r.name} — Weekly Recap (${date})`, renderFacilityRecap(r, date), bcc);
       sent++;
     } catch {
       skipped.push(r.name);

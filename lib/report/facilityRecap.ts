@@ -1070,7 +1070,7 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
   return `<div style="font-family:Arial,sans-serif;font-size:14px;color:${INK};line-height:1.6;background:#fff;padding:30px 28px 24px">
     <div style="font-weight:700;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:${NAVY}">BC Billing</div>
     <div style="font-size:26px;font-weight:800;color:${NAVY};margin:8px 0 2px;letter-spacing:-.01em">${r.name}</div>
-    <div style="color:${MUTE};border-bottom:2px solid ${NAVY};padding-bottom:14px">Daily Recap — ${nice}</div>
+    <div style="color:${MUTE};border-bottom:2px solid ${NAVY};padding-bottom:14px">Weekly Recap — ${nice}</div>
 
     <table style="border-collapse:collapse;width:100%;margin-top:20px">
       <tr>
@@ -1257,7 +1257,7 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     }
 
     <hr style="border:none;border-top:1px solid #ddd;margin-top:24px" />
-    <p style="font-size:11px;color:${FAINT}">Automated daily recap from BC Billing. Contains PHI — handle per HIPAA.</p>
+    <p style="font-size:11px;color:${FAINT}">Automated weekly recap from BC Billing. Contains PHI — handle per HIPAA.</p>
   </div>`;
 }
 

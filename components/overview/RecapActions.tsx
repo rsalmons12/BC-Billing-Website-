@@ -64,14 +64,14 @@ export default function RecapActions() {
               { demo: true, to: demoTo.trim() },
               {
                 workingMsg: "Sending demo…",
-                okMsg: (d) => `✓ Demo daily recap sent to ${d.sentTo ?? "you"}.`,
+                okMsg: (d) => `✓ Demo weekly recap sent to ${d.sentTo ?? "you"}.`,
               }
             )
           }
           disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg border border-brand-green/40 bg-brand-green/10 px-3 py-1.5 text-sm font-semibold text-brand-green hover:bg-brand-green/15 disabled:opacity-50"
         >
-          🎬 Send demo daily recap
+          🎬 Send demo weekly recap
         </button>
       </span>
       <button

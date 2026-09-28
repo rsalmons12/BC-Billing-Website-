@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { easternToday, easternHour, sendResend, managementEmails } from "@/lib/report/eodSummary";
+import { easternToday, easternHour, isEasternFriday, sendResend, managementEmails } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
   facilityRecipients,
   renderFacilityRecap,
 } from "@/lib/report/facilityRecap";
 
-// Runs on a schedule (see vercel.json) — ~5:30 PM Eastern — and emails each
-// facility its own daily recap (the Overview picture, scoped to that facility)
-// to that facility's login email. A facility only ever receives its own data.
+// Runs on a schedule (see vercel.json) — Friday ~5:30 PM Eastern — and emails
+// each facility its own WEEKLY recap (the Overview picture, scoped to that
+// facility) to that facility's login email. A facility only ever sees its data.
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -21,10 +21,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fires at 21:00 AND 22:00 UTC; only the one at 5 PM Eastern actually sends,
-  // so it stays at 5 PM ET through daylight-saving changes. ?force=1 bypasses.
+  // Weekly, Friday only. Fires at 21:00 AND 22:00 UTC; only the one at 5 PM
+  // Eastern actually sends, so it stays at 5 PM ET across daylight-saving
+  // changes. ?force=1 bypasses both the day and hour gates for a manual test.
   const url = new URL(request.url);
-  if (easternHour() !== 17 && url.searchParams.get("force") !== "1")
+  const force = url.searchParams.get("force") === "1";
+  if (!isEasternFriday() && !force)
+    return NextResponse.json({ ok: true, sent: false, reason: "weekly recap sends Fridays only" });
+  if (easternHour() !== 17 && !force)
     return NextResponse.json({ ok: true, sent: false, reason: "not 5 PM Eastern" });
 
   let admin;
@@ -50,7 +54,7 @@ export async function GET(request: Request) {
       continue;
     }
     try {
-      await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), mgmt);
+      await sendResend(to, `${r.name} — Weekly Recap (${date})`, renderFacilityRecap(r, date), mgmt);
       sent++;
     } catch {
       skipped.push(r.name);

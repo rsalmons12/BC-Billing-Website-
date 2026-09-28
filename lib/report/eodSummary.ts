@@ -41,6 +41,26 @@ export function easternHour(): number {
   return isNaN(h) ? -1 : h % 24; // "24" → 0 (midnight)
 }
 
+// True on Friday in US Eastern. The facility recap is a WEEKLY recap sent only
+// on Friday (~5:30 PM ET) — once a week, not every day.
+export function isEasternFriday(): boolean {
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  }).format(new Date());
+  return wd === "Fri";
+}
+
+// True on Saturday/Sunday in US Eastern. The daily management emails (EOD digest,
+// morning brief) skip weekends.
+export function isEasternWeekend(): boolean {
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  }).format(new Date());
+  return wd === "Sat" || wd === "Sun";
+}
+
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 

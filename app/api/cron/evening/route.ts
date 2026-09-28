@@ -7,6 +7,7 @@ import {
   sendResend,
   easternToday,
   easternHour,
+  isEasternFriday,
 } from "@/lib/report/eodSummary";
 import {
   computeFacilityRecaps,
@@ -81,8 +82,11 @@ export async function GET(request: Request) {
     result.eod = { error: e instanceof Error ? e.message : "eod send failed" };
   }
 
-  // 2) Per-facility daily recaps → each facility's own login, management BCC'd.
-  try {
+  // 2) Per-facility WEEKLY recaps → each facility's own login, management BCC'd.
+  //    Weekly means Friday only; the EOD digest above still goes out daily.
+  if (!isEasternFriday() && !force) {
+    result.recaps = { sent: false, reason: "weekly recap sends Fridays only" };
+  } else try {
     const [recaps, recipients, mgmt, extraBcc] = await Promise.all([
       computeFacilityRecaps(admin),
       facilityRecipients(admin),
@@ -100,7 +104,7 @@ export async function GET(request: Request) {
       // Management BCC + this facility's own extra BCC(s), if any.
       const bcc = Array.from(new Set([...mgmt, ...(extraBcc.get(r.facilityId) ?? [])]));
       try {
-        await sendResend(to, `${r.name} — Daily Recap (${date})`, renderFacilityRecap(r, date), bcc);
+        await sendResend(to, `${r.name} — Weekly Recap (${date})`, renderFacilityRecap(r, date), bcc);
         sent++;
       } catch {
         skipped.push(r.name);
