@@ -37,6 +37,7 @@ export async function buildMonthlyBundle({
   billingRate = null,
   invoiceNumber = "",
   invoiceDate = "",
+  extraInvoiceLines = [],
 }: {
   facilityName: string;
   monthLabel: string;
@@ -47,6 +48,9 @@ export async function buildMonthlyBundle({
   billingRate?: number | null; // % of collections billed to the facility
   invoiceNumber?: string;
   invoiceDate?: string;
+  // Extra invoice lines beyond the base fee — charges and carried-over prior
+  // balances — so the attachment's Amount Due matches the emailed invoice.
+  extraInvoiceLines?: { desc: string; amount: number }[];
 }): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "BC Billing";
@@ -128,6 +132,8 @@ export async function buildMonthlyBundle({
   // ===== INVOICE (fee = collected × the facility's billing rate) =====
   if (billingRate != null && billingRate > 0) {
     const fee = round(totalCollected * (billingRate / 100));
+    const extras = (extraInvoiceLines ?? []).map((l) => ({ desc: l.desc, amount: round(Number(l.amount) || 0) }));
+    const totalDue = round(fee + extras.reduce((s, l) => s + l.amount, 0));
     const inv = wb.addWorksheet("INVOICE");
     title(inv, `Invoice — ${facilityName}`, 4);
     inv.addRow([]);
@@ -152,11 +158,17 @@ export async function buildMonthlyBundle({
           rate: round(billingRate),
           due: fee,
         },
+        ...extras.map((l) => ({ desc: l.desc, coll: "", rate: "", due: l.amount })),
       ],
-      { desc: "TOTAL DUE", coll: round(totalCollected), rate: round(billingRate), due: fee }
+      { desc: "TOTAL DUE", coll: round(totalCollected), rate: round(billingRate), due: totalDue }
     );
     inv.addRow([]);
-    const note = inv.addRow([`Fee is ${billingRate}% of collections received in ${monthLabel}.`]);
+    const hasPrior = extras.some((l) => /previous balance/i.test(l.desc));
+    const note = inv.addRow([
+      `Fee is ${billingRate}% of collections received in ${monthLabel}.${
+        hasPrior ? " Amount Due includes an unpaid balance carried over from a prior month." : ""
+      }`,
+    ]);
     note.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
   }
 
