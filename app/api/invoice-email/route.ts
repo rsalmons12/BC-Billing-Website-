@@ -64,14 +64,17 @@ export async function POST(request: Request) {
 
   const { data: fac } = await supabase
     .from("facilities")
-    .select("name, short_name, billing_rate, square_pay_url")
+    .select("name, short_name, billing_rate, flat_fee, square_pay_url")
     .eq("id", body.facilityId)
     .maybeSingle();
   if (!fac) return NextResponse.json({ error: "Facility not found." }, { status: 404 });
   const rate = fac.billing_rate;
-  if (rate == null || rate <= 0)
+  // Billing mode: a flat monthly fee (e.g. Medicaid, where a % isn't allowed)
+  // takes precedence when set; otherwise bill billing_rate% of collections.
+  const flatFee = fac.flat_fee != null && Number(fac.flat_fee) > 0 ? Number(fac.flat_fee) : null;
+  if (flatFee == null && (rate == null || rate <= 0))
     return NextResponse.json(
-      { error: `No billing rate set for ${fac.short_name || fac.name}. Set a Bill % in Admin → Facilities.` },
+      { error: `No billing set for ${fac.short_name || fac.name}. Set a Bill % or a Flat fee in Admin → Facilities.` },
       { status: 400 }
     );
 
@@ -178,7 +181,12 @@ export async function POST(request: Request) {
   const monthPayments = pays.filter((p) => payMonth(p) === body.month && inHalf(payDay(p), half));
   const monthBilled = billed.filter((b) => bilMonth(b) === body.month);
   const collected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
-  const baseFee = Math.round(collected * (rate / 100) * 100) / 100;
+  // Flat-fee facilities bill the fixed monthly amount (half it on a mid-month
+  // split so the two halves still sum to the flat fee); otherwise % of collections.
+  const baseFee =
+    flatFee != null
+      ? Math.round((half ? flatFee / 2 : flatFee) * 100) / 100
+      : Math.round(collected * ((rate as number) / 100) * 100) / 100;
   const facilityName = fac.short_name || fac.name;
   const label = periodLabel(periodKey);
 
@@ -198,6 +206,33 @@ export async function POST(request: Request) {
   // Total billed = base fee + any extra charges.
   const fee = Math.round((baseFee + chargesTotal) * 100) / 100;
 
+  // Carry-over: any PRIOR month still outstanding gets added to this invoice as
+  // its own detailed line (e.g. "Previous balance — August 2026"). The ledger
+  // keeps each month's row separate (so nothing double-counts); this invoice
+  // just shows the full amount the facility owes and lets them pay it all at
+  // once. Only full-month invoices carry a prior balance (not mid-month halves).
+  let prevRows: { label: string; balance: number }[] = [];
+  let prevTotal = 0;
+  if (!half) {
+    const { data: priorInv } = await supabase
+      .from("invoices")
+      .select("period, amount, paid_amount")
+      .eq("facility_id", body.facilityId);
+    const byMonth = new Map<string, number>();
+    for (const r of (priorInv ?? []) as { period: string; amount: number; paid_amount: number | null }[]) {
+      const mk = String(r.period || "").slice(0, 7); // "YYYY-MM"
+      if (!/^\d{4}-\d{2}$/.test(mk) || mk >= body.month) continue; // strictly-prior months only
+      const bal = Math.round(((Number(r.amount) || 0) - (Number(r.paid_amount) || 0)) * 100) / 100;
+      if (bal > 0.005) byMonth.set(mk, Math.round(((byMonth.get(mk) ?? 0) + bal) * 100) / 100);
+    }
+    prevRows = Array.from(byMonth.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([mk, bal]) => ({ label: monthFull(mk), balance: bal }));
+    prevTotal = Math.round(prevRows.reduce((s, r) => s + r.balance, 0) * 100) / 100;
+  }
+  // What the facility actually owes now = this month's fee + any carried balance.
+  const totalDue = Math.round((fee + prevTotal) * 100) / 100;
+
   // Build the monthly report bundle (with the INVOICE sheet) to attach.
   let attachment: { filename: string; content: string } | null = null;
   try {
@@ -210,6 +245,12 @@ export async function POST(request: Request) {
       negotiations,
       billingRate: rate,
       invoiceDate: monthFull(body.month),
+      invoiceBaseFee: baseFee,
+      invoiceFlat: flatFee != null,
+      extraInvoiceLines: [
+        ...charges.map((c) => ({ desc: String(c.label || "Charge"), amount: Number(c.amount) || 0 })),
+        ...prevRows.map((r) => ({ desc: `Previous balance — ${r.label} (unpaid)`, amount: r.balance })),
+      ],
     });
     attachment = {
       filename: `${facilityName}_${body.month}_Monthly_Report.xlsx`.replace(/[^\w.-]+/g, "_"),
@@ -254,8 +295,10 @@ export async function POST(request: Request) {
   let payUrl: string | null = staticUrl;
   let payExact = false;
   const square = await createSquarePaymentLink({
-    amount: fee,
-    name: `${facilityName} — ${label} Invoice`,
+    amount: totalDue,
+    name: prevTotal > 0
+      ? `${facilityName} — ${label} Invoice (incl. prior balance)`
+      : `${facilityName} — ${label} Invoice`,
   });
   if (square.url) {
     payUrl = square.url;
@@ -269,10 +312,15 @@ export async function POST(request: Request) {
       <tbody>
         <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Collections (${label})</td>
             <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(collected)}</td></tr>
-        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Rate</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${rate}%</td></tr>
-        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Billing fee (${rate}% of collections)</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>
+        ${
+          flatFee != null
+            ? `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Flat monthly fee${half ? " (half month)" : ""}</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>`
+            : `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Rate</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${rate}%</td></tr>
+               <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Billing fee (${rate}% of collections)</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>`
+        }
         ${charges
           .map(
             (c) =>
@@ -280,17 +328,30 @@ export async function POST(request: Request) {
                    <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(Number(c.amount) || 0)}</td></tr>`
           )
           .join("")}
+        ${
+          prevTotal > 0
+            ? `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;color:#555">This month (${label})</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;color:#555">${money(fee)}</td></tr>` +
+              prevRows
+                .map(
+                  (r) =>
+                    `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Previous balance — ${r.label} (unpaid)</td>
+                         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(r.balance)}</td></tr>`
+                )
+                .join("")
+            : ""
+        }
         <tr><td style="padding:8px;font-weight:700">Amount Due</td>
-            <td style="padding:8px;font-weight:700;text-align:right;color:#137333">${money(fee)}</td></tr>
+            <td style="padding:8px;font-weight:700;text-align:right;color:#137333">${money(totalDue)}</td></tr>
       </tbody>
     </table>
-    <p style="font-size:12px;color:#777;margin-top:12px">Billing fee is ${rate}% of collections received in ${label}${chargesTotal !== 0 ? ", plus the charges listed above" : ""}.</p>
+    <p style="font-size:12px;color:#777;margin-top:12px">${flatFee != null ? `Flat monthly fee for ${label}` : `Billing fee is ${rate}% of collections received in ${label}`}${chargesTotal !== 0 ? ", plus the charges listed above" : ""}.${prevTotal > 0 ? " Amount Due includes an unpaid balance carried over from a prior month, itemized above." : ""}</p>
     ${
       payUrl
         ? `<p style="margin:16px 0 4px">
-             <a href="${payUrl}" style="display:inline-block;background:#006aff;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Pay ${payExact ? money(fee) + " " : ""}via Square</a>
+             <a href="${payUrl}" style="display:inline-block;background:#006aff;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Pay ${payExact ? money(totalDue) + " " : ""}via Square</a>
            </p>
-           <p style="font-size:11px;color:#999;margin:0">${payExact ? `Secure Square checkout for ${money(fee)}.` : "Secure payment through Square."}</p>`
+           <p style="font-size:11px;color:#999;margin:0">${payExact ? `Secure Square checkout for ${money(totalDue)}.` : "Secure payment through Square."}</p>`
         : ""
     }
     ${
@@ -348,6 +409,8 @@ export async function POST(request: Request) {
     sentTo: to,
     bcc,
     fee,
+    previousBalance: prevTotal,
+    totalDue,
     collected,
     test: !!body.test,
     // Why the Square "Pay" button did / didn't appear, so misconfig is visible.

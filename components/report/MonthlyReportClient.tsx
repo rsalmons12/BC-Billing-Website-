@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { periodOf } from "@/lib/import/parseTrackers";
@@ -88,6 +88,9 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
   const facility = facilities.find((f) => f.id === facilityId);
   const facilityName = facility?.name || facility?.short_name || "Facility";
   const billingRate = facility?.billing_rate ?? null;
+  // Flat monthly fee (e.g. Medicaid) overrides the % when set.
+  const flatFee =
+    facility?.flat_fee != null && Number(facility.flat_fee) > 0 ? Number(facility.flat_fee) : null;
 
   const monthPayments = payments.filter((p) => payMonth(p) === month);
   const monthBilled = billed.filter((b) => bilMonth(b) === month);
@@ -104,6 +107,8 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         claims, // live AR snapshot
         negotiations,
         billingRate, // invoice sheet = collected × rate
+        invoiceBaseFee: flatFee != null ? flatFee : null, // flat fee overrides %
+        invoiceFlat: flatFee != null,
         invoiceDate: new Date().toLocaleDateString("en-US"),
       });
       const blob = new Blob([buf], {
@@ -132,6 +137,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     facilityId: string;
     name: string;
     rate: number | null;
+    flat?: boolean;
     collected: number;
     fee: number;
     ready: boolean;
@@ -220,6 +226,33 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       }
     }
     return { invoiced, collected, outstanding, unpaid, partial, count: ledger.length };
+  }, [ledger]);
+
+  // How many days overdue counts as "late" (net-30).
+  const OVERDUE_DAYS = 30;
+  const daysSince = (iso: string) => {
+    const t = Date.parse(iso);
+    return isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000);
+  };
+  // Bucket each invoice: Overdue (unpaid 30+ days — "late, never paid"),
+  // Awaiting payment (unpaid but not yet late), Paid in full.
+  const buckets = useMemo(() => {
+    const overdue: InvoiceLedger[] = [];
+    const awaiting: InvoiceLedger[] = [];
+    const paid: InvoiceLedger[] = [];
+    for (const r of ledger) {
+      const bal = Math.max(0, (r.amount ?? 0) - (r.paid_amount ?? 0));
+      if (r.paid || bal <= 0.005) paid.push(r);
+      else if (daysSince(r.sent_at) >= OVERDUE_DAYS) overdue.push(r);
+      else awaiting.push(r);
+    }
+    const sumBal = (rows: InvoiceLedger[]) =>
+      rows.reduce((s, r) => s + Math.max(0, (r.amount ?? 0) - (r.paid_amount ?? 0)), 0);
+    return [
+      { key: "overdue", label: "Overdue — late, unpaid", rows: overdue, total: sumBal(overdue), tone: "text-risk" },
+      { key: "awaiting", label: "Awaiting payment", rows: awaiting, total: sumBal(awaiting), tone: "text-gold" },
+      { key: "paid", label: "Paid in full", rows: paid, total: 0, tone: "text-recovered" },
+    ];
   }, [ledger]);
   const setPaid = async (id: string, paid: boolean) => {
     const row = ledger.find((r) => r.id === id);
@@ -635,13 +668,15 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
         {!loading && month && (
           <div className="mt-3 rounded-lg border border-secured/40 bg-secured/5 p-3">
             <div className="label">Invoice · {monthLabel(month)}</div>
-            {billingRate != null && billingRate > 0 ? (
+            {flatFee != null || (billingRate != null && billingRate > 0) ? (
               <>
                 <div className="font-display text-2xl font-bold text-secured">
-                  {money(totalCollected * (billingRate / 100) + chargesTotal)}
+                  {money((flatFee != null ? flatFee : totalCollected * ((billingRate as number) / 100)) + chargesTotal)}
                 </div>
                 <div className="text-xs text-surface-muted">
-                  {billingRate}% of {money(totalCollected)} = {money(totalCollected * (billingRate / 100))} billing fee
+                  {flatFee != null
+                    ? `Flat monthly fee ${money(flatFee)}`
+                    : `${billingRate}% of ${money(totalCollected)} = ${money(totalCollected * ((billingRate as number) / 100))} billing fee`}
                   {chargesTotal !== 0 ? ` + ${money(chargesTotal)} charges` : ""} · included as an INVOICE sheet
                 </div>
 
@@ -724,7 +759,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               </>
             ) : (
               <div className="text-sm text-surface-muted">
-                No billing rate set for {facilityName}. Add a <b>Bill %</b> in{" "}
+                No billing set for {facilityName}. Add a <b>Bill %</b> or a <b>Flat $</b> fee in{" "}
                 <b>Admin → Facilities</b> to generate its invoice.
               </div>
             )}
@@ -844,10 +879,10 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                         <td className="px-2 py-1.5 font-medium text-surface-ink">{r.name}</td>
                         <td className="px-2 py-1.5 text-right">{money(r.collected)}</td>
                         <td className="px-2 py-1.5 text-right">
-                          {r.rate != null && r.rate > 0 ? `${r.rate}%` : "—"}
+                          {r.flat ? "Flat" : r.rate != null && r.rate > 0 ? `${r.rate}%` : "—"}
                         </td>
                         <td className="px-2 py-1.5 text-right font-semibold text-secured">
-                          {r.rate != null && r.rate > 0 ? money(r.fee) : "—"}
+                          {r.flat || (r.rate != null && r.rate > 0) ? money(r.fee) : "—"}
                         </td>
                         <td className="px-2 py-1.5 text-xs">
                           {res ? (
@@ -899,7 +934,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
               {batchMsg && <span className="text-xs text-surface-ink">{batchMsg}</span>}
             </div>
             <p className="mt-2 text-[11px] text-surface-muted">
-              Only facilities with a Bill % and a recipient marked &quot;Invoices&quot; can be
+              Only facilities with a Bill % or Flat fee and a recipient marked &quot;Invoices&quot; can be
               checked. Each invoice goes to its own facility login; management is BCC&apos;d.
             </p>
           </>
@@ -1007,11 +1042,24 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                 </tr>
               </thead>
               <tbody>
-                {ledger.map((r) => (
-                  <tr
-                    key={r.id}
-                    className={`border-t border-surface-border ${r.paid ? "opacity-55" : ""}`}
-                  >
+                {buckets
+                  .filter((b) => b.rows.length > 0)
+                  .map((b) => (
+                    <Fragment key={b.key}>
+                      <tr className="bg-surface/60">
+                        <td
+                          colSpan={9}
+                          className={`px-2 py-2 text-[11px] font-semibold uppercase tracking-wide ${b.tone}`}
+                        >
+                          {b.label} · {b.rows.length} invoice{b.rows.length === 1 ? "" : "s"}
+                          {b.key !== "paid" ? ` · ${money(b.total)} outstanding` : ""}
+                        </td>
+                      </tr>
+                      {b.rows.map((r) => (
+                        <tr
+                          key={r.id}
+                          className={`border-t border-surface-border ${r.paid ? "opacity-55" : ""}`}
+                        >
                     <td className="px-2 py-1.5 font-medium text-surface-ink">
                       {ledgerFacName(r.facility_id)}
                     </td>
@@ -1062,7 +1110,9 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                       )}
                     </td>
                   </tr>
-                ))}
+                      ))}
+                    </Fragment>
+                  ))}
               </tbody>
             </table>
           </div>

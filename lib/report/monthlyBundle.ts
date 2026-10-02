@@ -37,6 +37,9 @@ export async function buildMonthlyBundle({
   billingRate = null,
   invoiceNumber = "",
   invoiceDate = "",
+  extraInvoiceLines = [],
+  invoiceBaseFee = null,
+  invoiceFlat = false,
 }: {
   facilityName: string;
   monthLabel: string;
@@ -47,6 +50,13 @@ export async function buildMonthlyBundle({
   billingRate?: number | null; // % of collections billed to the facility
   invoiceNumber?: string;
   invoiceDate?: string;
+  // Extra invoice lines beyond the base fee — charges and carried-over prior
+  // balances — so the attachment's Amount Due matches the emailed invoice.
+  extraInvoiceLines?: { desc: string; amount: number }[];
+  // Authoritative base fee (handles flat fee / mid-month split); when set it
+  // overrides the collected × rate computation. invoiceFlat drives the labels.
+  invoiceBaseFee?: number | null;
+  invoiceFlat?: boolean;
 }): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "BC Billing";
@@ -125,9 +135,17 @@ export async function buildMonthlyBundle({
   const totalCollected = payments.reduce((s, p) => s + num(p.paid_amount), 0);
   const totalBilled = billed.reduce((s, b) => s + num(b.total_amount), 0);
 
-  // ===== INVOICE (fee = collected × the facility's billing rate) =====
-  if (billingRate != null && billingRate > 0) {
-    const fee = round(totalCollected * (billingRate / 100));
+  // ===== INVOICE (flat fee, or collected × the facility's billing rate) =====
+  const hasBase = invoiceBaseFee != null || (billingRate != null && billingRate > 0);
+  if (hasBase) {
+    const fee =
+      invoiceBaseFee != null ? round(invoiceBaseFee) : round(totalCollected * ((billingRate as number) / 100));
+    const extras = (extraInvoiceLines ?? []).map((l) => ({ desc: l.desc, amount: round(Number(l.amount) || 0) }));
+    const totalDue = round(fee + extras.reduce((s, l) => s + l.amount, 0));
+    const baseDesc = invoiceFlat
+      ? `Flat monthly fee — ${monthLabel}`
+      : `Revenue cycle management fee — ${monthLabel}`;
+    const rateCol: number | string = invoiceFlat ? "" : round(billingRate ?? 0);
     const inv = wb.addWorksheet("INVOICE");
     title(inv, `Invoice — ${facilityName}`, 4);
     inv.addRow([]);
@@ -147,16 +165,23 @@ export async function buildMonthlyBundle({
       ],
       [
         {
-          desc: `Revenue cycle management fee — ${monthLabel}`,
+          desc: baseDesc,
           coll: round(totalCollected),
-          rate: round(billingRate),
+          rate: rateCol,
           due: fee,
         },
+        ...extras.map((l) => ({ desc: l.desc, coll: "", rate: "", due: l.amount })),
       ],
-      { desc: "TOTAL DUE", coll: round(totalCollected), rate: round(billingRate), due: fee }
+      { desc: "TOTAL DUE", coll: round(totalCollected), rate: rateCol, due: totalDue }
     );
     inv.addRow([]);
-    const note = inv.addRow([`Fee is ${billingRate}% of collections received in ${monthLabel}.`]);
+    const hasPrior = extras.some((l) => /previous balance/i.test(l.desc));
+    const carried = hasPrior ? " Amount Due includes an unpaid balance carried over from a prior month." : "";
+    const note = inv.addRow([
+      (invoiceFlat
+        ? `Flat monthly fee for ${monthLabel}.`
+        : `Fee is ${billingRate}% of collections received in ${monthLabel}.`) + carried,
+    ]);
     note.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
   }
 

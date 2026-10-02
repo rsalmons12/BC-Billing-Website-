@@ -38,11 +38,11 @@ export async function POST(request: Request) {
 
   const { data: facRows } = await supabase
     .from("facilities")
-    .select("id, name, short_name, billing_rate")
+    .select("id, name, short_name, billing_rate, flat_fee")
     .order("name");
   const facilities = (facRows ?? []) as Pick<
     Facility,
-    "id" | "name" | "short_name" | "billing_rate"
+    "id" | "name" | "short_name" | "billing_rate" | "flat_fee"
   >[];
 
   // Who is marked "Invoices": facility logins (each gets its OWN facility's
@@ -107,8 +107,15 @@ export async function POST(request: Request) {
       }
       const collected = body.month ? byMonth.get(body.month) ?? 0 : 0;
       const rate = f.billing_rate;
+      // Flat-fee facilities (e.g. Medicaid) bill a fixed monthly amount; half it
+      // on a mid-month split. Otherwise bill % of collections.
+      const flatFee = f.flat_fee != null && Number(f.flat_fee) > 0 ? Number(f.flat_fee) : null;
       const baseFee =
-        rate != null && rate > 0 ? Math.round(collected * (rate / 100) * 100) / 100 : 0;
+        flatFee != null
+          ? Math.round((half ? flatFee / 2 : flatFee) * 100) / 100
+          : rate != null && rate > 0
+            ? Math.round(collected * (rate / 100) * 100) / 100
+            : 0;
       const extra = Math.round((chargesByFac.get(f.id) ?? 0) * 100) / 100;
       const fee = Math.round((baseFee + extra) * 100) / 100;
 
@@ -118,10 +125,10 @@ export async function POST(request: Request) {
       for (const a of assignments)
         if (a.facility_id === f.id && facInvoiceIds.has(a.profile_id)) toCount++;
 
-      const hasRate = rate != null && rate > 0;
+      const hasBilling = flatFee != null || (rate != null && rate > 0);
       const hasRecipient = toCount > 0 || internalCount > 0;
-      const issue = !hasRate
-        ? "No Bill % set"
+      const issue = !hasBilling
+        ? "No Bill % or Flat fee set"
         : !hasRecipient
           ? 'No one marked "Invoices"'
           : "";
@@ -130,11 +137,12 @@ export async function POST(request: Request) {
         facilityId: f.id,
         name: f.short_name || f.name,
         rate,
+        flat: flatFee != null,
         collected,
         fee,
         toCount,
         internalCount,
-        ready: hasRate && hasRecipient,
+        ready: hasBilling && hasRecipient,
         issue,
       };
     })
