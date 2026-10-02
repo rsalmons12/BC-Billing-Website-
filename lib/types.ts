@@ -9,6 +9,7 @@ export interface Facility {
   state: string | null;
   email: string | null;
   billing_rate: number | null; // % of monthly collections billed to this facility
+  flat_fee: number | null; // fixed $ monthly fee (e.g. Medicaid); overrides the % when set
   square_pay_url: string | null; // Square payment link shown on the invoice
   php_floor: number | null; // per-day reimbursement floor for PHP (recap flag)
   iop_floor: number | null; // per-day reimbursement floor for IOP (recap flag)

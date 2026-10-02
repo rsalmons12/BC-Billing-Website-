@@ -719,6 +719,7 @@ function FacilitiesTab({
               <th className="th">Short name</th>
               <th className="th">State</th>
               {selfIsOwner && <th className="th">Bill %</th>}
+              {selfIsOwner && <th className="th">Flat $</th>}
               <th className="th">PHP floor</th>
               <th className="th">IOP floor</th>
               <th className="th">OP floor</th>
@@ -775,6 +776,24 @@ function FacilitiesTab({
                       }}
                       className="cell-input w-20"
                       placeholder="%"
+                    />
+                  </td>
+                )}
+                {selfIsOwner && (
+                  <td className="td">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      defaultValue={f.flat_fee ?? ""}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim() === "" ? null : parseFloat(e.target.value);
+                        const next = v == null || isNaN(v) ? null : v;
+                        if (next !== (f.flat_fee ?? null)) save(f, { flat_fee: next });
+                      }}
+                      className="cell-input w-24"
+                      placeholder="$ flat"
+                      title="Flat monthly fee (e.g. Medicaid). When set, the invoice bills this fixed amount instead of the Bill %."
                     />
                   </td>
                 )}

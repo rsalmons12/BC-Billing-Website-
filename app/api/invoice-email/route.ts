@@ -64,14 +64,17 @@ export async function POST(request: Request) {
 
   const { data: fac } = await supabase
     .from("facilities")
-    .select("name, short_name, billing_rate, square_pay_url")
+    .select("name, short_name, billing_rate, flat_fee, square_pay_url")
     .eq("id", body.facilityId)
     .maybeSingle();
   if (!fac) return NextResponse.json({ error: "Facility not found." }, { status: 404 });
   const rate = fac.billing_rate;
-  if (rate == null || rate <= 0)
+  // Billing mode: a flat monthly fee (e.g. Medicaid, where a % isn't allowed)
+  // takes precedence when set; otherwise bill billing_rate% of collections.
+  const flatFee = fac.flat_fee != null && Number(fac.flat_fee) > 0 ? Number(fac.flat_fee) : null;
+  if (flatFee == null && (rate == null || rate <= 0))
     return NextResponse.json(
-      { error: `No billing rate set for ${fac.short_name || fac.name}. Set a Bill % in Admin → Facilities.` },
+      { error: `No billing set for ${fac.short_name || fac.name}. Set a Bill % or a Flat fee in Admin → Facilities.` },
       { status: 400 }
     );
 
@@ -178,7 +181,12 @@ export async function POST(request: Request) {
   const monthPayments = pays.filter((p) => payMonth(p) === body.month && inHalf(payDay(p), half));
   const monthBilled = billed.filter((b) => bilMonth(b) === body.month);
   const collected = monthPayments.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
-  const baseFee = Math.round(collected * (rate / 100) * 100) / 100;
+  // Flat-fee facilities bill the fixed monthly amount (half it on a mid-month
+  // split so the two halves still sum to the flat fee); otherwise % of collections.
+  const baseFee =
+    flatFee != null
+      ? Math.round((half ? flatFee / 2 : flatFee) * 100) / 100
+      : Math.round(collected * ((rate as number) / 100) * 100) / 100;
   const facilityName = fac.short_name || fac.name;
   const label = periodLabel(periodKey);
 
@@ -237,6 +245,8 @@ export async function POST(request: Request) {
       negotiations,
       billingRate: rate,
       invoiceDate: monthFull(body.month),
+      invoiceBaseFee: baseFee,
+      invoiceFlat: flatFee != null,
       extraInvoiceLines: [
         ...charges.map((c) => ({ desc: String(c.label || "Charge"), amount: Number(c.amount) || 0 })),
         ...prevRows.map((r) => ({ desc: `Previous balance — ${r.label} (unpaid)`, amount: r.balance })),
@@ -302,10 +312,15 @@ export async function POST(request: Request) {
       <tbody>
         <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Collections (${label})</td>
             <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(collected)}</td></tr>
-        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Rate</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${rate}%</td></tr>
-        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Billing fee (${rate}% of collections)</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>
+        ${
+          flatFee != null
+            ? `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Flat monthly fee${half ? " (half month)" : ""}</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>`
+            : `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Rate</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${rate}%</td></tr>
+               <tr><td style="padding:6px 8px;border-bottom:1px solid #eee">Billing fee (${rate}% of collections)</td>
+                   <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${money(baseFee)}</td></tr>`
+        }
         ${charges
           .map(
             (c) =>
@@ -330,7 +345,7 @@ export async function POST(request: Request) {
             <td style="padding:8px;font-weight:700;text-align:right;color:#137333">${money(totalDue)}</td></tr>
       </tbody>
     </table>
-    <p style="font-size:12px;color:#777;margin-top:12px">Billing fee is ${rate}% of collections received in ${label}${chargesTotal !== 0 ? ", plus the charges listed above" : ""}.${prevTotal > 0 ? " Amount Due includes an unpaid balance carried over from a prior month, itemized above." : ""}</p>
+    <p style="font-size:12px;color:#777;margin-top:12px">${flatFee != null ? `Flat monthly fee for ${label}` : `Billing fee is ${rate}% of collections received in ${label}`}${chargesTotal !== 0 ? ", plus the charges listed above" : ""}.${prevTotal > 0 ? " Amount Due includes an unpaid balance carried over from a prior month, itemized above." : ""}</p>
     ${
       payUrl
         ? `<p style="margin:16px 0 4px">
