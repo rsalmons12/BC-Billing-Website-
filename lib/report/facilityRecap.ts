@@ -91,6 +91,9 @@ export interface FacilityRecap {
   name: string;
   monthLabel: string;
   priorMonthLabel: string;
+  // The month before last — the billing trend compares two COMPLETE months
+  // (priorMonthLabel vs this), never the partway-through current month.
+  prior2MonthLabel: string;
   dayRange: string; // e.g. "1–17" — the same day window both months are compared over
   totalAR: number;
   expectedRevenue: number;
@@ -102,6 +105,9 @@ export interface FacilityRecap {
   billedMonth: number;
   collectionRate: number;
   billedLastMonth: number;
+  // Billed totals for the two most recent COMPLETE months (for a fair trend).
+  trendCurBilled: number;
+  trendPrevBilled: number;
   billedDelta: number;
   billedPct: number | null;
   // PHP/IOP/OP sessions this month vs last, from billed CPT units.
@@ -512,6 +518,11 @@ export async function computeFacilityRecaps(
   const prior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const priorKey = `${prior.getFullYear()}-${String(prior.getMonth() + 1).padStart(2, "0")}`;
   const priorMonthLabel = prior.toLocaleString("en-US", { month: "long", year: "numeric" });
+  // The month before last — so the billing trend can compare two COMPLETE months
+  // (prior vs the one before it) instead of a partway-through current month.
+  const prior2 = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const prior2Key = `${prior2.getFullYear()}-${String(prior2.getMonth() + 1).padStart(2, "0")}`;
+  const prior2MonthLabel = prior2.toLocaleString("en-US", { month: "long", year: "numeric" });
   // Month-over-month is APPLES-TO-APPLES: the current month is only partway
   // through, so we compare each month only through the SAME day-of-month. On
   // Aug 17 that's Aug 1–17 vs Jul 1–17; on Aug 23 it's Jul/Aug 1–23. Otherwise a
@@ -701,67 +712,50 @@ export async function computeFacilityRecaps(
     }
     const riskAR = fc.reduce((s, c) => s + (isRiskPayer(c.claim_status) ? arBalance(c.balance) : 0), 0);
 
-    // Payments collected in the current month THROUGH the cutoff day.
-    const monthPays = payments.filter(
+    // CURRENT month-to-date, by PERIOD (no day-of-month cutoff) — matches the
+    // Overview dashboard. Billing/payment dates aren't tied to "today" (a report
+    // carries dates across the whole month), so the old day window dropped
+    // legitimate current-month activity and read $0 billed / undercounted collected.
+    const curMonthPays = payments.filter(
       (p) =>
         p.facility_id === f.id &&
-        (inWindow(p.deposit_date, now) || inWindow(p.payment_entered, now))
+        periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "") === monthKey
     );
-    const collectedThisMonth = monthPays.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+    const collectedMonth = curMonthPays.reduce((s, p) => s + (p.paid_amount ?? 0), 0);
+    const collectedThisMonth = collectedMonth; // headline = full month-to-date
     const payByPayer = new Map<string, number>();
-    for (const p of monthPays) {
+    for (const p of curMonthPays) {
       const src = (p.payment_source || "Other").toUpperCase();
       payByPayer.set(src, (payByPayer.get(src) ?? 0) + (p.paid_amount ?? 0));
     }
 
-    // Billed rows in `target`'s month, capped at the cutoff day. Day comes from
-    // the billing date (entered/from); a row with no date at all falls back to
-    // its period tag so it isn't dropped (can't day-cap those).
-    const billedInMonth = (key: string, target: Date) =>
-      billed.filter((b) => {
-        if (b.facility_id !== f.id) return false;
-        const d = parseDate(b.entered_date);
-        if (d)
-          return (
-            d.getFullYear() === target.getFullYear() &&
-            d.getMonth() === target.getMonth() &&
-            d.getDate() <= cutoffDay
-          );
-        return b.period === key;
-      });
-    const billedThisMonth = billedInMonth(monthKey, now).reduce((s, b) => s + (b.total_amount ?? 0), 0);
-    const billedLastMonth = billedInMonth(priorKey, prior).reduce((s, b) => s + (b.total_amount ?? 0), 0);
+    // Billed total for a month by period (full month, no day cutoff).
+    const periodRows = (key: string) =>
+      billed.filter((b) => b.facility_id === f.id && (b.period || periodOf(b.entered_date ?? "")) === key);
+    const periodSum = (key: string) =>
+      periodRows(key).reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
+    const billedMonth = periodSum(monthKey);
+    const billedThisMonth = billedMonth; // headline = full month-to-date
 
-    // FULL month-to-date (Overview method): by period, no day cutoff.
-    const collectedMonth = payments
-      .filter(
-        (p) =>
-          p.facility_id === f.id &&
-          periodOf(p.deposit_date ?? "", p.payment_entered ?? "", p.period ?? "") === monthKey
-      )
-      .reduce((s, p) => s + (p.paid_amount ?? 0), 0);
-    const billedMonth = billed
-      .filter(
-        (b) => b.facility_id === f.id && (b.period || periodOf(b.entered_date ?? "")) === monthKey
-      )
-      .reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
-    // Match the Overview page exactly, including its edge case: when nothing was
-    // billed this month but money still came in, the rate reads 100% (not 0%).
     const collectionRate =
       billedMonth > 0 ? collectedMonth / billedMonth : collectedMonth > 0 ? 1 : 0;
 
-    // Level-of-care sessions billed each month (through the cutoff day), from the
-    // billed CPT units — the accurate "why" behind a billing swing.
-    const locSessions = (key: string, target: Date) => {
+    // Billing TREND compares the two most recent COMPLETE months (prior vs the
+    // one before it). The current month is only partway through, so comparing it
+    // would always look like a collapse; two finished months is a fair trend.
+    const trendCurBilled = periodSum(priorKey); // e.g. September (complete)
+    const trendPrevBilled = periodSum(prior2Key); // e.g. August (complete)
+    const billedLastMonth = trendPrevBilled;
+    const periodLoc = (key: string) => {
       const acc: Record<string, number> = {};
-      for (const b of billedInMonth(key, target)) {
+      for (const b of periodRows(key)) {
         if (!b.loc_units) continue;
         for (const [fam, u] of Object.entries(b.loc_units)) acc[fam] = (acc[fam] ?? 0) + (Number(u) || 0);
       }
       return acc;
     };
-    const curLoc = locSessions(monthKey, now);
-    const priorLoc = locSessions(priorKey, prior);
+    const curLoc = periodLoc(priorKey);
+    const priorLoc = periodLoc(prior2Key);
     const LOC_ORDER = ["PHP", "IOP", "OP"];
     const locKeys = [
       ...LOC_ORDER.filter((x) => x in curLoc || x in priorLoc),
@@ -774,24 +768,24 @@ export async function computeFacilityRecaps(
       delta: (curLoc[loc] ?? 0) - (priorLoc[loc] ?? 0),
     }));
 
-    // Accurate, data-only trend note (no generic/guessed text).
-    const billedDelta = billedThisMonth - billedLastMonth;
-    const billedPct = billedLastMonth > 0 ? Math.round((billedDelta / billedLastMonth) * 100) : null;
+    // Accurate, data-only trend note (two complete months).
+    const billedDelta = trendCurBilled - trendPrevBilled;
+    const billedPct = trendPrevBilled > 0 ? Math.round((billedDelta / trendPrevBilled) * 100) : null;
     let billingNote = "";
-    if (billedThisMonth > 0 || billedLastMonth > 0) {
-      if (billedLastMonth <= 0) {
-        billingNote = `No billing on file for ${priorMonthLabel} to compare against.`;
+    if (trendCurBilled > 0 || trendPrevBilled > 0) {
+      if (trendPrevBilled <= 0) {
+        billingNote = `No billing on file for ${prior2MonthLabel} to compare against.`;
       } else if (billedDelta === 0) {
-        billingNote = `Billing is unchanged from ${priorMonthLabel}.`;
+        billingNote = `Billing was unchanged from ${prior2MonthLabel} to ${priorMonthLabel}.`;
       } else {
         const dir = billedDelta < 0 ? "down" : "up";
         const movers = locRows
           .filter((r) => (billedDelta < 0 ? r.delta < 0 : r.delta > 0))
           .sort((a, b) => (billedDelta < 0 ? a.delta - b.delta : b.delta - a.delta));
         const top = movers[0];
-        const stem = `Through the same days (${dayRange}), billing is ${dir} ${money(
+        const stem = `${priorMonthLabel} billing was ${dir} ${money(
           Math.abs(billedDelta)
-        )} (${Math.abs(billedPct ?? 0)}%) vs ${priorMonthLabel}.`;
+        )} (${Math.abs(billedPct ?? 0)}%) vs ${prior2MonthLabel}.`;
         billingNote = top
           ? `${stem} Biggest driver: ${top.loc} sessions ${top.cur} vs ${top.prior} (${
               top.delta > 0 ? "+" : ""
@@ -820,6 +814,7 @@ export async function computeFacilityRecaps(
       name: f.short_name || f.name,
       monthLabel,
       priorMonthLabel,
+      prior2MonthLabel,
       dayRange,
       totalAR,
       expectedRevenue: totalAR * EXPECTED_RATE,
@@ -829,6 +824,8 @@ export async function computeFacilityRecaps(
       billedMonth,
       collectionRate,
       billedLastMonth,
+      trendCurBilled,
+      trendPrevBilled,
       billedDelta,
       billedPct,
       locRows,
@@ -1017,14 +1014,14 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
   })();
   const collectedSoFar = `You've collected ${money(r.collectedThisMonth)} so far in ${r.monthLabel}.`;
   let ahead: string;
-  if (r.billedThisMonth <= 0 && r.billedLastMonth <= 0) {
+  if (r.trendCurBilled <= 0 && r.trendPrevBilled <= 0) {
     ahead = collectedSoFar;
   } else if (r.billedDelta > 0) {
-    ahead = `${collectedSoFar} Billing is running ahead of ${r.priorMonthLabel}${topMover}, so collections should pick up over the next month or so as those claims get paid.`;
+    ahead = `${collectedSoFar} Billing rose in ${r.priorMonthLabel} vs ${r.prior2MonthLabel}${topMover}, so collections should pick up over the next month or so as those claims get paid.`;
   } else if (r.billedDelta < 0) {
-    ahead = `${collectedSoFar} Billing is running behind ${r.priorMonthLabel}${topMover}, so collections may be a little lighter over the next month or so.`;
+    ahead = `${collectedSoFar} Billing eased in ${r.priorMonthLabel} vs ${r.prior2MonthLabel}${topMover}, so collections may be a little lighter over the next month or so.`;
   } else {
-    ahead = `${collectedSoFar} Billing is about the same as ${r.priorMonthLabel}, so collections should hold steady over the next month or so.`;
+    ahead = `${collectedSoFar} Billing held about steady from ${r.prior2MonthLabel} to ${r.priorMonthLabel}, so collections should hold steady over the next month or so.`;
   }
 
   // "Billing vs last month" — accurate, data-only (no generic text).
@@ -1040,11 +1037,11 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
     })
     .join("");
   const billingBlock =
-    r.billedThisMonth > 0 || r.billedLastMonth > 0
-      ? `${sectionHead(`Billing vs last month · same days (${r.dayRange})`)}
+    r.trendCurBilled > 0 || r.trendPrevBilled > 0
+      ? `${sectionHead(`Billing trend · ${r.priorMonthLabel} vs ${r.prior2MonthLabel} (last two full months)`)}
           <table style="border-collapse:collapse;width:100%;margin-bottom:2px"><tr>
-            ${statTile(`Billed · ${r.monthLabel} (${r.dayRange})`, money(r.billedThisMonth), INK)}
-            ${statTile(`Billed · ${r.priorMonthLabel} (${r.dayRange})`, money(r.billedLastMonth), INK)}
+            ${statTile(`Billed · ${r.priorMonthLabel}`, money(r.trendCurBilled), INK)}
+            ${statTile(`Billed · ${r.prior2MonthLabel}`, money(r.trendPrevBilled), INK)}
             ${statTile(
               "Change",
               `${r.billedDelta < 0 ? "−" : "+"}${money(Math.abs(r.billedDelta))}`,
@@ -1058,8 +1055,8 @@ export function renderFacilityRecap(r: FacilityRecap, date: string): string {
               ? `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:12px">
                   <thead><tr style="text-align:left;color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:.05em">
                     <th style="padding:4px 0">Level of care</th>
-                    <th style="padding:4px 0;text-align:right">Sessions · ${r.monthLabel} (${r.dayRange})</th>
-                    <th style="padding:4px 0;text-align:right">Sessions · ${r.priorMonthLabel} (${r.dayRange})</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.priorMonthLabel}</th>
+                    <th style="padding:4px 0;text-align:right">Sessions · ${r.prior2MonthLabel}</th>
                     <th style="padding:4px 0;text-align:right">Change</th>
                   </tr></thead><tbody>${billLocRows}</tbody></table>`
               : ""
@@ -1269,6 +1266,8 @@ export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
   const monthLabel = now.toLocaleString("en-US", { month: "short", year: "numeric" });
   const prior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const priorMonthLabel = prior.toLocaleString("en-US", { month: "short", year: "numeric" });
+  const prior2 = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const prior2MonthLabel = prior2.toLocaleString("en-US", { month: "short", year: "numeric" });
   const dayRange = `1–${now.getDate()}`;
   const billedThisMonth = 468200;
   const billedLastMonth = 421050;
@@ -1279,6 +1278,7 @@ export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
     name: "Summit Ridge Recovery (Demo)",
     monthLabel,
     priorMonthLabel,
+    prior2MonthLabel,
     dayRange,
     totalAR: 1284500,
     expectedRevenue: 96400,
@@ -1288,6 +1288,8 @@ export function demoFacilityRecap(now: Date = new Date()): FacilityRecap {
     billedMonth: billedThisMonth,
     collectionRate: billedThisMonth > 0 ? 312800 / billedThisMonth : 0,
     billedLastMonth,
+    trendCurBilled: billedThisMonth,
+    trendPrevBilled: billedLastMonth,
     billedDelta,
     billedPct,
     locRows: [
