@@ -39,12 +39,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Email not configured." }, { status: 503 });
 
   // select("*") so paid_amount is included when present (tolerated when the
-  // partial-payments migration hasn't run yet).
+  // partial-payments migration hasn't run yet). All unpaid invoices, so we can
+  // also clean up sub-dollar residuals regardless of reminder stage.
   const { data: rows } = await admin
     .from("invoices")
     .select("*")
-    .eq("paid", false)
-    .lt("reminders_sent", 3);
+    .eq("paid", false);
   const invoices = (rows ?? []) as {
     id: string;
     facility_id: string;
@@ -73,25 +73,28 @@ export async function GET(request: Request) {
   }
 
   for (const inv of invoices) {
-    const days = Math.floor((now - Date.parse(inv.sent_at)) / DAY);
-    const target = dueMilestone(days);
-    if (target <= inv.reminders_sent) continue; // nothing new due yet
-
     const fac = facById.get(inv.facility_id);
     const facilityName = fac?.short_name || fac?.name || "Facility";
     const label = periodLabel(inv.period);
     // Remind for the remaining balance when a partial payment is on file.
     const paidSoFar = Number(inv.paid_amount) || 0;
     const amount = Math.max(0, (Number(inv.amount) || 0) - paidSoFar);
-    // Fully covered by partials but not flagged paid — advance so it stops.
-    if (amount <= 0) {
+    // Settled within rounding (under $1 remaining): mark it PAID and stop. This
+    // fixes the sub-dollar residual left when a whole-dollar payment is recorded
+    // against a cents invoice amount — which otherwise kept reminders firing on
+    // invoices the owner already considers paid.
+    if (amount < 1) {
       await admin
         .from("invoices")
-        .update({ reminders_sent: 3, last_reminder_at: new Date().toISOString() })
+        .update({ paid: true, paid_at: new Date().toISOString(), reminders_sent: 3, last_reminder_at: new Date().toISOString() })
         .eq("id", inv.id);
       advanced++;
       continue;
     }
+
+    const days = Math.floor((now - Date.parse(inv.sent_at)) / DAY);
+    const target = dueMilestone(days);
+    if (target <= inv.reminders_sent) continue; // nothing new due yet
 
     let to: string[] = [];
     let bcc: string[] = [];
