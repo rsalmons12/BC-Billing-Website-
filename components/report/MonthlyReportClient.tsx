@@ -257,6 +257,76 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       { key: "paid", label: "Paid in full", rows: paid, total: 0, tone: "text-recovered" },
     ];
   }, [ledger]);
+
+  // ---- Year-to-date invoicing by facility: how much each brought in this year,
+  // what's collected vs outstanding, their billing rate, and collection %. ----
+  const ytdYear = new Date().getFullYear();
+  const ytd = useMemo(() => {
+    const byFac = new Map<string, { invoiced: number; collected: number; count: number }>();
+    for (const r of ledger) {
+      if (Number(String(r.period).slice(0, 4)) !== ytdYear) continue; // this calendar year
+      const cur = byFac.get(r.facility_id) ?? { invoiced: 0, collected: 0, count: 0 };
+      const amt = r.amount ?? 0;
+      cur.invoiced += amt;
+      cur.collected += Math.min(r.paid_amount ?? 0, amt);
+      cur.count += 1;
+      byFac.set(r.facility_id, cur);
+    }
+    const rows = facilities
+      .map((f) => {
+        const d = byFac.get(f.id);
+        if (!d || d.count === 0) return null;
+        const flat = f.flat_fee != null && Number(f.flat_fee) > 0 ? Number(f.flat_fee) : null;
+        const outstanding = Math.max(0, d.invoiced - d.collected);
+        return {
+          facility: f.short_name || f.name,
+          billing: flat != null ? `Flat ${money(flat)}/mo` : f.billing_rate != null ? `${f.billing_rate}%` : "—",
+          invoices: d.count,
+          invoiced: Math.round(d.invoiced * 100) / 100,
+          collected: Math.round(d.collected * 100) / 100,
+          outstanding: Math.round(outstanding * 100) / 100,
+          collectionPct: d.invoiced > 0 ? Math.round((d.collected / d.invoiced) * 100) : 0,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r != null)
+      .sort((a, b) => b.collected - a.collected);
+    const totals = rows.reduce(
+      (t, r) => {
+        t.invoices += r.invoices;
+        t.invoiced += r.invoiced;
+        t.collected += r.collected;
+        t.outstanding += r.outstanding;
+        return t;
+      },
+      { invoices: 0, invoiced: 0, collected: 0, outstanding: 0 }
+    );
+    return { rows, totals };
+  }, [ledger, facilities, ytdYear]);
+
+  // Rows for the Excel export (numeric cells so they stay summable in Excel).
+  const ytdExport: ExportRow[] = useMemo(
+    () => [
+      ...ytd.rows.map((r) => ({
+        Facility: r.facility,
+        Billing: r.billing,
+        Invoices: r.invoices,
+        "Invoiced (YTD)": r.invoiced,
+        "Collected (YTD)": r.collected,
+        Outstanding: r.outstanding,
+        "Collection %": r.collectionPct,
+      })),
+      {
+        Facility: "TOTAL",
+        Billing: "",
+        Invoices: ytd.totals.invoices,
+        "Invoiced (YTD)": Math.round(ytd.totals.invoiced * 100) / 100,
+        "Collected (YTD)": Math.round(ytd.totals.collected * 100) / 100,
+        Outstanding: Math.round(ytd.totals.outstanding * 100) / 100,
+        "Collection %": ytd.totals.invoiced > 0 ? Math.round((ytd.totals.collected / ytd.totals.invoiced) * 100) : 0,
+      },
+    ],
+    [ytd]
+  );
   const setPaid = async (id: string, paid: boolean) => {
     const row = ledger.find((r) => r.id === id);
     // Checking "paid" records the full amount; unchecking reopens the balance.
@@ -1116,6 +1186,76 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
                       ))}
                     </Fragment>
                   ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ---- YTD invoicing by facility ---- */}
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-lg font-bold">Invoicing by facility · {ytdYear} YTD</h2>
+            <p className="mt-1 text-sm text-surface-muted">
+              What each facility was invoiced and has paid this year, their billing rate, and collection rate.
+            </p>
+          </div>
+          <ExportButton
+            rows={ytdExport}
+            filename={`YTD-invoicing-${ytdYear}.xlsx`}
+            sheet={`${ytdYear} YTD`}
+            label="Export to Excel"
+          />
+        </div>
+        {ytd.rows.length === 0 ? (
+          <div className="mt-4 text-sm text-surface-muted">No invoices sent this year yet.</div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-muted">
+                  <th className="px-2 py-1.5">Facility</th>
+                  <th className="px-2 py-1.5">Billing</th>
+                  <th className="px-2 py-1.5 text-right">Invoices</th>
+                  <th className="px-2 py-1.5 text-right">Invoiced (YTD)</th>
+                  <th className="px-2 py-1.5 text-right">Collected (YTD)</th>
+                  <th className="px-2 py-1.5 text-right">Outstanding</th>
+                  <th className="px-2 py-1.5 text-right">Collection %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ytd.rows.map((r) => (
+                  <tr key={r.facility} className="border-t border-surface-border">
+                    <td className="px-2 py-1.5 font-medium text-surface-ink">{r.facility}</td>
+                    <td className="px-2 py-1.5 text-surface-muted">{r.billing}</td>
+                    <td className="px-2 py-1.5 text-right font-mono">{r.invoices}</td>
+                    <td className="px-2 py-1.5 text-right font-mono">{money(r.invoiced)}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-recovered">{money(r.collected)}</td>
+                    <td
+                      className={`px-2 py-1.5 text-right font-mono ${
+                        r.outstanding > 0 ? "text-risk" : "text-surface-muted"
+                      }`}
+                    >
+                      {money(r.outstanding)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono">{r.collectionPct}%</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-surface-border font-semibold">
+                  <td className="px-2 py-1.5">TOTAL</td>
+                  <td className="px-2 py-1.5"></td>
+                  <td className="px-2 py-1.5 text-right font-mono">{ytd.totals.invoices}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{money(ytd.totals.invoiced)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-recovered">{money(ytd.totals.collected)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{money(ytd.totals.outstanding)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">
+                    {ytd.totals.invoiced > 0
+                      ? Math.round((ytd.totals.collected / ytd.totals.invoiced) * 100)
+                      : 0}
+                    %
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
