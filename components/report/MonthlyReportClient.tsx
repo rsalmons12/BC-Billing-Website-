@@ -219,8 +219,10 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       const bal = Math.max(0, Math.round((amt - paid) * 100) / 100);
       invoiced += amt;
       collected += paid;
-      outstanding += bal;
-      if (!r.paid) {
+      // A sub-dollar residual counts as settled, not outstanding.
+      const settled = r.paid || bal < 1;
+      if (!settled) {
+        outstanding += bal;
         unpaid += 1;
         if ((r.paid_amount ?? 0) > 0) partial += 1;
       }
@@ -242,7 +244,8 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
     const paid: InvoiceLedger[] = [];
     for (const r of ledger) {
       const bal = Math.max(0, (r.amount ?? 0) - (r.paid_amount ?? 0));
-      if (r.paid || bal <= 0.005) paid.push(r);
+      // Under $1 remaining = settled (ignores sub-dollar rounding residuals).
+      if (r.paid || bal < 1) paid.push(r);
       else if (daysSince(r.sent_at) >= OVERDUE_DAYS) overdue.push(r);
       else awaiting.push(r);
     }
@@ -274,7 +277,7 @@ export default function MonthlyReportClient({ facilities }: { facilities: Facili
       return;
     }
     const paidAmount = Math.round(amt * 100) / 100;
-    const nowFullyPaid = paidAmount >= (r.amount ?? 0) - 0.005;
+    const nowFullyPaid = paidAmount >= (r.amount ?? 0) - 1;
     setLedger((prev) =>
       prev.map((x) =>
         x.id === r.id ? { ...x, paid_amount: paidAmount, paid: nowFullyPaid } : x
