@@ -4,7 +4,6 @@ const ROLE_LABELS: Record<string, string> = {
   management: "Management",
   staff: "Staff · Collector",
   facility: "Facility",
-  hr: "HR / Compliance",
   pending: "Pending",
   suspended: "Suspended",
 };
