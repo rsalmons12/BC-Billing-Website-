@@ -1,4 +1,4 @@
-export type Role = "management" | "staff" | "facility" | "repricer" | "pending" | "suspended";
+export type Role = "management" | "staff" | "facility" | "repricer" | "hr" | "pending" | "suspended";
 
 export interface Facility {
   id: string;
@@ -425,3 +425,52 @@ export const RECORD_STATUS_OPTIONS = [
   "Denied",
   "Approved",
 ];
+
+// ---- HR & Compliance portal (hr.bcbilling.cloud) --------------------------
+export type FacilityLicense = {
+  id: string;
+  facility_id: string;
+  licensing_body: string | null; // the state body that issues the license
+  license_state: string | null;
+  license_type: string | null;
+  license_number: string | null;
+  issued_date: string | null;
+  expires_date: string | null;
+  status: string; // active / pending / expired / revoked
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StaffMember = {
+  id: string;
+  facility_id: string | null; // null = org-wide
+  full_name: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  hire_date: string | null;
+  status: string; // active / inactive / terminated
+  credential_type: string | null;
+  credential_number: string | null;
+  credential_state: string | null;
+  credential_expires: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ComplianceDocument = {
+  id: string;
+  facility_id: string | null;
+  category: string; // policy / audit / incident / license / training / other
+  title: string;
+  path: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+  doc_date: string | null;
+  expires_date: string | null;
+  notes: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+};

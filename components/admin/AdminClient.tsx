@@ -8,7 +8,7 @@ import { JOB_TITLES, type Profile, type Facility, type Assignment, type Role } f
 
 type Tab = "users" | "facilities" | "create";
 
-const ROLES: Role[] = ["management", "staff", "facility", "repricer", "pending", "suspended"];
+const ROLES: Role[] = ["management", "staff", "facility", "repricer", "hr", "pending", "suspended"];
 
 export default function AdminClient({
   initialProfiles,
@@ -528,9 +528,11 @@ function UsersTab({
                 </div>
               )}
 
-              {p.role === "facility" && (
+              {(p.role === "facility" || p.role === "hr") && (
                 <div>
-                  <span className="label">Facility</span>
+                  <span className="label">
+                    {p.role === "hr" ? "Facility (leave blank = org-wide HR)" : "Facility"}
+                  </span>
                   <select
                     value={p.facility_id ?? ""}
                     onChange={(e) =>
@@ -538,7 +540,7 @@ function UsersTab({
                     }
                     className="input min-w-[12rem]"
                   >
-                    <option value="">— select —</option>
+                    <option value="">{p.role === "hr" ? "Org-wide (all facilities)" : "— select —"}</option>
                     {facilities.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.short_name || f.name}
