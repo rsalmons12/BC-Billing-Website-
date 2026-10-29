@@ -1,5 +1,4 @@
 import { requireProfile } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { tabsForProfile } from "@/lib/nav";
 import Sidebar from "@/components/Sidebar";
 import MobileBottomNav from "@/components/MobileBottomNav";
@@ -11,8 +10,6 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { profile } = await requireProfile();
-  // HR / Compliance logins use the separate HR portal, not the main app.
-  if (profile.role === "hr") redirect("/hr");
   const allowed = tabsForProfile(profile).map((t) => t.href);
   const fallback = allowed[0] ?? "/pending";
 

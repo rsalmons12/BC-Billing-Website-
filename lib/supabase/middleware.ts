@@ -85,15 +85,6 @@ export async function updateSession(request: NextRequest) {
       }
     }
 
-    // HR & Compliance portal subdomain (hr.bcbilling.cloud): the portal lives
-    // under /hr. Send the bare host there so the subdomain opens the portal.
-    const host = (request.headers.get("host") || "").toLowerCase();
-    if (/^hr\./.test(host) && (path === "/" || path === "")) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/hr";
-      return NextResponse.redirect(url);
-    }
-
     return supabaseResponse;
   } catch (err) {
     // A transient auth/network failure should never take the whole site down.
