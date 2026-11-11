@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/page";
 import { money } from "@/lib/format";
@@ -151,6 +151,25 @@ export interface TrackerConfig {
   // defaultSortKey when set.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sortCompare?: (a: Record<string, any>, b: Record<string, any>) => number;
+  // Optional KPI summary bar rendered above the table. Receives the currently
+  // filtered rows. Each tile: label, value, optional sub + tone.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  summaryKpis?: (rows: Record<string, any>[]) => {
+    label: string;
+    value: string;
+    sub?: string;
+    tone?: "ink" | "green" | "gold" | "risk" | "blue";
+  }[];
+  // Group the table body into sections by this column's value, in this order
+  // (values not listed fall into a trailing "Other" group). Each section gets a
+  // header with its count and (optional) a totals string.
+  groupByStatus?: {
+    key: string;
+    order: string[];
+    labels?: Record<string, string>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    groupTotals?: (rows: Record<string, any>[]) => string;
+  };
 }
 
 type Row = Record<string, unknown> & { id: string; facility_id: string | null };
@@ -669,6 +688,92 @@ export default function TrackerModule({
     load();
   };
 
+  // Shared row renderer — the flat list and the grouped-by-status body use the
+  // exact same markup, so grouping changes nothing for trackers that don't opt in.
+  const renderRow = (r: Row, i: number) => (
+    <tr key={r.id} className={i % 2 ? "bg-surface/40" : "bg-surface-card"}>
+      <td className="td sticky left-0 bg-inherit">
+        {readOnly ? (
+          <span className="text-xs text-surface-muted">{facName(r.facility_id)}</span>
+        ) : (
+          <select
+            value={r.facility_id ?? ""}
+            onChange={(e) => saveCell(r.id, "facility_id", e.target.value || null)}
+            className="cell-input min-w-[9rem] text-xs"
+          >
+            <option value="">— facility —</option>
+            {facilities.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.short_name || f.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </td>
+      {config.columns.map((c) => (
+        <td key={c.key} className="td">
+          <Cell
+            col={readOnly ? { ...c, editable: false } : c}
+            value={c.compute ? c.compute(r) : r[c.key]}
+            onSave={(v) => saveCell(r.id, c.key, v)}
+          />
+        </td>
+      ))}
+      {hasActions && (
+        <td className="td whitespace-nowrap">
+          {config.archiveKey && config.archiveLabels && (
+            <button
+              onClick={() => saveCell(r.id, config.archiveKey!, !r[config.archiveKey!])}
+              className="mr-2 rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-surface-muted hover:bg-surface"
+            >
+              {r[config.archiveKey] ? config.archiveLabels.unaction : config.archiveLabels.action}
+            </button>
+          )}
+          {isManagement && (
+            <button
+              onClick={() => del(r.id)}
+              className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-risk hover:bg-risk/10"
+            >
+              Delete
+            </button>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+
+  // Optional: group the filtered rows into status sections (negotiations). Rows
+  // keep their current sort order (e.g. date signed newest-first) within a group.
+  const gcfg = config.groupByStatus;
+  const normGroup = (v: unknown) => String(v ?? "").trim();
+  const statusGroups =
+    gcfg != null
+      ? [
+          ...gcfg.order.map((s) => ({
+            key: s,
+            label: gcfg.labels?.[s] ?? (s || "—"),
+            rows: filtered.filter((r) => normGroup(r[gcfg.key]) === s),
+          })),
+          {
+            key: "__other",
+            label: "Other",
+            rows: filtered.filter((r) => !gcfg.order.includes(normGroup(r[gcfg.key]))),
+          },
+        ].filter((g) => g.rows.length > 0)
+      : null;
+
+  const kpis = config.summaryKpis ? config.summaryKpis(filtered) : null;
+  const kpiTone = (t?: string) =>
+    t === "green"
+      ? "text-brand-green"
+      : t === "gold"
+        ? "text-gold"
+        : t === "risk"
+          ? "text-risk"
+          : t === "blue"
+            ? "text-brand-blue"
+            : "text-surface-ink";
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -1106,6 +1211,21 @@ export default function TrackerModule({
         </div>
       )}
 
+      {/* KPI summary bar (opt-in via config.summaryKpis) */}
+      {kpis && kpis.length > 0 && (!drill || drillLevel === "table") && (
+        <div className="grid grid-cols-2 gap-2 px-4 pb-2 sm:grid-cols-3 lg:grid-cols-5">
+          {kpis.map((k) => (
+            <div key={k.label} className="rounded-lg border border-surface-border bg-surface-card p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-muted">
+                {k.label}
+              </div>
+              <div className={`mt-1 font-display text-xl font-bold ${kpiTone(k.tone)}`}>{k.value}</div>
+              {k.sub && <div className="text-[11px] text-surface-muted">{k.sub}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* table */}
       {!config.collapseBy && (!drill || drillLevel === "table") && (
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
@@ -1136,72 +1256,33 @@ export default function TrackerModule({
                 </td>
               </tr>
             )}
+            {!loading && !statusGroups && visible.map((r, i) => renderRow(r, i))}
             {!loading &&
-              visible.map((r, i) => (
-                <tr
-                  key={r.id}
-                  className={i % 2 ? "bg-surface/40" : "bg-surface-card"}
-                >
-                  <td className="td sticky left-0 bg-inherit">
-                    {readOnly ? (
-                      <span className="text-xs text-surface-muted">{facName(r.facility_id)}</span>
-                    ) : (
-                      <select
-                        value={r.facility_id ?? ""}
-                        onChange={(e) =>
-                          saveCell(r.id, "facility_id", e.target.value || null)
-                        }
-                        className="cell-input min-w-[9rem] text-xs"
-                      >
-                        <option value="">— facility —</option>
-                        {facilities.map((f) => (
-                          <option key={f.id} value={f.id}>
-                            {f.short_name || f.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </td>
-                  {config.columns.map((c) => (
-                    <td key={c.key} className="td">
-                      <Cell
-                        col={readOnly ? { ...c, editable: false } : c}
-                        value={c.compute ? c.compute(r) : r[c.key]}
-                        onSave={(v) => saveCell(r.id, c.key, v)}
-                      />
-                    </td>
-                  ))}
-                  {hasActions && (
-                    <td className="td whitespace-nowrap">
-                      {config.archiveKey && config.archiveLabels && (
-                        <button
-                          onClick={() =>
-                            saveCell(
-                              r.id,
-                              config.archiveKey!,
-                              !r[config.archiveKey!]
-                            )
-                          }
-                          className="mr-2 rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-surface-muted hover:bg-surface"
-                        >
-                          {r[config.archiveKey]
-                            ? config.archiveLabels.unaction
-                            : config.archiveLabels.action}
-                        </button>
-                      )}
-                      {isManagement && (
-                        <button
-                          onClick={() => del(r.id)}
-                          className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-risk hover:bg-risk/10"
-                        >
-                          Delete
-                        </button>
+              statusGroups &&
+              statusGroups.map((g) => (
+                <Fragment key={g.key}>
+                  <tr className="bg-surface">
+                    <td
+                      colSpan={config.columns.length + 2}
+                      className="td sticky left-0 border-y border-surface-border py-2"
+                    >
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-surface-ink">
+                        {g.label}
+                      </span>
+                      <span className="ml-2 text-xs text-surface-muted">
+                        {g.rows.length} deal{g.rows.length === 1 ? "" : "s"}
+                      </span>
+                      {gcfg?.groupTotals && (
+                        <span className="ml-2 text-xs text-surface-muted">
+                          · {gcfg.groupTotals(g.rows)}
+                        </span>
                       )}
                     </td>
-                  )}
-                </tr>
+                  </tr>
+                  {g.rows.map((r, i) => renderRow(r, i))}
+                </Fragment>
               ))}
-            {!loading && hidden > 0 && (
+            {!loading && !statusGroups && hidden > 0 && (
               <tr>
                 <td colSpan={config.columns.length + 2} className="td py-3 text-center text-xs text-surface-muted">
                   Showing the first {RENDER_CAP} of {filtered.length} — use the
