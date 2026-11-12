@@ -20,6 +20,8 @@ import {
 
 type Bucket = "all" | "0-35" | "36+" | "120+" | "risk";
 type Worked = "all" | "unworked" | "worked";
+// Note-freshness filter: "stale" = no note OR newest note > 30 days old.
+type NoteAge = "all" | "none" | "noted_stale" | "stale";
 
 // Today as MM/DD/YY — bulk notes are always stamped with the current date.
 function todayStamp(): string {
@@ -86,6 +88,52 @@ export function parseNoteEntries(value: string): { head: string; text: string }[
     .map((e, i) => ({ e, i, d: entryDate(e.head, e.text) }))
     .sort((a, b) => (b.d - a.d) || (a.i - b.i))
     .map((x) => x.e);
+}
+
+// Parse a loose date string (MM/DD/YY, MM/DD/YYYY, or ISO) into epoch ms, or null.
+function parseLooseDate(s: string | null | undefined): number | null {
+  const str = String(s ?? "").trim();
+  if (!str) return null;
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    let y = Number(m[3]);
+    if (y < 100) y += 2000;
+    return new Date(y, Number(m[1]) - 1, Number(m[2])).getTime();
+  }
+  const t = Date.parse(str);
+  return isNaN(t) ? null : t;
+}
+
+// Epoch ms of a claim's most recent note, or null when it has NO written note.
+// Prefers the newest dated note entry; if notes exist but none are dated, falls
+// back to date_worked, then updated_at. Powers the "stale notes" filter.
+function lastNoteTime(w: ClaimWork | null): number | null {
+  if (!w) return null;
+  const notes = (w.notes ?? "").trim();
+  if (!notes) return null; // no written note at all
+  let best = -Infinity;
+  for (const e of parseNoteEntries(notes)) {
+    const t = entryDate(e.head, e.text);
+    if (t > best) best = t;
+  }
+  if (best > -Infinity) return best;
+  return parseLooseDate(w.date_worked) ?? parseLooseDate(w.updated_at);
+}
+
+// A 36+ day claim needs a fresh note; if the last note was entered more than this
+// many days ago (or there's none at all), it needs attention.
+const STALE_NOTE_DAYS = 21;
+
+// Note-freshness buckets for a claim:
+//   "none"        — no written note
+//   "noted_stale" — has a note, but the newest is > STALE_NOTE_DAYS old (or undatable)
+// A claim the user wants to see ("no note OR note gone quiet") is either of these.
+function noteStaleKind(w: ClaimWork | null): "none" | "noted_stale" | "fresh" {
+  const has = (w?.notes ?? "").trim().length > 0;
+  if (!has) return "none";
+  const t = lastNoteTime(w);
+  const days = t == null ? Infinity : Math.floor((Date.now() - t) / 86400000);
+  return days > STALE_NOTE_DAYS ? "noted_stale" : "fresh";
 }
 
 // Best-guess initials from a full name (e.g. "Amanda Ruiz" -> "AR").
@@ -191,6 +239,7 @@ export default function CollectionsClient({
   const [loading, setLoading] = useState(false);
   const [bucket, setBucket] = useState<Bucket>(initialBucket ?? "all");
   const [worked, setWorked] = useState<Worked>("all");
+  const [noteAge, setNoteAge] = useState<NoteAge>("all");
   const [payerF, setPayerF] = useState(initialPayer || "all");
   const [statusF, setStatusF] = useState("all");
   const [search, setSearch] = useState("");
@@ -442,6 +491,16 @@ export default function CollectionsClient({
       if (worked === "worked" && !isWorked(r.work)) return false;
       if (worked === "unworked" && isWorked(r.work)) return false;
 
+      // Note-freshness filter — only applies to aged claims (36+ days); brand-new
+      // claims with no note yet are expected and excluded from these views.
+      if (noteAge !== "all") {
+        if (age < 36) return false;
+        const kind = noteStaleKind(r.work); // "none" | "noted_stale" | "fresh"
+        if (noteAge === "none" && kind !== "none") return false;
+        if (noteAge === "noted_stale" && kind !== "noted_stale") return false;
+        if (noteAge === "stale" && kind === "fresh") return false;
+      }
+
       if (!matchesPayer(r.claim_status, payerF)) return false;
       if (!matchesStatusAction(r.claim_status, statusF)) return false;
 
@@ -453,7 +512,7 @@ export default function CollectionsClient({
       }
       return true;
     });
-  }, [rows, bucket, worked, payerF, statusF, search]);
+  }, [rows, bucket, worked, noteAge, payerF, statusF, search]);
 
   // Payer families present in the loaded claims, for the payer dropdown.
   const payerOptions = useMemo(
@@ -629,6 +688,18 @@ export default function CollectionsClient({
             </button>
           ))}
         </div>
+
+        <select
+          value={noteAge}
+          onChange={(e) => setNoteAge(e.target.value as NoteAge)}
+          className="input max-w-[14rem]"
+          title="Find aged (36+ day) claims with missing or stale notes"
+        >
+          <option value="all">All notes</option>
+          <option value="stale">Needs a note — none or 21+ days (36+ day claims)</option>
+          <option value="none">No note (36+ day claims)</option>
+          <option value="noted_stale">Note 21+ days old (36+ day claims)</option>
+        </select>
 
         <select
           value={payerF}
