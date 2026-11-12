@@ -20,8 +20,6 @@ export const TABS: Tab[] = [
   // Facility logins get AR, Billed, Payments, Census, Historical besides the
   // Overview. "AR" is the read-only claims/receivables board.
   { href: "/collections", label: "AR", icon: "▤", roles: ["management", "staff", "facility"], mobile: true },
-  { href: "/aged", label: "120+ Day Claims", icon: "◔", roles: ["management", "staff"] },
-  { href: "/adjustments", label: "Adjustments", icon: "✎", roles: ["management", "staff"] },
   { href: "/auth-issues", label: "Auth Issues", icon: "✦", roles: ["management", "staff"] },
   { href: "/management", label: "Management", icon: "★", roles: ["management", "staff"] },
   { href: "/authorizations", label: "Authorization", icon: "✓", roles: ["management", "staff", "facility"], mobile: true },
@@ -30,16 +28,10 @@ export const TABS: Tab[] = [
   { href: "/census", label: "Weekly Census", icon: "🗒", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/billed", label: "Billed", icon: "❒", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/payments", label: "Payments", icon: "$", roles: ["management", "staff", "facility"], mobile: true },
-  { href: "/insurance-payments", label: "Insurance Payments", icon: "🏦", roles: ["management", "staff"] },
   { href: "/repricing", label: "Repricing", icon: "◷", roles: ["management", "staff", "repricer"], mobile: true },
-  { href: "/repricing-guide", label: "Repricing Guide", icon: "📘", roles: ["management", "staff", "repricer"], mobile: true },
   { href: "/historical", label: "Historical Data", icon: "≣", roles: ["management", "staff", "facility"], mobile: true },
-  { href: "/attachments", label: "Attachments", icon: "📎", roles: ["management", "staff"] },
-  { href: "/notifications", label: "Email Notifications", icon: "✉", roles: ["management"] },
   { href: "/reporting", label: "Reporting & Analytics", icon: "▲", roles: ["management"] },
   { href: "/monthly-report", label: "Monthly Report", icon: "🗓", roles: ["management"], ownerOnly: true },
-  { href: "/team", label: "Collector Status", icon: "◉", roles: ["management"] },
-  { href: "/lookup", label: "Patient Lookup", icon: "🔎", roles: ["management"] },
   { href: "/import", label: "Weekly Import", icon: "↥", roles: ["management"] },
   { href: "/admin", label: "Admin", icon: "⚙", roles: ["management"], adminOnly: true },
 ];
