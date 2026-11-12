@@ -245,6 +245,49 @@ export default function AuthorizationsClient({
     [supabase]
   );
 
+  // Hand an auth (typically a denial) off into the Medical Records tab. We create
+  // a medical_records row prefilled from the auth — patient, facility, DOS, and a
+  // note tying it back to the auth # / level of care / current status. The record
+  // status is either "Requested" (pull records) or "Appeal" (start an appeal).
+  const sendToMedRecords = useCallback(
+    async (auth: Authorization, recordStatus: "Requested" | "Appeal") => {
+      const verb = recordStatus === "Appeal" ? "appeal" : "records request";
+      setSaveState(`Creating ${verb}…`);
+      const parts = [
+        auth.auth_number ? `Auth #${auth.auth_number}` : null,
+        auth.level_of_care || null,
+        auth.status ? `status: ${auth.status}` : null,
+      ].filter(Boolean);
+      const note = `From Authorizations — ${parts.join(" · ")}.${
+        auth.notes ? ` ${auth.notes}` : ""
+      }`;
+      const { error } = await supabase.from("medical_records").insert({
+        facility_id: auth.facility_id,
+        patient_name: auth.patient_name,
+        dos_from: auth.start_date,
+        dos_to: auth.end_date,
+        record_status: recordStatus,
+        claim_status: auth.status || null,
+        notes: note,
+        updated_by: userId,
+      });
+      if (error) {
+        setSaveState(`Error: ${error.message}`);
+        return;
+      }
+      setSaveState(recordStatus === "Appeal" ? "Appeal started → Medical Records" : "Sent → Medical Records");
+      setTimeout(() => setSaveState(""), 1600);
+      logAuthActivity(supabase, {
+        record_type: "authorization",
+        record_id: auth.id,
+        facility_id: auth.facility_id,
+        action: "update",
+        field: recordStatus === "Appeal" ? "sent_to_appeal" : "sent_to_med_records",
+      });
+    },
+    [supabase, userId]
+  );
+
   // Insert another auth/review for an existing patient (same name + facility).
   // The clinical type (Live / Fax / Initial Live) is required — an auth can't be
   // created without answering how the clinical was submitted.
@@ -670,6 +713,7 @@ export default function AuthorizationsClient({
           onClose={() => setOpenKey(null)}
           onSave={saveField}
           onDelete={del}
+          onSendToMedRecords={sendToMedRecords}
           onAddReview={(clinical) => addReview(openGroup.facility_id, openGroup.name, clinical)}
         />
       )}
@@ -701,6 +745,7 @@ function PatientDetail({
   onClose,
   onSave,
   onDelete,
+  onSendToMedRecords,
   onAddReview,
 }: {
   group: PatientGroup;
@@ -710,6 +755,7 @@ function PatientDetail({
   onClose: () => void;
   onSave: (id: string, key: keyof Authorization, value: unknown) => void;
   onDelete: (id: string) => void;
+  onSendToMedRecords: (auth: Authorization, recordStatus: "Requested" | "Appeal") => void;
   onAddReview: (clinical: string) => void;
 }) {
   // Clinical type must be answered before a new auth/review can be added.
@@ -783,6 +829,7 @@ function PatientDetail({
                 isManagement={isManagement}
                 onSave={onSave}
                 onDelete={onDelete}
+                onSendToMedRecords={onSendToMedRecords}
               />
             ))}
           </div>
@@ -834,6 +881,7 @@ function AuthCard({
   isManagement,
   onSave,
   onDelete,
+  onSendToMedRecords,
 }: {
   auth: Authorization;
   index: number;
@@ -841,9 +889,20 @@ function AuthCard({
   isManagement: boolean;
   onSave: (id: string, key: keyof Authorization, value: unknown) => void;
   onDelete: (id: string) => void;
+  onSendToMedRecords: (auth: Authorization, recordStatus: "Requested" | "Appeal") => void;
 }) {
   const computed = inclusiveDays(auth.start_date, auth.end_date);
   const due = isDueForReview(auth);
+  const [sent, setSent] = useState<"" | "Requested" | "Appeal">("");
+
+  const handleSend = (recordStatus: "Requested" | "Appeal") => {
+    const verb = recordStatus === "Appeal" ? "start an appeal for" : "send records request for";
+    if (!confirm(`Create a Medical Records entry to ${verb} ${auth.patient_name || "this patient"}?`))
+      return;
+    onSendToMedRecords(auth, recordStatus);
+    setSent(recordStatus);
+    setTimeout(() => setSent(""), 2500);
+  };
 
   const field = (
     label: string,
@@ -884,6 +943,28 @@ function AuthCard({
         </div>
         {!readOnly && (
           <div className="flex items-center gap-2">
+            {sent ? (
+              <span className="badge bg-recovered/12 text-recovered">
+                {sent === "Appeal" ? "✓ Appeal → Med Records" : "✓ Sent → Med Records"}
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleSend("Requested")}
+                  title="Create a Medical Records request for this patient"
+                  className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-command hover:bg-command/10"
+                >
+                  → Med Records
+                </button>
+                <button
+                  onClick={() => handleSend("Appeal")}
+                  title="Start an appeal in Medical Records for this patient"
+                  className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-gold hover:bg-gold/10"
+                >
+                  → Appeal
+                </button>
+              </>
+            )}
             <button
               onClick={() => onSave(auth.id, "discharged", !auth.discharged)}
               className="rounded-md border border-surface-border px-2 py-1 text-xs font-semibold text-surface-muted hover:bg-surface"
