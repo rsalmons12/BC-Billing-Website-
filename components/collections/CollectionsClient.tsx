@@ -268,22 +268,34 @@ export default function CollectionsClient({
       return next;
     });
 
+  // Short facility label by id, for the "All facilities" view.
+  const facName = useCallback(
+    (id: string | null) => {
+      const f = facilities.find((x) => x.id === id);
+      return f?.short_name || f?.name || "—";
+    },
+    [facilities]
+  );
+  const allFacilities = facilityId === "all";
+
   const load = useCallback(async () => {
     if (!facilityId) {
       setRows([]);
       return;
     }
     setLoading(true);
-    const claimList = await selectAll<Claim>((f, t) =>
-      supabase
+    const claimList = await selectAll<Claim>((f, t) => {
+      let q = supabase
         .from("claims")
         .select("*")
-        .eq("facility_id", facilityId)
-        .eq("present", true)
+        .eq("present", true);
+      // "all" sweeps every facility (RLS still scopes facility logins to their own).
+      if (facilityId !== "all") q = q.eq("facility_id", facilityId);
+      return q
         .order("age_days", { ascending: false })
         .order("patient_name", { ascending: true })
-        .range(f, t)
-    );
+        .range(f, t);
+    });
     // Excluded plans (e.g. VMAH member ids) are hidden from Collections entirely.
     const visibleClaims = claimList.filter(
       (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
@@ -553,7 +565,10 @@ export default function CollectionsClient({
     const order: string[] = [];
     const map = new Map<string, ClaimRow[]>();
     for (const r of filtered) {
-      const key = (r.patient_name || "—").trim();
+      const name = (r.patient_name || "—").trim();
+      // Across all facilities, qualify the group key by facility so two patients
+      // who share a name at different facilities don't merge into one group.
+      const key = allFacilities ? `${r.facility_id ?? ""}||${name}` : name;
       if (!map.has(key)) {
         map.set(key, []);
         order.push(key);
@@ -562,7 +577,7 @@ export default function CollectionsClient({
     }
     const items: Array<
       | { kind: "row"; r: ClaimRow }
-      | { kind: "group"; key: string; rows: ClaimRow[]; charge: number; balance: number; maxAge: number }
+      | { kind: "group"; key: string; name: string; facility_id: string | null; rows: ClaimRow[]; charge: number; balance: number; maxAge: number }
     > = [];
     for (const key of order) {
       const grp = map.get(key)!;
@@ -578,11 +593,20 @@ export default function CollectionsClient({
         balance += r.balance ?? 0;
         maxAge = Math.max(maxAge, r.age_days ?? 0);
       }
-      items.push({ kind: "group", key, rows: grp, charge, balance, maxAge });
+      items.push({
+        kind: "group",
+        key,
+        name: (grp[0].patient_name || "—").trim(),
+        facility_id: grp[0].facility_id,
+        rows: grp,
+        charge,
+        balance,
+        maxAge,
+      });
       if (expanded.has(key)) for (const r of grp) items.push({ kind: "row", r });
     }
     return items;
-  }, [filtered, groupByPatient, expanded]);
+  }, [filtered, groupByPatient, expanded, allFacilities]);
 
   const RENDER_CAP = 400;
   const visibleItems = displayItems.slice(0, RENDER_CAP);
@@ -590,14 +614,16 @@ export default function CollectionsClient({
 
   const exportXlsx = async () => {
     const XLSX = await import("xlsx");
-    const facLabel =
-      facilities.find((f) => f.id === facilityId)?.short_name ||
-      facilities.find((f) => f.id === facilityId)?.name ||
-      "facility";
+    const facLabel = allFacilities
+      ? "all-facilities"
+      : facilities.find((f) => f.id === facilityId)?.short_name ||
+        facilities.find((f) => f.id === facilityId)?.name ||
+        "facility";
     const data = filtered.map((r) => {
       const w = r.work ?? EMPTY_WORK(r.claim_id);
       return {
         Patient: r.patient_name ?? "",
+        Facility: facName(r.facility_id),
         "Member ID": r.member_id ?? "",
         "Claim #": w.claim_number,
         "Ref #": w.reference_number,
@@ -626,6 +652,9 @@ export default function CollectionsClient({
     XLSX.writeFile(wb, `collections-${facLabel}.xlsx`);
   };
 
+  // Table spans one extra column (Facility) in the all-facilities view.
+  const COLS = allFacilities ? 20 : 19;
+
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
@@ -636,6 +665,7 @@ export default function CollectionsClient({
           className="input max-w-[16rem]"
         >
           {facilities.length === 0 && <option value="">No facilities</option>}
+          {facilities.length > 1 && <option value="all">All facilities</option>}
           {facilities.map((f) => (
             <option key={f.id} value={f.id}>
               {f.short_name || f.name}
@@ -806,6 +836,7 @@ export default function CollectionsClient({
           <thead className="sticky top-0 z-10 bg-surface">
             <tr>
               <th className="th sticky left-0 bg-surface">Patient</th>
+              {allFacilities && <th className="th">Facility</th>}
               <th className="th">Member ID</th>
               <th className="th">Claim #</th>
               <th className="th">Ref #</th>
@@ -829,14 +860,14 @@ export default function CollectionsClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={19} className="td py-10 text-center text-surface-muted">
+                <td colSpan={COLS} className="td py-10 text-center text-surface-muted">
                   Loading claims…
                 </td>
               </tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={19} className="td py-10 text-center text-surface-muted">
+                <td colSpan={COLS} className="td py-10 text-center text-surface-muted">
                   No claims match the current filters.
                 </td>
               </tr>
@@ -850,14 +881,19 @@ export default function CollectionsClient({
                   return (
                     <Fragment key={`g-${g.key}`}>
                       <tr className="bg-command/[0.04]">
-                        <td colSpan={19} className="td">
+                        <td colSpan={COLS} className="td">
                           <div className="flex w-full items-center gap-3">
                             <button
                               onClick={() => toggleGroup(g.key)}
                               className="flex flex-1 items-center gap-3 text-left"
                             >
                               <span className="w-3 text-gold">{isOpen ? "▾" : "▸"}</span>
-                              <span className="font-semibold">{g.key}</span>
+                              <span className="font-semibold">{g.name}</span>
+                              {allFacilities && (
+                                <span className="badge bg-command/10 text-command">
+                                  {facName(g.facility_id)}
+                                </span>
+                              )}
                               <span className="badge bg-surface text-surface-muted">
                                 {g.rows.length} claims
                               </span>
@@ -868,7 +904,7 @@ export default function CollectionsClient({
                               </span>
                             </button>
                             <button
-                              onClick={() => setLedgerKey(g.key)}
+                              onClick={() => setLedgerKey(g.name)}
                               className="badge whitespace-nowrap border border-command/40 bg-surface px-2.5 py-1 text-[11px] font-semibold text-command"
                               title="Open this patient's full ledger — every claim and note in one place"
                             >
@@ -892,10 +928,10 @@ export default function CollectionsClient({
                       </tr>
                       {panelOpen && (
                         <tr className="bg-command/[0.06]">
-                          <td colSpan={19} className="td">
+                          <td colSpan={COLS} className="td">
                             <div className="space-y-2 p-1">
                               <div className="text-xs font-semibold">
-                                Attach one note to the selected dates of service — {g.key}
+                                Attach one note to the selected dates of service — {g.name}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 {g.rows.map((r) => {
@@ -1010,6 +1046,11 @@ export default function CollectionsClient({
                         {r.patient_name || "—"}
                       </button>
                     </td>
+                    {allFacilities && (
+                      <td className="td text-xs text-surface-muted">
+                        {facName(r.facility_id)}
+                      </td>
+                    )}
                     <td className="td font-mono text-xs text-surface-muted">
                       {r.member_id || "—"}
                     </td>
@@ -1162,7 +1203,7 @@ export default function CollectionsClient({
               })}
             {!loading && hiddenCount > 0 && (
               <tr>
-                <td colSpan={19} className="td py-3 text-center text-xs text-surface-muted">
+                <td colSpan={COLS} className="td py-3 text-center text-xs text-surface-muted">
                   Showing the first {RENDER_CAP} of {displayItems.length} —
                   narrow with a bucket, search, or collapse patient groups to see
                   the rest.
