@@ -23,7 +23,7 @@ const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 // Row shapes the rate builder needs (server-side).
 export type PayRow = { patient_name: string | null; paid_amount: number | null };
 export type BilledRow = { patient_name: string | null; total_amount: number | null; payer_name: string | null };
-export type ClaimPayerRow = { patient_name: string | null; claim_status: string | null };
+export type ClaimPayerRow = { patient_name: string | null; claim_status: string | null; balance: number | null };
 
 // Compact, client-safe rate table (small: one entry per payer + per patient).
 export type PayerBreakdownRow = { payer: string; paid: number; billed: number; rate: number };
@@ -35,16 +35,25 @@ export type ProjectionRates = {
 };
 
 // Build the rate table from payment history, billed history, and open claims.
+//
+// Collection rate = paid ÷ RESOLVED billed, where resolved billed = total billed
+// minus the amount still sitting in open claims. Open claims haven't had a chance
+// to pay yet, so including them in the denominator understates the rate badly
+// (a patient billed $175k with $120k still open and $16k collected is at ~29% on
+// resolved work, not 9% on everything ever billed).
 export function buildRates(
   payments: PayRow[],
   billed: BilledRow[],
   claims: ClaimPayerRow[]
 ): ProjectionRates {
-  // Patient -> payer family, taken from the open claims (the payer we'll bill).
+  // Patient -> payer family + current open balance, from the open claims.
   const patientPayer = new Map<string, string>();
+  const openBalByPatient = new Map<string, number>();
   for (const c of claims) {
     const k = nameKey(c.patient_name);
-    if (k && !patientPayer.has(k)) patientPayer.set(k, payerBucket(c.claim_status));
+    if (!k) continue;
+    if (!patientPayer.has(k)) patientPayer.set(k, payerBucket(c.claim_status));
+    openBalByPatient.set(k, (openBalByPatient.get(k) ?? 0) + (Number(c.balance) || 0));
   }
   const claimNames = new Set(patientPayer.keys());
 
@@ -61,50 +70,48 @@ export function buildRates(
     if (claimNames.has(k)) paidMatched += paid;
   }
 
-  // Billed per patient (the charge denominator).
+  // Billed per patient + the patient's payer from billed_claims (fallback).
   const billedByPatient = new Map<string, number>();
+  const billedPayerByPatient = new Map<string, string>();
   for (const b of billed) {
     const k = nameKey(b.patient_name);
     if (!k) continue;
     billedByPatient.set(k, (billedByPatient.get(k) ?? 0) + (Number(b.total_amount) || 0));
+    const pb = payerBucket(b.payer_name);
+    if (pb !== "Other" && !billedPayerByPatient.has(k)) billedPayerByPatient.set(k, pb);
   }
 
-  // Payer-level paid (bridged via the patient's payer) and billed (billed_claims'
-  // own payer_name, falling back to the patient's claim payer).
-  const paidByPayer = new Map<string, number>();
-  for (const p of payments) {
-    const payer = patientPayer.get(nameKey(p.patient_name));
-    if (!payer) continue;
-    paidByPayer.set(payer, (paidByPayer.get(payer) ?? 0) + (Number(p.paid_amount) || 0));
-  }
-  const billedByPayer = new Map<string, number>();
-  for (const b of billed) {
-    const k = nameKey(b.patient_name);
-    const pb = payerBucket(b.payer_name);
-    const payer = pb !== "Other" ? pb : patientPayer.get(k) ?? "Other";
-    billedByPayer.set(payer, (billedByPayer.get(payer) ?? 0) + (Number(b.total_amount) || 0));
+  // Per-patient resolved billed → patient rate, and payer aggregates over the
+  // SAME patient population (consistent numerator/denominator).
+  const patientRate: Record<string, number> = {};
+  const payerPaid = new Map<string, number>();
+  const payerResolvedBilled = new Map<string, number>();
+  const everyPatient = new Set([...billedByPatient.keys(), ...paidByPatient.keys()]);
+  for (const k of everyPatient) {
+    const paidP = paidByPatient.get(k) ?? 0;
+    const billedP = billedByPatient.get(k) ?? 0;
+    const openP = openBalByPatient.get(k) ?? 0;
+    const resolvedBilled = Math.max(0, billedP - openP); // exclude in-flight open claims
+    const payer = patientPayer.get(k) ?? billedPayerByPatient.get(k) ?? "Other";
+    if (resolvedBilled > 0) {
+      payerPaid.set(payer, (payerPaid.get(payer) ?? 0) + paidP);
+      payerResolvedBilled.set(payer, (payerResolvedBilled.get(payer) ?? 0) + resolvedBilled);
+      if (resolvedBilled >= MIN_PATIENT_BILLED && paidP <= resolvedBilled) {
+        patientRate[k] = clamp01(paidP / resolvedBilled);
+      }
+    }
   }
 
   const payerRate: Record<string, number> = {};
   const payerBreakdown: PayerBreakdownRow[] = [];
-  for (const payer of new Set([...paidByPayer.keys(), ...billedByPayer.keys()])) {
-    const paid = paidByPayer.get(payer) ?? 0;
-    const b = billedByPayer.get(payer) ?? 0;
+  for (const payer of new Set([...payerPaid.keys(), ...payerResolvedBilled.keys()])) {
+    const paid = payerPaid.get(payer) ?? 0;
+    const b = payerResolvedBilled.get(payer) ?? 0;
     const rate = b > 0 ? clamp01(paid / b) : 0;
     payerRate[payer] = rate;
     payerBreakdown.push({ payer, paid: Math.round(paid), billed: Math.round(b), rate });
   }
   payerBreakdown.sort((a, b) => b.paid - a.paid);
-
-  // Patient-level rates, only where there's enough billed history and the numbers
-  // are sane (paid ≤ billed — otherwise billed history is incomplete, use payer).
-  const patientRate: Record<string, number> = {};
-  for (const [k, billedP] of billedByPatient) {
-    if (billedP < MIN_PATIENT_BILLED) continue;
-    const paidP = paidByPatient.get(k) ?? 0;
-    if (paidP > billedP) continue;
-    patientRate[k] = clamp01(paidP / billedP);
-  }
 
   return {
     payerRate,

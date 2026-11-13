@@ -206,10 +206,10 @@ export default function ProjectionsClient({
           />
         </div>
         <p className="mt-1 text-[11px] text-surface-muted">
-          Expected revenue = each open balance × its historical collection rate (paid ÷ billed,
-          matched by patient name) — that patient&apos;s own rate first, then the payer family. These
-          are net collection rates on billed charges, so they read low (typically 5–25% for
-          out-of-network). {rates ? `${rates.meta.paidMatchedPct}% of payment dollars matched a current patient.` : ""}
+          Expected revenue = each open balance × its historical collection rate (paid ÷ resolved
+          billed, matched by patient name) — that patient&apos;s own rate first, then the payer
+          family. &quot;Resolved&quot; excludes still-open claims from the denominator so the rate
+          reflects closed business, not work in flight. {rates ? `${rates.meta.paidMatchedPct}% of payment dollars matched a current patient.` : ""}
         </p>
         {summary.payerRows.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">

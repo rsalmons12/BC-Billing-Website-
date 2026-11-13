@@ -58,9 +58,10 @@ export async function GET(request: Request) {
     const bs = billed.filter((b) => matchName(b.patient_name));
     const paidSum = ps.reduce((s, p) => s + (Number(p.paid_amount) || 0), 0);
     const billedSum = bs.reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
-    const chargeSum = cs.reduce((s, c) => s + (Number(c.charge_amount) || 0), 0);
     const balanceSum = cs.reduce((s, c) => s + (Number(c.balance) || 0), 0);
-    const patientRate = billedSum > 0 ? +(paidSum / billedSum).toFixed(3) : null;
+    const resolvedBilled = Math.max(0, billedSum - balanceSum);
+    const rawRate = billedSum > 0 ? +(paidSum / billedSum).toFixed(3) : null;
+    const resolvedRate = resolvedBilled > 0 ? +(paidSum / resolvedBilled).toFixed(3) : null;
     return NextResponse.json({
       patient: patientParam,
       openClaims: cs.map((c) => ({ charge: c.charge_amount, balance: c.balance, status: c.claim_status, payer: payerBucket(c.claim_status) })),
@@ -68,11 +69,13 @@ export async function GET(request: Request) {
       paidSum: Math.round(paidSum),
       billedLines: bs.length,
       billedSum: Math.round(billedSum),
-      openChargeSum: Math.round(chargeSum),
       openBalanceSum: Math.round(balanceSum),
-      patientRate_paidOverBilled: patientRate,
-      wouldUsePatientRate: billedSum >= 2000 && paidSum <= billedSum,
-      note: "If wouldUsePatientRate is false, the claim falls back to the payer rate. patientRate × openBalance ≈ the Expected $ you'd see.",
+      resolvedBilled: Math.round(resolvedBilled),
+      rate_paidOverAllBilled: rawRate,
+      rate_paidOverResolvedBilled: resolvedRate,
+      wouldUsePatientRate: resolvedBilled >= 2000 && paidSum <= resolvedBilled,
+      expectedOnOneClaim_example: resolvedRate != null && cs[0] ? Math.round((Number(cs[0].balance) || 0) * resolvedRate) : null,
+      note: "The tab now uses rate_paidOverResolvedBilled (open claims removed from the denominator) × each open balance.",
     });
   }
 

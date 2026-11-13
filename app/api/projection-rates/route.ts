@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     return q.range(f, t);
   });
   const claims = await selectAll<any>((f, t) => {
-    let q = supabase.from("claims").select("patient_name,claim_status,facility_id").eq("present", true);
+    let q = supabase.from("claims").select("patient_name,claim_status,balance,facility_id").eq("present", true);
     if (scoped) q = q.eq("facility_id", fid);
     return q.range(f, t);
   });
