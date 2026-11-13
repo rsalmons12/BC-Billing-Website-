@@ -16,6 +16,7 @@ import {
   type ClaimWork,
   type ClaimRow,
   type Facility,
+  type Payment,
 } from "@/lib/types";
 
 type Bucket = "all" | "0-35" | "36+" | "120+" | "risk";
@@ -136,6 +137,43 @@ function noteStaleKind(w: ClaimWork | null): "none" | "noted_stale" | "fresh" {
   return days > STALE_NOTE_DAYS ? "noted_stale" : "fresh";
 }
 
+// ---------------------------------------------------------------------------
+// Projected revenue — historical collection rates (paid ÷ charged) built from a
+// facility's uploaded payment history, applied to open balances.
+//   rate source:  the member's own history first; if the member has little/no
+//                 history, the claim's payer family; if neither, no projection.
+// ---------------------------------------------------------------------------
+type RateAgg = { charge: number; paid: number };
+type RateBook = { member: Map<string, RateAgg>; payer: Map<string, RateAgg> };
+type ClaimProjection = { expected: number; rate: number | null; source: "member" | "payer" | "none" };
+
+// Need at least this much member charge history before trusting the member's own
+// rate — otherwise a single tiny line could swing a big balance. Falls back to payer.
+const MIN_MEMBER_CHARGE = 200;
+
+// Normalize a member id for matching across the claims and payments tables.
+function normMember(s: unknown): string {
+  return String(s ?? "").trim().toUpperCase().replace(/[\s-]/g, "");
+}
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+function projectClaim(r: ClaimRow, book: RateBook | null): ClaimProjection {
+  if (!book) return { expected: 0, rate: null, source: "none" };
+  const bal = Number(r.balance) || 0;
+  const mk = normMember(r.member_id);
+  const m = mk ? book.member.get(mk) : undefined;
+  if (m && m.charge >= MIN_MEMBER_CHARGE) {
+    const rate = clamp01(m.paid / m.charge);
+    return { expected: bal * rate, rate, source: "member" };
+  }
+  const p = book.payer.get(payerBucket(r.claim_status));
+  if (p && p.charge > 0) {
+    const rate = clamp01(p.paid / p.charge);
+    return { expected: bal * rate, rate, source: "payer" };
+  }
+  return { expected: 0, rate: null, source: "none" };
+}
+
 // Best-guess initials from a full name (e.g. "Amanda Ruiz" -> "AR").
 function deriveInitials(name: string): string {
   return name
@@ -246,6 +284,11 @@ export default function CollectionsClient({
   const [saveState, setSaveState] = useState<string>("");
   const [groupByPatient, setGroupByPatient] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Projected revenue: off by default. When on, we load the facility's payment
+  // history and project each open balance from historical collection rates.
+  const [projection, setProjection] = useState(false);
+  const [projBook, setProjBook] = useState<{ key: string; book: RateBook } | null>(null);
+  const [projLoading, setProjLoading] = useState(false);
   // Patient ledger drawer: the patient whose full history is open (or null).
   const [ledgerKey, setLedgerKey] = useState<string | null>(null);
 
@@ -323,6 +366,56 @@ export default function CollectionsClient({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Build the collection-rate book from payment history for the current facility
+  // scope, once per scope, only while projection is on. Member rate = that
+  // member's paid÷charged; payer rate = the payer family's paid÷charged.
+  useEffect(() => {
+    if (!projection || !facilityId) return;
+    const key = facilityId;
+    if (projBook?.key === key) return; // cached for this scope
+    let cancelled = false;
+    (async () => {
+      setProjLoading(true);
+      type PayRow = Pick<
+        Payment,
+        "member_id" | "payment_source" | "charge_amount" | "paid_amount" | "facility_id"
+      >;
+      const pays = await selectAll<PayRow>((f, t) => {
+        let q = supabase
+          .from("payments")
+          .select("member_id,payment_source,charge_amount,paid_amount,facility_id");
+        if (facilityId !== "all") q = q.eq("facility_id", facilityId);
+        return q.range(f, t);
+      }).catch(() => [] as PayRow[]);
+      const member = new Map<string, RateAgg>();
+      const payer = new Map<string, RateAgg>();
+      for (const p of pays) {
+        const charge = Number(p.charge_amount) || 0;
+        const paid = Number(p.paid_amount) || 0;
+        if (charge <= 0 && paid <= 0) continue;
+        const mk = normMember(p.member_id);
+        if (mk) {
+          const e = member.get(mk) ?? { charge: 0, paid: 0 };
+          e.charge += charge;
+          e.paid += paid;
+          member.set(mk, e);
+        }
+        const pk = payerBucket(p.payment_source);
+        const e2 = payer.get(pk) ?? { charge: 0, paid: 0 };
+        e2.charge += charge;
+        e2.paid += paid;
+        payer.set(pk, e2);
+      }
+      if (!cancelled) {
+        setProjBook({ key, book: { member, payer } });
+        setProjLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projection, facilityId, supabase, projBook]);
 
   // Persist a partial claim_work change (upsert by claim_id).
   const saveWork = useCallback(
@@ -555,6 +648,48 @@ export default function CollectionsClient({
     return { charge, balance, risk, count: filtered.length };
   }, [filtered]);
 
+  // The active rate book (null unless projection is on and loaded).
+  const book = projection ? projBook?.book ?? null : null;
+
+  // Projection per claim_id, computed over every loaded row.
+  const projByClaim = useMemo(() => {
+    const m = new Map<string, ClaimProjection>();
+    if (!book) return m;
+    for (const r of rows) m.set(r.claim_id, projectClaim(r, book));
+    return m;
+  }, [rows, book]);
+
+  // Projection rollup over the filtered set: expected $, blended rate, how many
+  // claims are projected vs. left blank for lack of history, and a payer split.
+  const projTotals = useMemo(() => {
+    let expected = 0;
+    let projectedBalance = 0; // balance of claims that DID get a projection
+    let projectedCount = 0;
+    let blankCount = 0;
+    const byPayer = new Map<string, { balance: number; expected: number }>();
+    for (const r of filtered) {
+      const pr = projByClaim.get(r.claim_id);
+      const bal = Number(r.balance) || 0;
+      if (!pr || pr.source === "none") {
+        blankCount++;
+      } else {
+        expected += pr.expected;
+        projectedBalance += bal;
+        projectedCount++;
+        const pk = payerBucket(r.claim_status);
+        const e = byPayer.get(pk) ?? { balance: 0, expected: 0 };
+        e.balance += bal;
+        e.expected += pr.expected;
+        byPayer.set(pk, e);
+      }
+    }
+    const blendedRate = projectedBalance > 0 ? expected / projectedBalance : 0;
+    const payerRows = Array.from(byPayer.entries())
+      .map(([payer, v]) => ({ payer, ...v, rate: v.balance > 0 ? v.expected / v.balance : 0 }))
+      .sort((a, b) => b.expected - a.expected);
+    return { expected, projectedBalance, projectedCount, blankCount, blendedRate, payerRows };
+  }, [filtered, projByClaim]);
+
   // Build the rendered rows: when grouping, a patient's claims collapse into a
   // single header row (huge speed win on big facilities) that expands on click.
   // Single-claim patients render as a normal row.
@@ -577,7 +712,7 @@ export default function CollectionsClient({
     }
     const items: Array<
       | { kind: "row"; r: ClaimRow }
-      | { kind: "group"; key: string; name: string; facility_id: string | null; rows: ClaimRow[]; charge: number; balance: number; maxAge: number }
+      | { kind: "group"; key: string; name: string; facility_id: string | null; rows: ClaimRow[]; charge: number; balance: number; maxAge: number; projected: number }
     > = [];
     for (const key of order) {
       const grp = map.get(key)!;
@@ -588,10 +723,12 @@ export default function CollectionsClient({
       let charge = 0;
       let balance = 0;
       let maxAge = 0;
+      let projected = 0;
       for (const r of grp) {
         charge += r.charge_amount ?? 0;
         balance += r.balance ?? 0;
         maxAge = Math.max(maxAge, r.age_days ?? 0);
+        projected += projByClaim.get(r.claim_id)?.expected ?? 0;
       }
       items.push({
         kind: "group",
@@ -602,11 +739,12 @@ export default function CollectionsClient({
         charge,
         balance,
         maxAge,
+        projected,
       });
       if (expanded.has(key)) for (const r of grp) items.push({ kind: "row", r });
     }
     return items;
-  }, [filtered, groupByPatient, expanded, allFacilities]);
+  }, [filtered, groupByPatient, expanded, allFacilities, projByClaim]);
 
   const RENDER_CAP = 400;
   const visibleItems = displayItems.slice(0, RENDER_CAP);
@@ -632,6 +770,16 @@ export default function CollectionsClient({
         "DOS To": r.dos_to ?? "",
         Charge: r.charge_amount ?? 0,
         Balance: r.balance ?? 0,
+        ...(projection
+          ? (() => {
+              const pr = projByClaim.get(r.claim_id);
+              return {
+                "Expected $": pr && pr.source !== "none" ? Math.round(pr.expected) : "",
+                "Est. Rate": pr && pr.rate != null ? `${Math.round(pr.rate * 100)}%` : "",
+                Basis: pr?.source === "member" ? "Member" : pr?.source === "payer" ? "Payer" : "",
+              };
+            })()
+          : {}),
         Status: r.claim_status ?? "",
         "Med Rec": w.med_rec,
         Auth: w.auth_flag,
@@ -652,8 +800,9 @@ export default function CollectionsClient({
     XLSX.writeFile(wb, `collections-${facLabel}.xlsx`);
   };
 
-  // Table spans one extra column (Facility) in the all-facilities view.
-  const COLS = allFacilities ? 20 : 19;
+  // Base 19 columns, +1 for Facility (all-facilities view), +1 for Expected $
+  // (projection on).
+  const COLS = 19 + (allFacilities ? 1 : 0) + (projection ? 1 : 0);
 
   return (
     <div className="flex h-full flex-col">
@@ -787,6 +936,17 @@ export default function CollectionsClient({
           </button>
         )}
         <button
+          onClick={() => setProjection((p) => !p)}
+          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${
+            projection
+              ? "border-recovered bg-recovered/15 text-recovered"
+              : "border-surface-border text-surface-muted hover:bg-surface"
+          }`}
+          title="Project expected revenue from payment history: member rate first, then payer, applied to open balances"
+        >
+          {projLoading ? "Projecting…" : projection ? "✓ Projection" : "$ Projection"}
+        </button>
+        <button
           onClick={exportXlsx}
           disabled={filtered.length === 0}
           className="rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-semibold text-surface-muted hover:bg-surface disabled:opacity-50"
@@ -830,6 +990,47 @@ export default function CollectionsClient({
         <SumCard label="Risk 65+" value={String(totals.risk)} accent="risk" />
       </div>
 
+      {/* projection summary — only when the Projection toggle is on */}
+      {projection && (
+        <div className="border-b border-surface-border bg-surface px-6 py-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <SumCard label="Open balance" value={money(totals.balance)} accent="gold" />
+            <SumCard
+              label="Projected revenue"
+              value={projLoading ? "…" : money(projTotals.expected)}
+              accent="recovered"
+            />
+            <SumCard
+              label="Expected rate"
+              value={projLoading ? "…" : `${Math.round(projTotals.blendedRate * 100)}%`}
+            />
+            <SumCard
+              label="Projected / blank"
+              value={`${projTotals.projectedCount} / ${projTotals.blankCount}`}
+            />
+          </div>
+          {!projLoading && (
+            <p className="mt-1 text-[11px] text-surface-muted">
+              Expected revenue = each open balance × its historical collection rate
+              (that member&apos;s paid÷charged first, then the payer family). {projTotals.blankCount}{" "}
+              claim{projTotals.blankCount === 1 ? "" : "s"} with no member or payer history{" "}
+              {projTotals.blankCount === 1 ? "is" : "are"} left out of the projection.
+            </p>
+          )}
+          {projTotals.payerRows.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {projTotals.payerRows.map((p) => (
+                <span key={p.payer} className="badge bg-recovered/10 text-recovered">
+                  {p.payer}: <b className="ml-1">{money(p.expected)}</b>
+                  <span className="mx-1 opacity-50">·</span>
+                  {Math.round(p.rate * 100)}%
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* table */}
       <div className="scroll-x min-h-0 flex-1 overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
@@ -844,6 +1045,7 @@ export default function CollectionsClient({
               <th className="th">DOS</th>
               <th className="th text-right">Charge</th>
               <th className="th text-right">Balance</th>
+              {projection && <th className="th text-right">Expected $</th>}
               <th className="th">Status</th>
               <th className="th">Med Rec</th>
               <th className="th">Auth</th>
@@ -901,6 +1103,12 @@ export default function CollectionsClient({
                               <span className="ml-auto font-mono text-xs text-surface-muted">
                                 charge {money(g.charge)} · bal{" "}
                                 <b className="text-surface-ink">{money(g.balance)}</b>
+                                {projection && (
+                                  <>
+                                    {" "}· exp{" "}
+                                    <b className="text-recovered">{money(g.projected)}</b>
+                                  </>
+                                )}
                               </span>
                             </button>
                             <button
@@ -1085,6 +1293,29 @@ export default function CollectionsClient({
                     <td className="td text-right font-mono font-semibold">
                       {money(r.balance)}
                     </td>
+                    {projection &&
+                      (() => {
+                        const pr = projByClaim.get(r.claim_id);
+                        if (!pr || pr.source === "none")
+                          return (
+                            <td className="td text-right font-mono text-surface-muted">—</td>
+                          );
+                        return (
+                          <td className="td text-right font-mono text-recovered">
+                            {money(pr.expected)}
+                            <span
+                              className="ml-1 text-[9px] uppercase opacity-60"
+                              title={
+                                pr.source === "member"
+                                  ? "Based on this member's own payment history"
+                                  : "Based on the payer family's average collection rate"
+                              }
+                            >
+                              {pr.source === "member" ? "M" : "P"}
+                            </span>
+                          </td>
+                        );
+                      })()}
                     <td className="td">
                       <StatusCell
                         value={r.claim_status ?? ""}
