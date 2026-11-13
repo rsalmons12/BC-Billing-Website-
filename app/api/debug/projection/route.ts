@@ -44,6 +44,38 @@ export async function GET(request: Request) {
     admin.from("billed_claims").select("facility_id,patient_name,total_amount,payer_name").range(f, t)
   )).filter((b) => match(b.facility_id));
 
+  // One-patient drill-down: ?patient=SPECK — shows exactly why a claim projects
+  // the way it does (bridged paid, billed, claim charge, both candidate rates).
+  const patientParam = new URL(request.url).searchParams.get("patient") ?? "";
+  if (patientParam) {
+    const want = patientParam.toUpperCase().match(/[A-Z]+/g)?.sort().join("") ?? "";
+    const matchName = (s: unknown) => {
+      const k = String(s ?? "").toUpperCase().match(/[A-Z]+/g)?.sort().join("") ?? "";
+      return k && (k === want || k.includes(want) || want.includes(k));
+    };
+    const cs = claims.filter((c) => matchName(c.patient_name));
+    const ps = pays.filter((p) => matchName(p.patient_name));
+    const bs = billed.filter((b) => matchName(b.patient_name));
+    const paidSum = ps.reduce((s, p) => s + (Number(p.paid_amount) || 0), 0);
+    const billedSum = bs.reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
+    const chargeSum = cs.reduce((s, c) => s + (Number(c.charge_amount) || 0), 0);
+    const balanceSum = cs.reduce((s, c) => s + (Number(c.balance) || 0), 0);
+    const patientRate = billedSum > 0 ? +(paidSum / billedSum).toFixed(3) : null;
+    return NextResponse.json({
+      patient: patientParam,
+      openClaims: cs.map((c) => ({ charge: c.charge_amount, balance: c.balance, status: c.claim_status, payer: payerBucket(c.claim_status) })),
+      paymentLines: ps.length,
+      paidSum: Math.round(paidSum),
+      billedLines: bs.length,
+      billedSum: Math.round(billedSum),
+      openChargeSum: Math.round(chargeSum),
+      openBalanceSum: Math.round(balanceSum),
+      patientRate_paidOverBilled: patientRate,
+      wouldUsePatientRate: billedSum >= 2000 && paidSum <= billedSum,
+      note: "If wouldUsePatientRate is false, the claim falls back to the payer rate. patientRate × openBalance ≈ the Expected $ you'd see.",
+    });
+  }
+
   // Patient → payer family, from the open claims.
   const patientPayer = new Map<string, string>();
   const claimNames = new Set<string>();
