@@ -20,7 +20,7 @@ export const TABS: Tab[] = [
   // Facility logins get AR, Billed, Payments, Census, Historical besides the
   // Overview. "AR" is the read-only claims/receivables board.
   { href: "/collections", label: "AR", icon: "▤", roles: ["management", "staff", "facility"], mobile: true },
-  { href: "/projections", label: "Projected Revenue", icon: "📈", roles: ["management", "staff"] },
+  { href: "/projections", label: "Projected Revenue", icon: "📈", roles: ["management", "staff", "facility"], mobile: true },
   { href: "/auth-issues", label: "Auth Issues", icon: "✦", roles: ["management", "staff"] },
   { href: "/management", label: "Management", icon: "★", roles: ["management", "staff"] },
   { href: "/authorizations", label: "Authorization", icon: "✓", roles: ["management", "staff", "facility"], mobile: true },

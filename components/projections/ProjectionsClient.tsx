@@ -120,6 +120,26 @@ export default function ProjectionsClient({
 
   const exportXlsx = async () => {
     const XLSX = await import("xlsx");
+    const scopeLabel = allFacilities ? "All facilities" : facName(facilityId);
+    // Summary sheet: headline KPIs + per-payer breakdown.
+    const summaryAoa: (string | number)[][] = [
+      ["Projected Revenue", scopeLabel],
+      ["Generated", new Date().toLocaleString()],
+      [],
+      ["Open balance", Math.round(summary.openBalance)],
+      ["Projected revenue", Math.round(summary.expected)],
+      ["Expected rate", `${Math.round(summary.blendedRate * 100)}%`],
+      ["Projected claims", summary.projectedCount],
+      ["No-history claims (blank)", summary.blankCount],
+      [],
+      ["Payer", "Open balance", "Expected $", "Rate"],
+      ...summary.payerRows.map((p) => [
+        p.payer,
+        Math.round(p.balance),
+        Math.round(p.expected),
+        `${Math.round(p.rate * 100)}%`,
+      ]),
+    ];
     const data = projected.map(({ c, p }) => ({
       Patient: c.patient_name ?? "",
       Facility: facName(c.facility_id),
@@ -135,9 +155,9 @@ export default function ProjectionsClient({
       Basis: p.source === "patient" ? "Patient" : p.source === "payer" ? "Payer" : "",
       Status: c.claim_status ?? "",
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Projected Revenue");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryAoa), "Summary");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Claims");
     const label = allFacilities ? "all-facilities" : facName(facilityId);
     XLSX.writeFile(wb, `projected-revenue-${label}.xlsx`);
   };

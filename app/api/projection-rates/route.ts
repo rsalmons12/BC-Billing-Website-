@@ -16,7 +16,9 @@ export async function GET(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   const { data: me } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (!me || (me.role !== "management" && me.role !== "staff")) {
+  // Management, staff, and facility logins may all build projections. RLS scopes
+  // the underlying payments/billed/claims to what each caller is allowed to see.
+  if (!me || !["management", "staff", "facility"].includes(me.role)) {
     return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   }
 
