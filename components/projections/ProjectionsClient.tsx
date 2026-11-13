@@ -7,19 +7,8 @@ import { SumCard } from "@/components/trackers/TrackerModule";
 import { money } from "@/lib/format";
 import { isExcludedMember, isStaleClaim } from "@/lib/claims";
 import { payerBucket } from "@/lib/payer";
-import {
-  RISK_AGE_THRESHOLD,
-  type Claim,
-  type Facility,
-  type Payment,
-} from "@/lib/types";
-import {
-  buildRateBook,
-  projectClaim,
-  MIN_MEMBER_CHARGE,
-  type RateBook,
-  type PayLike,
-} from "@/lib/projection";
+import { RISK_AGE_THRESHOLD, type Claim, type Facility } from "@/lib/types";
+import { projectClaim, type ProjectionRates } from "@/lib/projection";
 
 export default function ProjectionsClient({
   facilities,
@@ -31,9 +20,9 @@ export default function ProjectionsClient({
     facilities.length > 1 ? "all" : facilities[0]?.id ?? ""
   );
   const [claims, setClaims] = useState<Claim[]>([]);
-  const [book, setBook] = useState<RateBook | null>(null);
-  const [payCount, setPayCount] = useState(0);
+  const [rates, setRates] = useState<ProjectionRates | null>(null);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
   const [search, setSearch] = useState("");
 
   const allFacilities = facilityId === "all";
@@ -45,46 +34,48 @@ export default function ProjectionsClient({
     [facilities]
   );
 
-  // Load present claims + payment history for the facility scope, then build the
-  // collection-rate book from the payments.
+  // Load present claims (for the table) + the server-built rate table (payments
+  // and billed history are too large to pull into the browser).
   const load = useCallback(async () => {
     if (!facilityId) {
       setClaims([]);
-      setBook(null);
+      setRates(null);
       return;
     }
     setLoading(true);
-    const [claimList, pays] = await Promise.all([
-      selectAll<Claim>((f, t) => {
-        let q = supabase.from("claims").select("*").eq("present", true);
-        if (facilityId !== "all") q = q.eq("facility_id", facilityId);
-        return q.order("balance", { ascending: false }).range(f, t);
-      }),
-      selectAll<PayLike>((f, t) => {
-        let q = supabase
-          .from("payments")
-          .select("member_id,payment_source,charge_amount,paid_amount,facility_id");
-        if (facilityId !== "all") q = q.eq("facility_id", facilityId);
-        return q.range(f, t);
-      }).catch(() => [] as PayLike[]),
-    ]);
-    const visible = claimList.filter(
-      (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
-    );
-    setClaims(visible);
-    setBook(buildRateBook(pays as Payment[]));
-    setPayCount(pays.length);
-    setLoading(false);
+    setErr("");
+    try {
+      const [claimList, rateRes] = await Promise.all([
+        selectAll<Claim>((f, t) => {
+          let q = supabase.from("claims").select("*").eq("present", true);
+          if (facilityId !== "all") q = q.eq("facility_id", facilityId);
+          return q.order("balance", { ascending: false }).range(f, t);
+        }),
+        fetch(`/api/projection-rates?facility=${encodeURIComponent(facilityId)}`).then((r) =>
+          r.ok ? (r.json() as Promise<ProjectionRates>) : Promise.reject(new Error(`rates ${r.status}`))
+        ),
+      ]);
+      const visible = claimList.filter(
+        (c) => !isExcludedMember(c.member_id) && !isStaleClaim(c.age_days)
+      );
+      setClaims(visible);
+      setRates(rateRes);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to load projections");
+      setRates(null);
+    } finally {
+      setLoading(false);
+    }
   }, [supabase, facilityId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Project every claim, keep the ones with a projection, sort by expected $.
+  // Project every claim, sort by expected $.
   const projected = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const rows = claims
+    const out = claims
       .filter((c) => {
         if (!q) return true;
         const hay = `${c.patient_name ?? ""} ${c.member_id ?? ""} ${c.claim_id} ${
@@ -92,10 +83,10 @@ export default function ProjectionsClient({
         }`.toLowerCase();
         return hay.includes(q);
       })
-      .map((c) => ({ c, p: projectClaim(c, book) }));
-    rows.sort((a, b) => b.p.expected - a.p.expected);
-    return rows;
-  }, [claims, book, search]);
+      .map((c) => ({ c, p: projectClaim(c, rates) }));
+    out.sort((a, b) => b.p.expected - a.p.expected);
+    return out;
+  }, [claims, rates, search]);
 
   const summary = useMemo(() => {
     let openBalance = 0;
@@ -141,7 +132,7 @@ export default function ProjectionsClient({
       Balance: c.balance ?? 0,
       "Expected $": p.source !== "none" ? Math.round(p.expected) : "",
       "Est. Rate": p.rate != null ? `${Math.round(p.rate * 100)}%` : "",
-      Basis: p.source === "member" ? "Member" : p.source === "payer" ? "Payer" : "",
+      Basis: p.source === "patient" ? "Patient" : p.source === "payer" ? "Payer" : "",
       Status: c.claim_status ?? "",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
@@ -154,6 +145,7 @@ export default function ProjectionsClient({
   const RENDER_CAP = 500;
   const visible = projected.slice(0, RENDER_CAP);
   const hidden = projected.length - visible.length;
+  const colCount = allFacilities ? 12 : 11;
 
   return (
     <div className="flex h-full flex-col">
@@ -182,9 +174,13 @@ export default function ProjectionsClient({
 
         <div className="ml-auto flex items-center gap-3 text-xs">
           {loading && <span className="font-medium text-secured">Loading…</span>}
-          <span className="text-surface-muted">
-            <b className="text-surface-ink">{payCount.toLocaleString()}</b> payments in history
-          </span>
+          {err && <span className="font-medium text-risk">{err}</span>}
+          {rates && (
+            <span className="text-surface-muted">
+              <b className="text-surface-ink">{rates.meta.payments.toLocaleString()}</b> payments ·{" "}
+              <b className="text-surface-ink">{rates.meta.billed.toLocaleString()}</b> billed
+            </span>
+          )}
           <button onClick={exportXlsx} className="btn-ghost" disabled={projected.length === 0}>
             ↓ Export
           </button>
@@ -210,11 +206,10 @@ export default function ProjectionsClient({
           />
         </div>
         <p className="mt-1 text-[11px] text-surface-muted">
-          Expected revenue = each open balance × its historical collection rate — that
-          member&apos;s paid÷charged first (needs ≥ {money(MIN_MEMBER_CHARGE)} of history), then
-          the payer family. {summary.blankCount} claim{summary.blankCount === 1 ? "" : "s"} with no
-          member or payer history {summary.blankCount === 1 ? "is" : "are"} left out. Upload more
-          payment history (Payments → Import) to tighten the estimate.
+          Expected revenue = each open balance × its historical collection rate (paid ÷ billed,
+          matched by patient name) — that patient&apos;s own rate first, then the payer family. These
+          are net collection rates on billed charges, so they read low (typically 5–25% for
+          out-of-network). {rates ? `${rates.meta.paidMatchedPct}% of payment dollars matched a current patient.` : ""}
         </p>
         {summary.payerRows.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -251,15 +246,15 @@ export default function ProjectionsClient({
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={allFacilities ? 12 : 11} className="td py-10 text-center text-surface-muted">
-                  Loading claims and payment history…
+                <td colSpan={colCount} className="td py-10 text-center text-surface-muted">
+                  Loading claims and building collection rates…
                 </td>
               </tr>
             )}
             {!loading && projected.length === 0 && (
               <tr>
-                <td colSpan={allFacilities ? 12 : 11} className="td py-10 text-center text-surface-muted">
-                  No open claims here. (Projections need present claims and uploaded payments.)
+                <td colSpan={colCount} className="td py-10 text-center text-surface-muted">
+                  No open claims here.
                 </td>
               </tr>
             )}
@@ -295,12 +290,12 @@ export default function ProjectionsClient({
                     {p.rate != null ? `${Math.round(p.rate * 100)}%` : "—"}
                   </td>
                   <td className="td text-xs">
-                    {p.source === "member" ? (
-                      <span className="badge bg-recovered/12 text-recovered" title="Based on this member's own payment history">
-                        Member
+                    {p.source === "patient" ? (
+                      <span className="badge bg-recovered/12 text-recovered" title="This patient's own paid÷billed history">
+                        Patient
                       </span>
                     ) : p.source === "payer" ? (
-                      <span className="badge bg-command/10 text-command" title="Based on the payer family's average collection rate">
+                      <span className="badge bg-command/10 text-command" title="The payer family's average collection rate">
                         Payer
                       </span>
                     ) : (
@@ -312,7 +307,7 @@ export default function ProjectionsClient({
               ))}
             {!loading && hidden > 0 && (
               <tr>
-                <td colSpan={allFacilities ? 12 : 11} className="td py-3 text-center text-xs text-surface-muted">
+                <td colSpan={colCount} className="td py-3 text-center text-xs text-surface-muted">
                   Showing the top {RENDER_CAP} by expected $ — {hidden} more. Narrow with search or
                   pick a single facility.
                 </td>
