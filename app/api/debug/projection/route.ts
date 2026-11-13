@@ -3,15 +3,19 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { selectAll } from "@/lib/supabase/page";
 import { payerBucket } from "@/lib/payer";
-import { normMember } from "@/lib/projection";
 
-// Management-only diagnostic for the Projected Revenue tab. Explains why claims
-// do or don't project: payment charge coverage, member-id overlap between
-// payments and open claims, and payer-bucket coverage on each side. Counts and
-// totals only — no PHI beyond what the app already shows management.
+// Management-only diagnostic for the Projected Revenue tab. Figures out which
+// bridge between payments and claims is viable (member id vs patient name) and
+// which charge source is usable (payments vs claims vs billed_claims).
 export const dynamic = "force-dynamic";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+// Order-independent name key: "INTELLI, MELISSA" and "Melissa Intelli" → "INTELLIMELISSA".
+function nameKey(s: unknown): string {
+  const m = String(s ?? "").toUpperCase().match(/[A-Z]+/g);
+  return m ? m.sort().join("") : "";
+}
 
 export async function GET(request: Request) {
   const supabase = createClient();
@@ -22,76 +26,108 @@ export async function GET(request: Request) {
 
   const admin = createAdminClient();
   const facParam = new URL(request.url).searchParams.get("facility")?.toLowerCase() ?? "";
-
   const { data: facs } = await admin.from("facilities").select("id,name,short_name");
   const facilities = ((facs as any[]) ?? []);
   const match = (fid: string) => {
     if (!facParam) return true;
     const f = facilities.find((x) => x.id === fid);
-    const s = `${f?.name ?? ""} ${f?.short_name ?? ""}`.toLowerCase();
-    return s.includes(facParam);
+    return `${f?.name ?? ""} ${f?.short_name ?? ""}`.toLowerCase().includes(facParam);
   };
 
-  const claims = await selectAll<any>((f, t) =>
-    admin.from("claims").select("facility_id,member_id,balance,claim_status,present").eq("present", true).range(f, t)
-  );
-  const pays = await selectAll<any>((f, t) =>
-    admin.from("payments").select("facility_id,member_id,payment_source,charge_amount,paid_amount").range(f, t)
-  );
+  const claims = (await selectAll<any>((f, t) =>
+    admin.from("claims").select("facility_id,patient_name,member_id,balance,charge_amount,claim_status,present").eq("present", true).range(f, t)
+  )).filter((c) => match(c.facility_id));
+  const pays = (await selectAll<any>((f, t) =>
+    admin.from("payments").select("facility_id,patient_name,paid_amount").range(f, t)
+  )).filter((p) => match(p.facility_id));
+  const billed = (await selectAll<any>((f, t) =>
+    admin.from("billed_claims").select("facility_id,patient_name,total_amount,payer_name").range(f, t)
+  )).filter((b) => match(b.facility_id));
 
-  const C = claims.filter((c) => match(c.facility_id));
-  const P = pays.filter((p) => match(p.facility_id));
-
-  // Member overlap.
-  const payMembers = new Set<string>();
-  for (const p of P) { const m = normMember(p.member_id); if (m) payMembers.add(m); }
-  let claimsWithMember = 0, claimsMemberMatched = 0;
-  for (const c of C) { const m = normMember(c.member_id); if (m) { claimsWithMember++; if (payMembers.has(m)) claimsMemberMatched++; } }
-
-  // Payment charge coverage + payer buckets.
-  let payWithCharge = 0, payWithPaid = 0;
-  const payByBucket: Record<string, { n: number; paid: number; chargePos: number }> = {};
-  for (const p of P) {
-    const charge = Number(p.charge_amount) || 0;
-    const paid = Number(p.paid_amount) || 0;
-    if (charge > 0) payWithCharge++;
-    if (paid > 0) payWithPaid++;
-    const b = payerBucket(p.payment_source);
-    const e = (payByBucket[b] ??= { n: 0, paid: 0, chargePos: 0 });
-    e.n++; e.paid += paid; if (charge > 0) e.chargePos += charge;
+  // Patient → payer family, from the open claims.
+  const patientPayer = new Map<string, string>();
+  const claimNames = new Set<string>();
+  for (const c of claims) {
+    const k = nameKey(c.patient_name);
+    if (!k) continue;
+    claimNames.add(k);
+    if (!patientPayer.has(k)) patientPayer.set(k, payerBucket(c.claim_status));
   }
 
-  // Claim payer buckets + whether that bucket has usable payment charge.
-  const claimByBucket: Record<string, { n: number; balance: number; payerHasCharge: boolean }> = {};
-  for (const c of C) {
+  // Payments: patient-name coverage + paid bridged to a payer via the claim patient.
+  const payNames = new Set<string>();
+  let payWithName = 0, payNameMatched = 0, paidMatched = 0, paidTotal = 0;
+  const paidByPayer: Record<string, number> = {};
+  for (const p of pays) {
+    const paid = Number(p.paid_amount) || 0;
+    paidTotal += paid;
+    const k = nameKey(p.patient_name);
+    if (k) { payWithName++; payNames.add(k); }
+    if (k && patientPayer.has(k)) {
+      payNameMatched++; paidMatched += paid;
+      const b = patientPayer.get(k)!;
+      paidByPayer[b] = (paidByPayer[b] ?? 0) + paid;
+    }
+  }
+
+  // Charge sources by payer: open claims, and billed_claims.
+  const claimChargeByPayer: Record<string, number> = {};
+  const claimBalanceByPayer: Record<string, number> = {};
+  for (const c of claims) {
     const b = payerBucket(c.claim_status);
-    const e = (claimByBucket[b] ??= { n: 0, balance: 0, payerHasCharge: false });
-    e.n++; e.balance += Number(c.balance) || 0;
-    e.payerHasCharge = (payByBucket[b]?.chargePos ?? 0) > 0;
+    claimChargeByPayer[b] = (claimChargeByPayer[b] ?? 0) + (Number(c.charge_amount) || 0);
+    claimBalanceByPayer[b] = (claimBalanceByPayer[b] ?? 0) + (Number(c.balance) || 0);
+  }
+  const billedByPayer: Record<string, number> = {};
+  let billedWithAmount = 0, billedNameMatched = 0;
+  const billedNames = new Set<string>();
+  for (const b of billed) {
+    const amt = Number(b.total_amount) || 0;
+    if (amt > 0) billedWithAmount++;
+    const k = nameKey(b.patient_name);
+    if (k) billedNames.add(k);
+    if (k && claimNames.has(k)) billedNameMatched++;
+    // Payer from billed payer_name, else the patient's claim payer.
+    const payer = payerBucket(b.payer_name) !== "Other" ? payerBucket(b.payer_name) : (patientPayer.get(k) ?? "Other");
+    billedByPayer[payer] = (billedByPayer[payer] ?? 0) + amt;
+  }
+
+  // Candidate payer collection rates (paid bridged by name ÷ charge source).
+  const buckets = Array.from(new Set([...Object.keys(paidByPayer), ...Object.keys(claimChargeByPayer), ...Object.keys(billedByPayer)]));
+  const rates: Record<string, any> = {};
+  for (const b of buckets) {
+    const paid = paidByPayer[b] ?? 0;
+    const billedAmt = billedByPayer[b] ?? 0;
+    const claimCharge = claimChargeByPayer[b] ?? 0;
+    rates[b] = {
+      paid: Math.round(paid),
+      billedCharge: Math.round(billedAmt),
+      openCharge: Math.round(claimCharge),
+      rate_vs_billed: billedAmt > 0 ? +(paid / billedAmt).toFixed(3) : null,
+      rate_vs_openCharge: claimCharge > 0 ? +(paid / claimCharge).toFixed(3) : null,
+    };
   }
 
   return NextResponse.json({
     scope: facParam || "all facilities",
-    claims: {
-      presentTotal: C.length,
-      withMemberId: claimsWithMember,
-      memberMatchedToAPayment: claimsMemberMatched,
-      byPayerBucket: claimByBucket,
+    bridge: {
+      claims_present: claims.length,
+      distinct_claim_patients: claimNames.size,
+      payments_total: pays.length,
+      payments_with_patient_name: payWithName,
+      payments_name_matched_to_a_claim_patient: payNameMatched,
+      paid_total: Math.round(paidTotal),
+      paid_matched_to_a_claim_patient: Math.round(paidMatched),
+      paid_match_pct: paidTotal > 0 ? Math.round((paidMatched / paidTotal) * 100) : 0,
     },
-    payments: {
-      total: P.length,
-      withPaidAmount: payWithPaid,
-      withChargeAmount: payWithCharge,
-      distinctMemberIds: payMembers.size,
-      byPayerBucket: payByBucket,
+    billed_claims: {
+      total: billed.length,
+      with_total_amount: billedWithAmount,
+      distinct_patients: billedNames.size,
+      name_matched_to_a_claim_patient: billedNameMatched,
     },
-    reading: {
-      memberRateUsable: payWithCharge > 0 && claimsMemberMatched > 0,
-      anyPayerChargeCoverage: payWithCharge > 0,
-      note:
-        payWithCharge === 0
-          ? "No payment rows carry a charge amount, so paid÷charge cannot be computed from payments. Rate must use a different basis."
-          : "Payments carry charge; check member overlap and payer-bucket coverage above for blanks.",
-    },
+    candidate_payer_rates: rates,
+    reading:
+      "rate_vs_billed is the real collection rate (paid bridged by patient name ÷ billed_claims charges). rate_vs_openCharge uses open-claim charges as the denominator (will overstate). Pick whichever has coverage.",
   });
 }
