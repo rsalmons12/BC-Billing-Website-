@@ -1,20 +1,34 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { selectAll } from "@/lib/supabase/page";
 import { payerBucket } from "@/lib/payer";
+import { createRateAccumulator } from "@/lib/projection";
 
-// Management-only diagnostic for the Projected Revenue tab. Figures out which
-// bridge between payments and claims is viable (member id vs patient name) and
-// which charge source is usable (payments vs claims vs billed_claims).
+// Management-only diagnostic for the Projected Revenue tab. Streams rows one page
+// at a time (never holding the whole payments table in memory). Two modes:
+//   • default: the compact rate table (per-payer breakdown + meta)
+//   • ?patient=NAME: a one-patient drill-down (paid, billed, resolved rate)
 export const dynamic = "force-dynamic";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// Order-independent name key: "INTELLI, MELISSA" and "Melissa Intelli" → "INTELLIMELISSA".
 function nameKey(s: unknown): string {
   const m = String(s ?? "").toUpperCase().match(/[A-Z]+/g);
   return m ? m.sort().join("") : "";
+}
+
+const PAGE = 1000;
+async function forEachRow<T>(
+  make: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  onRow: (r: T) => void
+) {
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await make(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = data ?? [];
+    for (const r of rows) onRow(r);
+    if (rows.length < PAGE) break;
+  }
 }
 
 export async function GET(request: Request) {
@@ -25,144 +39,81 @@ export async function GET(request: Request) {
   if (me?.role !== "management") return NextResponse.json({ error: "Management only" }, { status: 403 });
 
   const admin = createAdminClient();
-  const facParam = new URL(request.url).searchParams.get("facility")?.toLowerCase() ?? "";
+  const url = new URL(request.url);
+  const facParam = url.searchParams.get("facility")?.toLowerCase() ?? "";
+  const patientParam = url.searchParams.get("patient") ?? "";
+
   const { data: facs } = await admin.from("facilities").select("id,name,short_name");
   const facilities = ((facs as any[]) ?? []);
-  const match = (fid: string) => {
-    if (!facParam) return true;
-    const f = facilities.find((x) => x.id === fid);
-    return `${f?.name ?? ""} ${f?.short_name ?? ""}`.toLowerCase().includes(facParam);
-  };
+  const facIds = facParam
+    ? new Set(
+        facilities
+          .filter((f) => `${f.name ?? ""} ${f.short_name ?? ""}`.toLowerCase().includes(facParam))
+          .map((f) => f.id)
+      )
+    : null;
+  const inScope = (fid: string) => !facIds || facIds.has(fid);
 
-  const claims = (await selectAll<any>((f, t) =>
-    admin.from("claims").select("facility_id,patient_name,member_id,balance,charge_amount,claim_status,present").eq("present", true).range(f, t)
-  )).filter((c) => match(c.facility_id));
-  const pays = (await selectAll<any>((f, t) =>
-    admin.from("payments").select("facility_id,patient_name,paid_amount").range(f, t)
-  )).filter((p) => match(p.facility_id));
-  const billed = (await selectAll<any>((f, t) =>
-    admin.from("billed_claims").select("facility_id,patient_name,total_amount,payer_name").range(f, t)
-  )).filter((b) => match(b.facility_id));
-
-  // One-patient drill-down: ?patient=SPECK — shows exactly why a claim projects
-  // the way it does (bridged paid, billed, claim charge, both candidate rates).
-  const patientParam = new URL(request.url).searchParams.get("patient") ?? "";
+  // --- One-patient drill-down ---------------------------------------------
   if (patientParam) {
-    const want = patientParam.toUpperCase().match(/[A-Z]+/g)?.sort().join("") ?? "";
+    const want = nameKey(patientParam);
     const matchName = (s: unknown) => {
-      const k = String(s ?? "").toUpperCase().match(/[A-Z]+/g)?.sort().join("") ?? "";
+      const k = nameKey(s);
       return k && (k === want || k.includes(want) || want.includes(k));
     };
-    const cs = claims.filter((c) => matchName(c.patient_name));
-    const ps = pays.filter((p) => matchName(p.patient_name));
-    const bs = billed.filter((b) => matchName(b.patient_name));
-    const paidSum = ps.reduce((s, p) => s + (Number(p.paid_amount) || 0), 0);
-    const billedSum = bs.reduce((s, b) => s + (Number(b.total_amount) || 0), 0);
-    const balanceSum = cs.reduce((s, c) => s + (Number(c.balance) || 0), 0);
+    const openClaims: any[] = [];
+    let paidSum = 0, billedSum = 0, paymentLines = 0, billedLines = 0, balanceSum = 0;
+    await forEachRow<any>((f, t) =>
+      admin.from("claims").select("facility_id,patient_name,balance,charge_amount,claim_status").eq("present", true).range(f, t)
+    , (c) => {
+      if (!inScope(c.facility_id) || !matchName(c.patient_name)) return;
+      openClaims.push({ charge: c.charge_amount, balance: c.balance, status: c.claim_status, payer: payerBucket(c.claim_status) });
+      balanceSum += Number(c.balance) || 0;
+    });
+    await forEachRow<any>((f, t) =>
+      admin.from("payments").select("facility_id,patient_name,paid_amount").range(f, t)
+    , (p) => { if (inScope(p.facility_id) && matchName(p.patient_name)) { paymentLines++; paidSum += Number(p.paid_amount) || 0; } });
+    await forEachRow<any>((f, t) =>
+      admin.from("billed_claims").select("facility_id,patient_name,total_amount").range(f, t)
+    , (b) => { if (inScope(b.facility_id) && matchName(b.patient_name)) { billedLines++; billedSum += Number(b.total_amount) || 0; } });
+
     const resolvedBilled = Math.max(0, billedSum - balanceSum);
-    const rawRate = billedSum > 0 ? +(paidSum / billedSum).toFixed(3) : null;
     const resolvedRate = resolvedBilled > 0 ? +(paidSum / resolvedBilled).toFixed(3) : null;
     return NextResponse.json({
       patient: patientParam,
-      openClaims: cs.map((c) => ({ charge: c.charge_amount, balance: c.balance, status: c.claim_status, payer: payerBucket(c.claim_status) })),
-      paymentLines: ps.length,
+      openClaims,
+      paymentLines,
       paidSum: Math.round(paidSum),
-      billedLines: bs.length,
+      billedLines,
       billedSum: Math.round(billedSum),
       openBalanceSum: Math.round(balanceSum),
       resolvedBilled: Math.round(resolvedBilled),
-      rate_paidOverAllBilled: rawRate,
+      rate_paidOverAllBilled: billedSum > 0 ? +(paidSum / billedSum).toFixed(3) : null,
       rate_paidOverResolvedBilled: resolvedRate,
       wouldUsePatientRate: resolvedBilled >= 2000 && paidSum <= resolvedBilled,
-      expectedOnOneClaim_example: resolvedRate != null && cs[0] ? Math.round((Number(cs[0].balance) || 0) * resolvedRate) : null,
-      note: "The tab now uses rate_paidOverResolvedBilled (open claims removed from the denominator) × each open balance.",
+      expectedOnOneClaim_example: resolvedRate != null && openClaims[0] ? Math.round((Number(openClaims[0].balance) || 0) * resolvedRate) : null,
+      note: "The tab uses rate_paidOverResolvedBilled (open claims removed from the denominator) × each open balance.",
     });
   }
 
-  // Patient → payer family, from the open claims.
-  const patientPayer = new Map<string, string>();
-  const claimNames = new Set<string>();
-  for (const c of claims) {
-    const k = nameKey(c.patient_name);
-    if (!k) continue;
-    claimNames.add(k);
-    if (!patientPayer.has(k)) patientPayer.set(k, payerBucket(c.claim_status));
-  }
+  // --- Compact rate table -------------------------------------------------
+  const acc = createRateAccumulator();
+  await forEachRow<any>((f, t) =>
+    admin.from("claims").select("patient_name,claim_status,balance,facility_id").eq("present", true).range(f, t)
+  , (c) => { if (inScope(c.facility_id)) acc.addClaim(c); });
+  await forEachRow<any>((f, t) =>
+    admin.from("billed_claims").select("patient_name,total_amount,payer_name,facility_id").range(f, t)
+  , (b) => { if (inScope(b.facility_id)) acc.addBilled(b); });
+  await forEachRow<any>((f, t) =>
+    admin.from("payments").select("patient_name,paid_amount,facility_id").range(f, t)
+  , (p) => { if (inScope(p.facility_id)) acc.addPayment(p); });
 
-  // Payments: patient-name coverage + paid bridged to a payer via the claim patient.
-  const payNames = new Set<string>();
-  let payWithName = 0, payNameMatched = 0, paidMatched = 0, paidTotal = 0;
-  const paidByPayer: Record<string, number> = {};
-  for (const p of pays) {
-    const paid = Number(p.paid_amount) || 0;
-    paidTotal += paid;
-    const k = nameKey(p.patient_name);
-    if (k) { payWithName++; payNames.add(k); }
-    if (k && patientPayer.has(k)) {
-      payNameMatched++; paidMatched += paid;
-      const b = patientPayer.get(k)!;
-      paidByPayer[b] = (paidByPayer[b] ?? 0) + paid;
-    }
-  }
-
-  // Charge sources by payer: open claims, and billed_claims.
-  const claimChargeByPayer: Record<string, number> = {};
-  const claimBalanceByPayer: Record<string, number> = {};
-  for (const c of claims) {
-    const b = payerBucket(c.claim_status);
-    claimChargeByPayer[b] = (claimChargeByPayer[b] ?? 0) + (Number(c.charge_amount) || 0);
-    claimBalanceByPayer[b] = (claimBalanceByPayer[b] ?? 0) + (Number(c.balance) || 0);
-  }
-  const billedByPayer: Record<string, number> = {};
-  let billedWithAmount = 0, billedNameMatched = 0;
-  const billedNames = new Set<string>();
-  for (const b of billed) {
-    const amt = Number(b.total_amount) || 0;
-    if (amt > 0) billedWithAmount++;
-    const k = nameKey(b.patient_name);
-    if (k) billedNames.add(k);
-    if (k && claimNames.has(k)) billedNameMatched++;
-    // Payer from billed payer_name, else the patient's claim payer.
-    const payer = payerBucket(b.payer_name) !== "Other" ? payerBucket(b.payer_name) : (patientPayer.get(k) ?? "Other");
-    billedByPayer[payer] = (billedByPayer[payer] ?? 0) + amt;
-  }
-
-  // Candidate payer collection rates (paid bridged by name ÷ charge source).
-  const buckets = Array.from(new Set([...Object.keys(paidByPayer), ...Object.keys(claimChargeByPayer), ...Object.keys(billedByPayer)]));
-  const rates: Record<string, any> = {};
-  for (const b of buckets) {
-    const paid = paidByPayer[b] ?? 0;
-    const billedAmt = billedByPayer[b] ?? 0;
-    const claimCharge = claimChargeByPayer[b] ?? 0;
-    rates[b] = {
-      paid: Math.round(paid),
-      billedCharge: Math.round(billedAmt),
-      openCharge: Math.round(claimCharge),
-      rate_vs_billed: billedAmt > 0 ? +(paid / billedAmt).toFixed(3) : null,
-      rate_vs_openCharge: claimCharge > 0 ? +(paid / claimCharge).toFixed(3) : null,
-    };
-  }
-
+  const rates = acc.finalize();
   return NextResponse.json({
     scope: facParam || "all facilities",
-    bridge: {
-      claims_present: claims.length,
-      distinct_claim_patients: claimNames.size,
-      payments_total: pays.length,
-      payments_with_patient_name: payWithName,
-      payments_name_matched_to_a_claim_patient: payNameMatched,
-      paid_total: Math.round(paidTotal),
-      paid_matched_to_a_claim_patient: Math.round(paidMatched),
-      paid_match_pct: paidTotal > 0 ? Math.round((paidMatched / paidTotal) * 100) : 0,
-    },
-    billed_claims: {
-      total: billed.length,
-      with_total_amount: billedWithAmount,
-      distinct_patients: billedNames.size,
-      name_matched_to_a_claim_patient: billedNameMatched,
-    },
-    candidate_payer_rates: rates,
-    reading:
-      "rate_vs_billed is the real collection rate (paid bridged by patient name ÷ billed_claims charges). rate_vs_openCharge uses open-claim charges as the denominator (will overstate). Pick whichever has coverage.",
+    meta: rates.meta,
+    payerBreakdown: rates.payerBreakdown,
+    patientRatesCount: Object.keys(rates.patientRate).length,
+    note: "payerBreakdown.rate = paid ÷ resolved billed. Add ?patient=NAME for a single-patient drill-down.",
   });
 }
