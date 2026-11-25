@@ -76,6 +76,10 @@ export interface TrackerConfig {
   importMode?: "replace" | "append" | "replace_period";
   importKey?: string;
   importFactKeys?: string[];
+  // Fact keys whose BLANK incoming value should NOT overwrite an existing value
+  // on re-import (e.g. a payment date that only some upload rows carry) — the
+  // upload fills it in, but a later blank cell never erases what's there.
+  importSkipBlankKeys?: string[];
   // When set, show a Month dropdown that filters rows by the month derived from
   // this date field (e.g. "deposit_date") — lets you view prior months.
   monthFrom?: string;
@@ -1827,10 +1831,16 @@ export function ImportPanel({
       // preserved, but facility_id must follow the file — a corrected re-import
       // (after a facility-name fix) has to be able to move a claim to the right
       // facility, otherwise a patient stays filed under the wrong one forever.
+      const skipBlank = new Set(config.importSkipBlankKeys ?? []);
       let upd = 0;
       for (const r of known) {
         const factPayload: Record<string, unknown> = { facility_id: r.facility_id };
-        for (const fk of factKeys) factPayload[fk] = r[fk];
+        for (const fk of factKeys) {
+          const v = r[fk];
+          // Don't let a blank upload cell erase an existing value for these keys.
+          if (skipBlank.has(fk) && (v == null || String(v).trim() === "")) continue;
+          factPayload[fk] = v;
+        }
         const { error } = await supabase
           .from(config.table)
           .update(factPayload)

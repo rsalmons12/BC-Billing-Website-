@@ -868,7 +868,7 @@ export function parseRepricing(
       follow: findCol(h, [/follow ?up/]),
       addl: findCol(h, [/additional payment|addl pmt|add'l/]),
       pstatus: findCol(h, [/payment status/]),
-      pdate: findCol(h, [/payment date|paid date|date paid|check date|eob date/]),
+      pdate: findCol(h, [/payment date|paid date|date paid|payment received|received date|payment posted|posted date|check date|eob date/]),
     };
     let added = 0;
     for (let i = hr + 1; i < rows.length; i++) {
