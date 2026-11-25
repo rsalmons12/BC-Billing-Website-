@@ -833,6 +833,7 @@ export interface RepricingRow {
   follow_up: string;
   additional_payment: number | null;
   payment_status: string;
+  payment_date: string;
 }
 
 export function parseRepricing(
@@ -867,6 +868,7 @@ export function parseRepricing(
       follow: findCol(h, [/follow ?up/]),
       addl: findCol(h, [/additional payment|addl pmt|add'l/]),
       pstatus: findCol(h, [/payment status/]),
+      pdate: findCol(h, [/payment date|paid date|date paid|check date|eob date/]),
     };
     let added = 0;
     for (let i = hr + 1; i < rows.length; i++) {
@@ -889,6 +891,7 @@ export function parseRepricing(
         follow_up: col.follow >= 0 ? toStr(r[col.follow]) : "",
         additional_payment: col.addl >= 0 ? toNum(r[col.addl]) : null,
         payment_status: col.pstatus >= 0 ? toStr(r[col.pstatus]) : "",
+        payment_date: col.pdate >= 0 ? toStr(r[col.pdate]) : "",
       });
       added++;
     }

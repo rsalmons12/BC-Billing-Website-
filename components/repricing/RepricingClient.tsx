@@ -42,6 +42,41 @@ const daysUntouched = (r: Record<string, unknown>) => {
 const SLA_DAYS = 14;
 const isLate = (r: Record<string, unknown>) => isOpen(r) && daysUntouched(r) > SLA_DAYS;
 
+// ---- Appeal-window helpers ----
+// After the payer PAYS a claim, there's a limited window to appeal for more
+// payment. The clock runs from the payment date and the length depends on the
+// payer: Cigna = 90 days, Aetna (a.k.a. GCS) = 180 days. Add more here as needed.
+const appealWindowDays = (r: Record<string, unknown>): number | undefined => {
+  const p = String(r.payer ?? "").toLowerCase();
+  if (/cigna|evernorth/.test(p)) return 90;
+  if (/aetna|\bgcs\b/.test(p)) return 180;
+  return undefined;
+};
+const parseDay = (v: unknown): number | null => {
+  const t = Date.parse(String(v ?? "").trim());
+  return isNaN(t) ? null : t;
+};
+// Appeal info for a row: deadline timestamp + whole days remaining (negative = past).
+const appealInfo = (r: Record<string, unknown>): { deadline: number; daysLeft: number; window: number } | null => {
+  const window = appealWindowDays(r);
+  const paid = parseDay(r.payment_date);
+  if (window == null || paid == null) return null;
+  const deadline = paid + window * 86_400_000;
+  const daysLeft = Math.ceil((deadline - Date.now()) / 86_400_000);
+  return { deadline, daysLeft, window };
+};
+const fmtDay = (ms: number) =>
+  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+// "Appeal window closing" = still open but ≤ 30 days left.
+const appealClosingSoon = (r: Record<string, unknown>) => {
+  const info = appealInfo(r);
+  return !!info && info.daysLeft >= 0 && info.daysLeft <= 30;
+};
+const appealPastDue = (r: Record<string, unknown>) => {
+  const info = appealInfo(r);
+  return !!info && info.daysLeft < 0;
+};
+
 // One count tile per payment status, plus a "No status" tile for unworked rows.
 const STATUS_TILES: { key: string; label: string; accent?: "recovered" | "gold" | "risk" | "secured" }[] = [
   { key: "pending", label: "Pending", accent: "gold" },
@@ -61,11 +96,15 @@ function renderSummary(rows: Array<Record<string, unknown>>) {
   let collected = 0;
   let addl = 0;
   let lateCount = 0;
+  let appealSoon = 0;
+  let appealPast = 0;
   for (const r of rows) {
     charge += num(r.charge_amount);
     if (isApproved(r)) collected += num(r.amt_allowed) + num(r.additional_payment);
     addl += num(r.additional_payment);
     if (isLate(r)) lateCount += 1;
+    if (appealClosingSoon(r)) appealSoon += 1;
+    if (appealPastDue(r)) appealPast += 1;
     const s = statusOf(r);
     const key = s || "__blank__";
     counts[key] = (counts[key] ?? 0) + 1;
@@ -78,6 +117,18 @@ function renderSummary(rows: Array<Record<string, unknown>>) {
           <SumCard key={t.key} label={t.label} value={String(counts[t.key] ?? 0)} accent={t.accent} />
         ))}
         <SumCard label="Late · >14d" value={String(lateCount)} accent={lateCount > 0 ? "risk" : "recovered"} />
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SumCard
+          label="Appeal ≤30d"
+          value={String(appealSoon)}
+          accent={appealSoon > 0 ? "gold" : "recovered"}
+        />
+        <SumCard
+          label="Appeal PAST DUE"
+          value={String(appealPast)}
+          accent={appealPast > 0 ? "risk" : "recovered"}
+        />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <SumCard label="Total Charged" value={money(charge)} />
@@ -134,6 +185,26 @@ const columns: TrackerConfig["columns"] = [
     editable: true,
     min: "min-w-[9rem]",
   },
+  // Date the payer paid — the appeal clock starts here.
+  { key: "payment_date", label: "Payment Date", kind: "text", editable: true, min: "min-w-[9rem]" },
+  // Appeal deadline = payment date + payer window (Cigna 90d, Aetna/GCS 180d).
+  {
+    key: "appeal_deadline",
+    label: "Appeal Deadline",
+    kind: "text",
+    min: "min-w-[12rem]",
+    compute: (r) => {
+      const window = appealWindowDays(r);
+      if (window == null) return "—"; // payer has no tracked window
+      const info = appealInfo(r);
+      if (!info) return "⤷ set Payment Date";
+      const d = fmtDay(info.deadline);
+      if (info.daysLeft < 0) return `⛔ PAST DUE · ${d} (${-info.daysLeft}d ago)`;
+      if (info.daysLeft === 0) return `⛔ DUE TODAY · ${d}`;
+      if (info.daysLeft <= 30) return `⚠ ${d} · ${info.daysLeft}d left`;
+      return `${d} · ${info.daysLeft}d left`;
+    },
+  },
   // Where each claim stands against the 14-day turnaround, at a glance.
   {
     key: "sla_flag",
@@ -181,6 +252,8 @@ const extraFilters: TrackerConfig["extraFilters"] = {
     },
     { value: "approved", label: "Approved (paid)", test: isApproved },
     { value: "denied", label: "Denied", test: isDenied },
+    { value: "appeal_soon", label: "Appeal window ≤30 days", test: appealClosingSoon },
+    { value: "appeal_past", label: "Appeal PAST DUE", test: appealPastDue },
   ],
 };
 
