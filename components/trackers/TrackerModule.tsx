@@ -49,6 +49,11 @@ export interface ColumnDef {
   // Read-only derived value computed from the whole row (e.g. total, percent).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   compute?: (row: Record<string, any>) => unknown;
+  // Value to sort by when this column's header is clicked. Needed for computed
+  // columns whose displayed text doesn't sort meaningfully (e.g. an appeal
+  // deadline whose label is "⛔ PAST DUE · …" but should sort by days-left).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sortValue?: (row: Record<string, any>) => number | string;
 }
 
 export interface TrackerConfig {
@@ -224,6 +229,13 @@ export default function TrackerModule({
   const [saveState, setSaveState] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [extraFilter, setExtraFilter] = useState(config.defaultExtraFilter ?? "all");
+  // Interactive column-header sort. null = use the config's default order.
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
+  // Click a header: 1st = ascending, 2nd = descending, 3rd = back to default.
+  const cycleSort = (key: string) =>
+    setSort((s) =>
+      !s || s.key !== key ? { key, dir: 1 } : s.dir === 1 ? { key, dir: -1 } : null
+    );
   const [archiveView, setArchiveView] = useState<"active" | "archived">("active");
   // Month-based trackers (payments, billed) can hold years of rows. By default
   // load only the last few months so the page is fast; "Show all months" lifts
@@ -481,7 +493,25 @@ export default function TrackerModule({
       }
       return true;
     });
-    if (config.sortCompare) {
+    if (sort) {
+      // Interactive header sort: use the column's sortValue, else its computed
+      // value, else the raw field. Numbers compare numerically; strings via
+      // locale-aware numeric compare.
+      const col = config.columns.find((c) => c.key === sort.key);
+      const valOf = (r: Record<string, unknown>): number | string => {
+        if (col?.sortValue) return col.sortValue(r);
+        const raw = col?.compute ? col.compute(r) : r[sort.key];
+        return typeof raw === "number" ? raw : String(raw ?? "");
+      };
+      kept.sort((a, b) => {
+        const va = valOf(a);
+        const vb = valOf(b);
+        let cmp: number;
+        if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+        else cmp = String(va).localeCompare(String(vb), undefined, { sensitivity: "base", numeric: true });
+        return cmp * sort.dir;
+      });
+    } else if (config.sortCompare) {
       kept.sort(config.sortCompare);
     } else if (config.defaultSortKey) {
       const sk = config.defaultSortKey;
@@ -493,7 +523,7 @@ export default function TrackerModule({
       );
     }
     return kept;
-  }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView, facilityFilter, facName]);
+  }, [rows, statusFilter, payerFilter, extraFilter, monthFilter, search, config, archiveView, facilityFilter, facName, sort]);
 
   // Collapsed rollup: one line per distinct key value (per facility). Sums the
   // money columns and gathers a few text columns (distinct values). Built from
@@ -1238,8 +1268,16 @@ export default function TrackerModule({
             <tr>
               <th className="th sticky left-0 bg-surface">Facility</th>
               {config.columns.map((c) => (
-                <th key={c.key} className="th">
+                <th
+                  key={c.key}
+                  className="th cursor-pointer select-none hover:text-surface-ink"
+                  onClick={() => cycleSort(c.key)}
+                  title="Click to sort; click again to reverse, once more to reset"
+                >
                   {c.label}
+                  {sort?.key === c.key && (
+                    <span className="ml-1 text-command">{sort.dir === 1 ? "▲" : "▼"}</span>
+                  )}
                 </th>
               ))}
               {hasActions && <th className="th"></th>}

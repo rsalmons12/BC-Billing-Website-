@@ -193,6 +193,13 @@ const columns: TrackerConfig["columns"] = [
     label: "Appeal Deadline",
     kind: "text",
     min: "min-w-[12rem]",
+    // Sort by days-left: most overdue first (ascending), then soonest; claims
+    // with a window but no payment date, then payers with no window, fall last.
+    sortValue: (r) => {
+      if (appealWindowDays(r) == null) return 1e9; // no tracked window
+      const info = appealInfo(r);
+      return info ? info.daysLeft : 1e7; // window but no payment date yet
+    },
     compute: (r) => {
       const window = appealWindowDays(r);
       if (window == null) return "—"; // payer has no tracked window
