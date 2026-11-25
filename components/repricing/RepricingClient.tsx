@@ -298,7 +298,11 @@ const config: TrackerConfig = {
     "payer",
     "remark_codes",
     "claim_status",
+    "payment_date",
   ],
+  // The payment date arrives on uploads, but a blank cell must never erase a
+  // date already captured on a prior import.
+  importSkipBlankKeys: ["payment_date"],
   columns,
 };
 
